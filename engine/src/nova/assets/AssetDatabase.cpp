@@ -114,8 +114,19 @@ void AssetDatabase::registerBuiltinImporters() {
 
 void AssetDatabase::addImporter(AssetImporter importer) {
     for (auto& e : importer.extensions) e = lower(e);
+    importer.module = currentModule();
     m_importers.push_back(std::move(importer));
     refresh(); // re-resolve importers of known files (cheap; no-op without a root)
+}
+
+void AssetDatabase::removeModule(ModuleId module) {
+    if (module == 0) return;
+    // Loaded data may hold payloads whose destructors live in the module: drop it first.
+    for (const AssetRecord& r : m_records)
+        if (r.importer && r.importer->module == module) unload(r.guid);
+    const size_t before = m_importers.size();
+    std::erase_if(m_importers, [module](const AssetImporter& i) { return i.module == module; });
+    if (m_importers.size() != before) refresh(); // records point at importers
 }
 
 const AssetImporter* AssetDatabase::importerFor(const fs::path& file) const {

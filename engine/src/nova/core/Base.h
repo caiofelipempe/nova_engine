@@ -79,6 +79,32 @@ public:
     constexpr E& operator|=(E& a, E b) { return a = a | b; }                                       \
     constexpr bool any(E a) { return static_cast<std::underlying_type_t<E>>(a) != 0; }
 
+/// @def NOVA_API
+/// @brief Marks engine *data* that code outside the engine library accesses directly (static
+///        members used by inline functions). Functions and classes are exported automatically
+///        when the engine is a shared library (NOVA_SHARED); data needs `__declspec(dllimport)`.
+#if defined(_WIN32) && defined(NOVA_SHARED)
+    #if defined(NOVA_BUILDING_ENGINE)
+        #define NOVA_API __declspec(dllexport)
+    #else
+        #define NOVA_API __declspec(dllimport)
+    #endif
+#else
+    #define NOVA_API
+#endif
+
+/// @def NOVA_EDITOR_API
+/// @brief Like NOVA_API, for data of the editor library (Nova::Editor).
+#if defined(_WIN32) && defined(NOVA_SHARED)
+    #if defined(NOVA_BUILDING_EDITOR)
+        #define NOVA_EDITOR_API __declspec(dllexport)
+    #else
+        #define NOVA_EDITOR_API __declspec(dllimport)
+    #endif
+#else
+    #define NOVA_EDITOR_API
+#endif
+
 #if defined(_MSC_VER)
     /// @brief Breaks into an attached debugger (crashes without one).
     #define NOVA_DEBUGBREAK() __debugbreak()

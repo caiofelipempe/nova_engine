@@ -5,6 +5,7 @@
 
 #include "nova/core/Application.h"
 #include "nova/editor/EditorContext.h"
+#include "nova/editor/GameModule.h"
 #include "nova/editor/Registry.h"
 
 #include <filesystem>
@@ -19,6 +20,8 @@ struct EditorDesc {
     std::string layoutFile = "editor_layout.ini";
     /// @brief The project's asset folder (created if missing), shown in the Assets panel.
     std::filesystem::path assetsDir = "assets";
+    /// @brief Game code DLL loaded at startup and hot reloaded (see GameModule.h); empty = none.
+    GameModuleDesc gameModule;
     bool builtinPanels = true;     ///< Viewport, Hierarchy, Inspector, Renderer, Console, History and Assets panels.
     bool builtinCommands = true;   ///< File/Edit/Entity/Play/Window menus, shortcuts and the command palette.
     bool builtinComponents = true; ///< Inspector support for the engine's components.

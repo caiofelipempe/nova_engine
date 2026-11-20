@@ -26,6 +26,8 @@ option(NOVA_PHYSICS_JOLT     "Build the Jolt Physics backend"    ON)
 option(NOVA_BUILD_EDITOR     "Build the editor library (Nova::Editor) and, top-level, the NovaEditor app" ON)
 option(NOVA_BUILD_SANDBOX    "Build the runtime sandbox sample"  ${PROJECT_IS_TOP_LEVEL})
 option(NOVA_BUILD_TESTS      "Build the headless engine tests"   ${PROJECT_IS_TOP_LEVEL})
+# Shared engine/editor libraries let game code live in a DLL that the editor reloads while running.
+option(NOVA_SHARED           "Build Nova::Engine and Nova::Editor as shared libraries (hot reload)" ON)
 
 if(NOT NOVA_RHI_VULKAN)
     message(FATAL_ERROR "At least one RHI backend is required (only Vulkan is implemented).")

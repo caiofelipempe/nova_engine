@@ -7,6 +7,7 @@
 
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace nova::editor::detail {
 
@@ -27,6 +28,7 @@ public:
 
 private:
     void registerFrameworkCommands();
+    void setupGameModule();
     void dispatchShortcuts();
     void drawMainMenu();
     void drawPanels();
@@ -39,12 +41,14 @@ private:
     Scene m_scene{"Untitled"};
     EditorContext m_context{m_scene};
     Registry m_registry{m_context};
+    Scope<GameModuleHost> m_gameModule; // after the registry: unloaded before it is destroyed
 
     bool m_resetLayout = false;
     bool m_openPalette = false;
     char m_paletteFilter[128] = "";
     int m_paletteSelection = 0;
     std::unordered_set<const Panel*> m_dockChecked;
+    std::vector<std::string> m_menuOrder; // top-level menus by first appearance
 };
 
 } // namespace nova::editor::detail

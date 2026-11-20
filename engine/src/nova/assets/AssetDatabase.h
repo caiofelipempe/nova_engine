@@ -3,6 +3,7 @@
 /// @file
 /// @brief Project assets: stable GUIDs, registrable importers, cached loading and scene references.
 
+#include "nova/core/Module.h"
 #include "nova/scene/SceneSerializer.h"
 
 #include <deque>
@@ -60,6 +61,7 @@ struct AssetImporter {
         instantiate;
     /// @brief Other files the asset needs, copied along by AssetDatabase::import (e.g. glTF buffers).
     std::function<std::vector<std::filesystem::path>(const std::filesystem::path& file)> dependencies;
+    ModuleId module = 0; ///< Set by addImporter() to currentModule().
 };
 
 /// @brief One known asset.
@@ -98,6 +100,9 @@ public:
     /// @{
     /// @brief Registers an importer; for a suffix claimed twice the newest wins.
     void addImporter(AssetImporter importer);
+    /// @brief Removes the importers registered by `module` and forgets assets they loaded
+    ///        (before unloading that module's code).
+    void removeModule(ModuleId module);
     /// @brief The importer for a file (longest matching suffix), or `nullptr`.
     const AssetImporter* importerFor(const std::filesystem::path& file) const;
     /// @}

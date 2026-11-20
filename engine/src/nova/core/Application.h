@@ -105,7 +105,7 @@ private:
     void initImGui();
     void shutdownImGui();
 
-    static Application* s_instance;
+    static NOVA_API Application* s_instance;
 
     ApplicationDesc m_desc;
     Scope<platform::Window> m_window;

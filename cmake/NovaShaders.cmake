@@ -52,6 +52,19 @@ function(nova_add_editor NAME)
     target_link_libraries(${NAME} PRIVATE Nova::Editor)
 endfunction()
 
+# Creates the game's code module: a DLL the editor loads and hot reloads (needs NOVA_SHARED).
+# The sources must contain one NOVA_GAME_MODULE(MyGameModule) (see nova/editor/GameModule.h).
+#
+#   nova_add_game_module(MyGame game/MyGame.cpp game/Player.cpp)
+#   # editor: run<...>({.gameModule = {.library = "$<TARGET_FILE:MyGame>" (via a definition), ...}})
+function(nova_add_game_module NAME)
+    if(NOT NOVA_SHARED)
+        message(FATAL_ERROR "nova_add_game_module(${NAME}) requires NOVA_SHARED=ON")
+    endif()
+    add_library(${NAME} SHARED ${ARGN})
+    target_link_libraries(${NAME} PRIVATE Nova::Editor)
+endfunction()
+
 # Copies the compiled shader folder next to an application's executable.
 function(nova_copy_shaders APP)
     add_custom_command(TARGET ${APP} POST_BUILD

@@ -39,6 +39,8 @@
 #include "nova/reflect/Reflect.h"
 
 #include "nova/assets/AssetDatabase.h"
+#include "nova/core/Module.h"
+#include "nova/platform/DynamicLibrary.h"
 #include "nova/assets/GltfLoader.h"
 
 #include <imgui.h>

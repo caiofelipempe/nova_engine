@@ -43,8 +43,8 @@ public:
     static std::vector<LogEntry> recent(size_t max = 512);
 
 private:
-    static std::shared_ptr<spdlog::logger> s_core;
-    static std::shared_ptr<spdlog::logger> s_client;
+    static NOVA_API std::shared_ptr<spdlog::logger> s_core;
+    static NOVA_API std::shared_ptr<spdlog::logger> s_client;
 };
 
 } // namespace nova

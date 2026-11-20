@@ -3,6 +3,7 @@
 /// @file
 /// @brief Editor commands (menu items, keyboard shortcuts, command palette entries).
 
+#include "nova/core/Module.h"
 #include "nova/platform/KeyCodes.h"
 
 #include <functional>
@@ -52,6 +53,7 @@ struct Command {
     int order = 0;                ///< Sort key inside its menu (lower first; ties keep registration order).
     bool separatorBefore = false; ///< Draw a separator above the menu item.
     bool showInPalette = true;    ///< List in the command palette.
+    ModuleId module = 0;          ///< Code module that registered it (set by Registry::command).
 
     /// @brief True if it has no enable predicate or the predicate returns true.
     bool enabled(EditorContext& ctx) const { return !isEnabled || isEnabled(ctx); }

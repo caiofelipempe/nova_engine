@@ -16,6 +16,7 @@
 /// @endcode
 /// Register before the first use (e.g. at the start of `main` or in EditorApp::onSetup).
 
+#include "nova/core/Module.h"
 #include "nova/renderer/Mesh.h"
 #include "nova/scene/Script.h"
 
@@ -103,6 +104,7 @@ struct TypeInfo {
     std::vector<EnumValue> enumValues;  ///< Enums only.
     bool isEnum = false;                ///< Registered with enumeration().
     bool hideInInspector = false;       ///< Components the editor should not list (e.g. Id, Name).
+    ModuleId module = 0;                ///< Code module that registered it (see Module.h).
 
     /// @name Component operations (set by TypeBuilder::component)
     /// @{
@@ -130,7 +132,7 @@ struct TypeInfo {
 /// @brief All reflected types. Engine types are registered on first access.
 class TypeRegistry {
 public:
-    /// @brief Stores (or replaces, if the C++ type is already registered) a type.
+    /// @brief Stores (or replaces, if the C++ type is already registered) a type, tagged with currentModule().
     TypeInfo& add(TypeInfo info);
     /// @brief Type by C++ type, or `nullptr`.
     const TypeInfo* find(std::type_index type) const;
@@ -143,11 +145,13 @@ public:
     std::vector<const TypeInfo*> components() const;
     /// @brief Script types, in registration order.
     std::vector<const TypeInfo*> scripts() const;
-    /// @brief Every registered type.
-    const std::deque<TypeInfo>& all() const { return m_types; }
+    /// @brief Every registered type, in registration order.
+    std::vector<const TypeInfo*> all() const;
+    /// @brief Removes every type registered by module (before unloading its code). @return How many.
+    size_t removeModule(ModuleId module);
 
 private:
-    std::deque<TypeInfo> m_types; // deque: TypeInfo addresses stay valid
+    std::vector<std::unique_ptr<TypeInfo>> m_types; // TypeInfo addresses stay valid
 };
 
 /// @brief The global type registry (engine types are registered on the first call).

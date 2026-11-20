@@ -1,16 +1,15 @@
-// Nova's own editor: the built-in tools plus an example plugin, built on Nova::Editor exactly as a
-// game-specific editor would be.
-#include "DemoScene.h"
-#include "ExamplePlugin.h"
-
+// Nova's own editor: the built-in tools plus the sample game's code module (editor/game), loaded
+// from a DLL and hot reloaded when it is rebuilt — exactly how a game-specific editor is set up.
 #include <nova/editor/Editor.h>
 
-struct NovaEditorApp : nova::editor::EditorApp {
-    void onSetup(nova::editor::Registry& registry) override { registry.plugin<ExamplePlugin>(); }
-    void onNewScene(nova::editor::EditorContext& ctx) override { buildDemoScene(ctx); }
-};
+#include <string>
 
 int main() {
-    reflectGameTypes(); // game types must be reflected before scenes are loaded or edited
-    return nova::editor::run<NovaEditorApp>({.layoutFile = "nova_editor_layout.ini", .assetsDir = NOVA_EDITOR_ASSETS_DIR});
+    const std::string build = std::string("\"") + NOVA_EDITOR_CMAKE + "\" --build \"" + NOVA_EDITOR_BUILD_DIR +
+                              "\" --config " + NOVA_EDITOR_CONFIG + " --target NovaEditorGame";
+    return nova::editor::run({
+        .layoutFile = "nova_editor_layout.ini",
+        .assetsDir = NOVA_EDITOR_ASSETS_DIR,
+        .gameModule = {.library = NOVA_EDITOR_GAME_MODULE, .buildCommand = build},
+    });
 }

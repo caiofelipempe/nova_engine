@@ -19,7 +19,7 @@ struct VisualSettings {
 class CoreVisualsPlugin final : public Plugin {
 public:
     void onRegister(Registry& registry) override;
-    static inline VisualSettings settings; ///< Current toggles.
+    static NOVA_EDITOR_API VisualSettings settings; ///< Current toggles.
 };
 
 /// @brief Draws an entity's collider (Box/Sphere/Capsule, or the default box) as the physics sees it.

@@ -57,9 +57,11 @@ cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
 build\bin\Debug\Sandbox.exe
-ctest --preset debug              # testes headless (física)
+ctest --preset debug              # testes headless (física, cenas, assets, input, editor, hot reload)
 doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
+
+Engine e editor são compilados como DLLs (`NOVA_SHARED=ON`, padrão) para que o código do jogo possa ser uma DLL recarregada a quente; com `-DNOVA_SHARED=OFF` viram bibliotecas estáticas (sem hot reload).
 
 A API pública é documentada no estilo Doxygen nos headers de `engine/src/nova/`. Com o Doxygen instalado, o CMake também cria o target `NovaDocs`.
 
@@ -82,6 +84,7 @@ engine/src/nova/
 engine/shaders/  GLSL → SPIR-V em build-time (glslc)
 editor/src/      Nova::Editor — framework de editor extensível (painéis, comandos, inspetores, plugins)
 editor/app/      NovaEditor — editor da Nova montado sobre o framework (exemplo de editor de jogo)
+editor/game/     NovaEditorGame — código do jogo de exemplo numa DLL recarregada a quente pelo editor
 sandbox/         jogo mínimo usando só a API pública
 ```
 
@@ -133,6 +136,8 @@ struct MyGameEditor : nova::editor::EditorApp {
 };
 int main() { return nova::editor::run<MyGameEditor>(); }
 ```
+
+Código do jogo com **hot reload**: com `nova_add_game_module(MyGame ...)` e `NOVA_GAME_MODULE(MyGame)` o jogo vira uma DLL que o editor recompila (`Ctrl+B`) e troca sem fechar, mantendo a cena (veja o guia).
 
 No CMake: `nova_add_editor(MyGameEditor editor/main.cpp ...)`. Guia com receitas: [docs/EDITOR.md](docs/EDITOR.md).
 

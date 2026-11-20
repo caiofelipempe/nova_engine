@@ -13,6 +13,7 @@ Registry::~Registry() { detachAll(); }
 void Registry::addPanel(Scope<Panel> panel) {
     removePanel(panel->title()); // same title = replace
     Panel& ref = *panel;
+    m_owners[&ref] = currentModule();
     m_panels.push_back(std::move(panel));
     if (m_attached) ref.onAttach(m_context);
 }
@@ -22,10 +23,12 @@ void Registry::addTool(Scope<Tool> tool) {
     for (auto it = m_tools.begin(); it != m_tools.end(); ++it)
         if ((*it)->name() == name) {
             if (m_context.activeTool() == it->get()) m_context.setActiveTool(nullptr);
+            m_owners.erase(it->get());
             m_tools.erase(it);
             break;
         }
     Tool* raw = tool.get();
+    m_owners[raw] = currentModule();
     m_tools.push_back(std::move(tool));
 
     Command c;
@@ -49,6 +52,7 @@ bool Registry::removePanel(const std::string& title) {
     auto it = std::find_if(m_panels.begin(), m_panels.end(), [&](const Scope<Panel>& p) { return p->title() == title; });
     if (it == m_panels.end()) return false;
     if (m_attached) (*it)->onDetach(m_context);
+    m_owners.erase(it->get());
     m_panels.erase(it);
     return true;
 }
@@ -62,6 +66,7 @@ Panel* Registry::findPanel(const std::string& title) {
 Command& Registry::command(Command command) {
     NOVA_VERIFY(command.execute, "Command '" + command.id + "' has no execute function");
     if (command.id.empty()) command.id = command.menuPath;
+    command.module = currentModule();
     if (Command* existing = findCommand(command.id)) {
         *existing = std::move(command);
         return *existing;
@@ -147,23 +152,33 @@ void Registry::addReflectedEditors() {
         return std::any_of(m_componentEditors.begin(), m_componentEditors.end(),
                            [&](const ComponentEditor& e) { return e.name == name; });
     };
+    // Generated editors belong to the module of their type: they go away with it.
     for (const reflect::TypeInfo* t : reflect::types().components())
-        if (!t->hideInInspector && !registered(t->displayName)) addComponentEditor(reflectedComponentEditor(*t));
+        if (!t->hideInInspector && !registered(t->displayName)) {
+            ComponentEditor ed = reflectedComponentEditor(*t);
+            ed.module = t->module;
+            addComponentEditor(std::move(ed));
+        }
     for (const reflect::TypeInfo* t : reflect::types().scripts())
-        if (!registered("Script: " + t->displayName)) addComponentEditor(reflectedScriptEditor(*t));
+        if (!registered("Script: " + t->displayName)) {
+            ComponentEditor ed = reflectedScriptEditor(*t);
+            ed.module = t->module;
+            addComponentEditor(std::move(ed));
+        }
 }
 
 const FieldDrawer* Registry::findFieldDrawer(const reflect::TypeInfo& owner, const reflect::FieldInfo& field) const {
     if (!m_fieldDrawers.empty()) {
         auto it = m_fieldDrawers.find(owner.name + "." + field.name);
-        if (it != m_fieldDrawers.end()) return &it->second;
+        if (it != m_fieldDrawers.end()) return &it->second.draw;
     }
     auto it = m_typeDrawers.find(field.type);
-    return it != m_typeDrawers.end() ? &it->second : nullptr;
+    return it != m_typeDrawers.end() ? &it->second.draw : nullptr;
 }
 
 ComponentEditor& Registry::addComponentEditor(ComponentEditor editor) {
     NOVA_VERIFY(editor.has, "ComponentEditor '" + editor.name + "' needs a `has` function");
+    if (editor.module == 0) editor.module = currentModule();
     for (auto& e : m_componentEditors)
         if (e.name == editor.name) return e = std::move(editor);
     return m_componentEditors.emplace_back(std::move(editor));
@@ -191,6 +206,50 @@ void Registry::detachAll() {
     m_attached = false;
 }
 
+size_t Registry::removeModule(ModuleId module) {
+    if (module == 0) return 0;
+    auto owned = [&](const void* p) {
+        auto it = m_owners.find(p);
+        return it != m_owners.end() && it->second == module;
+    };
+    size_t removed = 0;
+
+    // Tools (deactivating the active one first) and panels (detached like removePanel does).
+    removed += std::erase_if(m_tools, [&](const Scope<Tool>& t) {
+        if (!owned(t.get())) return false;
+        if (m_context.activeTool() == t.get()) m_context.setActiveTool(nullptr);
+        m_owners.erase(t.get());
+        return true;
+    });
+    for (auto it = m_panels.begin(); it != m_panels.end();) {
+        if (!owned(it->get())) {
+            ++it;
+            continue;
+        }
+        if (m_attached) (*it)->onDetach(m_context);
+        m_owners.erase(it->get());
+        it = m_panels.erase(it);
+        ++removed;
+    }
+
+    removed += std::erase_if(m_commands, [&](const Command& c) { return c.module == module; });
+    removed += std::erase_if(m_componentEditors, [&](const ComponentEditor& e) { return e.module == module; });
+    removed += std::erase_if(m_typeDrawers, [&](const auto& kv) { return kv.second.module == module; });
+    removed += std::erase_if(m_fieldDrawers, [&](const auto& kv) { return kv.second.module == module; });
+    removed += std::erase_if(m_uiHooks, [&](const UiHook& h) { return h.module == module; });
+    removed += std::erase_if(m_menuBarWidgets, [&](const UiHook& h) { return h.module == module; });
+    removed += std::erase_if(m_assetActions, [&](const AssetAction& a) { return a.module == module; });
+    // Plugins last: their objects may be referenced by the entries above.
+    removed += std::erase_if(m_plugins, [&](const Scope<Plugin>& p) {
+        if (!owned(p.get())) return false;
+        m_owners.erase(p.get());
+        return true;
+    });
+
+    if (m_attached && !m_context.activeTool() && !m_tools.empty()) m_context.setActiveTool(m_tools.front().get());
+    return removed;
+}
+
 std::vector<std::string> splitMenuPath(std::string_view path) {
     std::vector<std::string> parts;
     size_t start = 0;
@@ -209,9 +268,10 @@ AssetAction& Registry::assetAction(std::string type, std::string label,
     for (AssetAction& a : m_assetActions)
         if (a.type == type && a.label == label) {
             a.run = std::move(run);
+            a.module = currentModule();
             return a;
         }
-    m_assetActions.push_back({std::move(type), std::move(label), std::move(run)});
+    m_assetActions.push_back({std::move(type), std::move(label), std::move(run), currentModule()});
     return m_assetActions.back();
 }
 

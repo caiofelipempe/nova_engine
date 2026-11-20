@@ -58,6 +58,11 @@ public:
     Entity findEntityByUuid(u64 uuid);
     /// @brief Destroys every entity (the physics world, if any, keeps running empty).
     void clear();
+    /// @brief clear() and also destroys every component *storage* of the ECS registry.
+    ///
+    /// Component pools are created by whichever module first uses a component type, and their
+    /// code (vtables) lives in that module: call this before unloading a game DLL.
+    void resetStorage();
     /// @brief First entity whose CameraComponent is primary, or an invalid Entity.
     Entity primaryCamera();
     /// @}
@@ -153,6 +158,7 @@ private:
     void stepPhysics(f32 dt);
     void createBody(entt::entity e);
     void onRigidBodyDestroyed(entt::registry& registry, entt::entity e);
+    void connectSignals();
     physics::BodyId bodyOf(Entity e);
     physics::QueryFilter filterIgnoring(Entity e);
     SceneHit toSceneHit(const physics::QueryHit& hit);

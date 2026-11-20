@@ -2,9 +2,13 @@
 #include <nova/editor/Editor.h>
 
 #include <cmath>
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <thread>
 #include <vector>
 
 using namespace nova;
@@ -619,6 +623,122 @@ void assets() {
     fs::remove_all(root);
 }
 
+#if defined(NOVA_TEST_MODULE_V1) && defined(NOVA_TEST_MODULE_V2)
+void hotReload() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "nova_hot_reload_test";
+    fs::remove_all(dir);
+    fs::create_directories(dir / "assets");
+    std::ofstream(dir / "assets" / "notes.testdata") << "x";
+    const fs::path game = dir / "TestGame.dll"; // "the game's build output", rewritten by "rebuilds"
+    fs::copy_file(NOVA_TEST_MODULE_V1, game);
+
+    Fixture f;
+    f.registry.attachAll(); // like the running editor: panels attach as they are registered
+    f.ctx.assets().setRoot(dir / "assets");
+    GameModuleHost host(f.ctx, f.registry);
+    auto call = [&](const char* fn) {
+        auto p = reinterpret_cast<int (*)()>(host.symbol(fn));
+        return p ? p() : -1;
+    };
+    auto countCommands = [&](const char* id) {
+        return std::count_if(f.registry.commands().begin(), f.registry.commands().end(),
+                             [&](const Command& c) { return c.id == id; });
+    };
+    auto hasEditor = [&](const char* name) {
+        return std::any_of(f.registry.componentEditors().begin(), f.registry.componentEditors().end(),
+                           [&](const ComponentEditor& e) { return e.name == name; });
+    };
+    auto assetPayload = [&]() -> std::string {
+        const AssetRecord* r = f.ctx.assets().findByPath("notes.testdata");
+        const AssetData* d = r ? f.ctx.assets().load(r->guid) : nullptr;
+        return d && d->as<std::string>() ? *d->as<std::string>() : std::string("<none>");
+    };
+
+    std::string error;
+    CHECK(!host.load(dir / "missing.dll", &error) && !error.empty() && !host.isLoaded());
+    error.clear();
+    CHECK(host.load(game, &error));
+    CHECK(error.empty() && host.isLoaded() && call("testModuleVersion") == 1);
+
+    // Everything the module registered is tagged with its id.
+    const reflect::TypeInfo* spin = reflect::types().find("Spin");
+    CHECK(spin && spin->module == host.moduleId() && spin->fields.size() == 2);
+    CHECK(f.registry.findPanel("Test Panel") && call("testModulePanelsAttached") == 1);
+    CHECK(countCommands("Test/Version") == 1 && f.registry.findCommand("Test/Version")->order == 1);
+    CHECK(hasEditor("Spin") && hasEditor("Script: Waver"));
+    CHECK(f.registry.assetActions("TestData").size() == 1);
+    CHECK(assetPayload() == "v1");
+    if (!spin) return;
+
+    // A scene using the module's component and script, a selection and some history.
+    Entity e = f.scene.createEntity("Spinner");
+    spin->add(e);
+    spin->field("speed")->as<float>(spin->get(e)) = 7.0f;
+    const reflect::TypeInfo* waver = reflect::types().find("Waver");
+    e.attachScript(waver->createScript());
+    waver->field("height")->as<float>(e.get<ScriptComponent>().scripts[0].get()) = 2.0f;
+    const u64 uuid = e.uuid();
+    f.ctx.recordCreation("Create Other", [&] { f.scene.createEntity("Other"); });
+    f.ctx.select(e);
+    CHECK(f.ctx.undoStack().canUndo());
+
+    // "Rebuild": the new code adds a field; the scene and the selection survive.
+    fs::copy_file(NOVA_TEST_MODULE_V2, game, fs::copy_options::overwrite_existing);
+    CHECK(host.reload(&error));
+    CHECK(call("testModuleVersion") == 2 && host.reloadCount() == 1);
+    spin = reflect::types().find("Spin");
+    CHECK(spin && spin->fields.size() == 3 && spin->module == host.moduleId());
+    Entity back = f.scene.findEntityByUuid(uuid);
+    CHECK(back.valid() && f.ctx.selected() == back);
+    if (spin && back.valid() && spin->has(back)) {
+        CHECK(spin->field("speed")->as<float>(spin->get(back)) == 7.0f);
+        CHECK(spin->field("bonus")->as<float>(spin->get(back)) == 3.0f); // new field: default value
+    } else {
+        CHECK(!"Spin component lost in the reload");
+    }
+    CHECK(f.scene.findEntity("Other").valid());
+    CHECK(!f.ctx.undoStack().canUndo()); // history may reference unloaded code: cleared
+    CHECK(countCommands("Test/Version") == 1 && f.registry.findCommand("Test/Version")->order == 2);
+    CHECK(f.registry.findPanel("Test Panel") && call("testModulePanelsAttached") == 1);
+    CHECK(hasEditor("Spin") && f.registry.assetActions("TestData").size() == 1);
+    CHECK(assetPayload() == "v2"); // the new importer loaded it again
+    // The restored script runs the new code (v2 moves to height * 2).
+    f.scene.update(0.016f);
+    CHECK(std::abs(back.transform().position.y - 4.0f) < 1e-5f);
+
+    // A broken build keeps the previous code and the scene.
+    std::ofstream(game, std::ios::binary | std::ios::trunc) << "not a dll";
+    error.clear();
+    CHECK(!host.reload(&error) && !error.empty());
+    CHECK(host.isLoaded() && call("testModuleVersion") == 2);
+    back = f.scene.findEntityByUuid(uuid);
+    CHECK(back.valid() && reflect::types().find("Spin") && reflect::types().find("Spin")->has(back));
+
+    // Watching: a changed DLL is reloaded by update() once the file is stable.
+    fs::copy_file(NOVA_TEST_MODULE_V1, game, fs::copy_options::overwrite_existing);
+    fs::last_write_time(game, fs::file_time_type::clock::now());
+    host.update(); // sees the change, waits for the linker
+    CHECK(call("testModuleVersion") == 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    host.update();
+    CHECK(call("testModuleVersion") == 1 && host.reloadCount() == 2);
+    CHECK(reflect::types().find("Spin") && reflect::types().find("Spin")->fields.size() == 2);
+
+    // Unloading removes every registration; entities stay without the module's components.
+    host.unload();
+    CHECK(!host.isLoaded() && !reflect::types().find("Spin") && !reflect::types().find("Waver"));
+    CHECK(!f.registry.findPanel("Test Panel") && countCommands("Test/Version") == 0);
+    CHECK(!hasEditor("Spin") && f.registry.assetActions("TestData").empty());
+    CHECK(!f.ctx.assets().findByPath("notes.testdata")); // no importer for it any more
+    back = f.scene.findEntityByUuid(uuid);
+    CHECK(back.valid() && !back.has<ScriptComponent>());
+
+    f.registry.detachAll();
+    fs::remove_all(dir);
+}
+#endif
+
 } // namespace
 
 int main() {
@@ -644,6 +764,9 @@ int main() {
         {"picking", picking},
         {"signals", signals},
         {"assets (prefabs, instantiate + undo, actions)", assets},
+#if defined(NOVA_TEST_MODULE_V1) && defined(NOVA_TEST_MODULE_V2)
+        {"game module hot reload", hotReload},
+#endif
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

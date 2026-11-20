@@ -10,6 +10,8 @@
 
 namespace nova::editor::builtin {
 
+bool TransformTool::localSpace = false;
+
 namespace {
 void applyMatrix(TransformComponent& t, const glm::mat4& m) {
     glm::vec3 scale, translation, skew;

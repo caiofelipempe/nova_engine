@@ -26,6 +26,7 @@ namespace nova::editor {
 
 class Registry;
 class Tool;
+class GameModuleHost;
 class EditorContext;
 
 /// @brief ImGui drag-and-drop payload type for assets (payload: one AssetGuid).
@@ -213,6 +214,11 @@ public:
     glm::vec3 spawnPoint() const;
     /// @}
 
+    /// @brief The game code module host (`nullptr` when the editor has no EditorDesc::gameModule).
+    GameModuleHost* gameModule() const { return m_gameModule; }
+    /// @brief Set by the editor.
+    void setGameModule(GameModuleHost* host) { m_gameModule = host; }
+
     /// @name Viewport camera, tools and input
     /// @{
     /// @brief The editor's fly camera.
@@ -251,6 +257,7 @@ private:
     std::string m_snapshot; // scene JSON captured by play()
     std::filesystem::path m_scenePath;
     AssetDatabase m_assets;
+    GameModuleHost* m_gameModule = nullptr;
     EditorCamera m_camera;
     Tool* m_activeTool = nullptr;
     bool m_inputCaptured = false;

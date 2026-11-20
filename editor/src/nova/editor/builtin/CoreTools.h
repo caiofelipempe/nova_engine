@@ -22,7 +22,7 @@ public:
     bool isInteracting() const override;
 
     Mode mode() const { return m_mode; }
-    static inline bool localSpace = false; ///< Gizmo axes follow the entity (true) or the world.
+    static NOVA_EDITOR_API bool localSpace; ///< Gizmo axes follow the entity (true) or the world.
 
 private:
     Mode m_mode;

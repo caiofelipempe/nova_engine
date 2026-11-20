@@ -32,6 +32,45 @@ int main() { return nova::editor::run<MyGameEditor>({.layoutFile = "mygame_edito
 
 `EditorDesc` também permite desligar partes embutidas: `.builtinPanels`, `.builtinCommands`, `.builtinComponents`.
 
+### Código do jogo com hot reload (recomendado)
+
+Coloque o código do jogo (componentes, scripts, plugins do editor, cena inicial) numa **DLL de jogo**; o executável do editor fica mínimo e a DLL é recompilada e trocada **com o editor aberto**.
+
+```cmake
+nova_add_game_module(MyGame game/MyGame.cpp game/Player.cpp game/WavesPanel.cpp)
+nova_add_editor(MyGameEditor editor/main.cpp)
+add_dependencies(MyGameEditor MyGame)
+target_compile_definitions(MyGameEditor PRIVATE
+    MYGAME_DLL="$<TARGET_FILE:MyGame>"
+    MYGAME_BUILD="cmake --build ${CMAKE_BINARY_DIR} --config $<CONFIG> --target MyGame")
+```
+
+```cpp
+// game/MyGame.cpp — tudo o que o editor usa do jogo
+struct MyGame : nova::editor::GameModule {
+    void onLoad(nova::editor::Registry& r) override {
+        nova::reflect::type<Health>("Health").field("hp", &Health::hp).component();
+        r.plugin<MyGamePlugin>();
+    }
+    void onNewScene(nova::editor::EditorContext& ctx) override { loadLevel(ctx); }
+};
+NOVA_GAME_MODULE(MyGame)
+
+// editor/main.cpp
+int main() {
+    return nova::editor::run({.layoutFile = "mygame_editor.ini",
+                              .gameModule = {.library = MYGAME_DLL, .buildCommand = MYGAME_BUILD}});
+}
+```
+
+- **Game/Build and Reload** (`Ctrl+B`) compila em segundo plano (saída no Console) e recarrega; **Game/Reload Code** (`Ctrl+R`) recarrega a DLL atual; com *Reload When the DLL Changes* ligado, compilar pela IDE também recarrega sozinho.
+- No reload: o Play é parado, a cena é guardada em memória, **tudo o que o módulo registrou** (tipos refletidos, plugins, painéis, ferramentas, comandos, inspetores, importadores, ações de asset) é removido, a DLL nova é carregada e registra de novo, e a cena e a seleção voltam. Campos novos recebem o valor padrão.
+- Sobrevive ao reload o que é **refletido** (como no Play/Stop). O histórico de undo é limpo (pode apontar para código antigo).
+- Se a DLL nova falhar ao carregar, o código anterior volta; o status na barra de menus mostra *building... / build failed / reload N*.
+- O editor carrega uma **cópia** da DLL (em `%TEMP%/nova_modules`), então o linker pode sobrescrever o original. Mudanças no engine/editor (não no jogo) exigem reiniciar o editor.
+- Regras: o executável do editor não deve referenciar tipos do jogo; painéis que conectam sinais devem desconectar em `onDetach` (os painéis do módulo são desanexados no reload).
+- Requer `NOVA_SHARED=ON` (padrão): engine e editor são DLLs compartilhadas por todos os módulos; o contexto do ImGui é sincronizado entre eles automaticamente.
+
 ## 2. Receitas
 
 Cada receita é **um arquivo** + **uma linha de registro**. Não é preciso alterar a engine.
@@ -252,6 +291,7 @@ if (auto* vp = r.findPanel<nova::editor::builtin::ViewportPanel>()) vp->useScene
 | Arquivos de cena | `ctx.newScene()`, `ctx.openScene(path)`, `ctx.saveScene(path)`, `ctx.scenePath()` |
 | Assets | `ctx.assets()` (`AssetDatabase`: `find`, `findByPath`, `load`, `instantiate`, `import`, `createPrefab`, `addImporter`), `ctx.instantiateAsset(guid, pos)`, `ctx.spawnPoint()` |
 | Câmera do editor | `ctx.camera()` (`focus(pos)`, `position`, `yaw`, `pitch`) |
+| Código do jogo | `ctx.gameModule()` (`GameModuleHost`: `reload()`, `build()`, `isBuilding()`, `reloadCount()`, sinal `reloaded`) |
 | Engine | `ctx.app()`, `ctx.renderer()` |
 | Extensões | `ctx.registry()` (`execute("id")`, `findPanel<T>()`...) |
 
@@ -271,6 +311,7 @@ Widgets prontos com o visual do editor: `nova::editor::widgets::vec3`, `widgets:
 | View/Tools/Move · Rotate · Scale · Local Space | W · E · R |
 | View/Show Selection Bounds · All Colliders · Light and Camera Gizmos · Grid | — |
 | Viewport: clique seleciona (Ctrl alterna, Shift adiciona); Hierarchy: Ctrl/Shift (intervalo) | — |
+| Game/Build and Reload · Reload Code · Reload When the DLL Changes | Ctrl+B · Ctrl+R · — |
 | Window/Reset Layout · Command Palette... | — · Ctrl+Shift+P |
 
 ## 5. Convenções (para pessoas e IA)
@@ -278,4 +319,4 @@ Widgets prontos com o visual do editor: `nova::editor::widgets::vec3`, `widgets:
 - Uma extensão por arquivo; registro em uma linha no plugin do jogo.
 - Não altere `nova/editor/*` para adicionar ferramentas de jogo — use o `Registry`.
 - Lógica testável fora da UI: coloque regras em funções que recebem `Scene&`/`EditorContext&` e teste sem janela (veja `tests/EditorTests.cpp`).
-- Exemplo completo: [editor/app/ExamplePlugin.cpp](../editor/app/ExamplePlugin.cpp) (componente, painel, comando com atalho, sinal).
+- Exemplo completo: [editor/game/](../editor/game/) — módulo de jogo com hot reload ([GameModule.cpp](../editor/game/GameModule.cpp)) e plugin ([ExamplePlugin.cpp](../editor/game/ExamplePlugin.cpp): componente, script, painel, ferramenta, comando com atalho, sinal).

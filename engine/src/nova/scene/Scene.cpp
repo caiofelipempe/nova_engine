@@ -10,7 +10,9 @@ bool Entity::valid() const { return m_scene && m_scene->registry().valid(m_handl
 entt::registry& Entity::registry() const { return m_scene->registry(); }
 
 // ------------------------------------------------------------------- Scene --
-Scene::Scene(std::string name) : m_name(std::move(name)) {
+Scene::Scene(std::string name) : m_name(std::move(name)) { connectSignals(); }
+
+void Scene::connectSignals() {
     // Removing the component (or destroying the entity) removes the body from the world.
     m_registry.on_destroy<RigidBodyComponent>().connect<&Scene::onRigidBodyDestroyed>(*this);
 }
@@ -63,6 +65,12 @@ void Scene::clear() {
         for (auto& s : sc.scripts)
             if (s->m_created) s->onDestroy();
     m_registry.clear();
+}
+
+void Scene::resetStorage() {
+    clear();
+    m_registry = entt::registry{};
+    connectSignals();
 }
 
 void Scene::update(f32 dt) {

@@ -25,37 +25,48 @@ std::optional<i64> TypeInfo::enumValue(std::string_view valueName) const {
 }
 
 TypeInfo& TypeRegistry::add(TypeInfo info) {
+    info.module = currentModule();
     for (auto& t : m_types)
-        if (t.type == info.type) return t = std::move(info);
-    return m_types.emplace_back(std::move(info));
+        if (t->type == info.type) return *t = std::move(info);
+    return *m_types.emplace_back(std::make_unique<TypeInfo>(std::move(info)));
 }
 
 const TypeInfo* TypeRegistry::find(std::type_index type) const {
     for (const auto& t : m_types)
-        if (t.type == type) return &t;
+        if (t->type == type) return t.get();
     return nullptr;
 }
 
 const TypeInfo* TypeRegistry::find(std::string_view name) const {
     for (const auto& t : m_types)
-        if (t.name == name) return &t;
+        if (t->name == name) return t.get();
     return nullptr;
 }
 
 std::vector<const TypeInfo*> TypeRegistry::components() const {
     std::vector<const TypeInfo*> out;
     for (const auto& t : m_types)
-        if (t.isComponent) out.push_back(&t);
+        if (t->isComponent) out.push_back(t.get());
     return out;
 }
 
 std::vector<const TypeInfo*> TypeRegistry::scripts() const {
     std::vector<const TypeInfo*> out;
     for (const auto& t : m_types)
-        if (t.isScript) out.push_back(&t);
+        if (t->isScript) out.push_back(t.get());
     return out;
 }
 
+std::vector<const TypeInfo*> TypeRegistry::all() const {
+    std::vector<const TypeInfo*> out;
+    for (const auto& t : m_types) out.push_back(t.get());
+    return out;
+}
+
+size_t TypeRegistry::removeModule(ModuleId module) {
+    if (module == 0) return 0; // the host's types stay
+    return std::erase_if(m_types, [module](const auto& t) { return t->module == module; });
+}
 TypeRegistry& types() {
     static TypeRegistry registry;
     static bool initialized = false;

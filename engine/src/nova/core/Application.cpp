@@ -3,6 +3,7 @@
 #include "nova/core/Log.h"
 #include "nova/platform/Input.h"
 #include "nova/renderer/Renderer.h"
+#include "nova/ui/ImGuiSync.h"
 #include "nova/ui/ImGuiTheme.h"
 
 #include <imgui.h>
@@ -51,6 +52,7 @@ Application::~Application() {
 void Application::initImGui() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    detail::broadcastImGuiContext(ImGui::GetCurrentContext()); // other modules' ImGui copies
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
     ui::applyTheme();
@@ -64,6 +66,7 @@ void Application::shutdownImGui() {
     m_imguiRenderer.reset();
     m_window->imguiShutdown();
     ImGui::DestroyContext();
+    detail::broadcastImGuiContext(nullptr);
 }
 
 void Application::attachLayer(Scope<Layer> layer) {

@@ -36,6 +36,7 @@ struct ComponentEditor {
     std::function<bool(Entity)> canAdd;               ///< Extra condition to offer it in "Add Component".
     std::function<void(Entity, EditorContext&)> draw; ///< Draws the section's widgets.
     bool defaultOpen = true;                          ///< Section starts expanded.
+    ModuleId module = 0; ///< Code module that owns it (set on registration).
 };
 
 /// @brief Something the Assets panel can do with an asset (context menu; the first one runs on double-click).
@@ -43,6 +44,13 @@ struct AssetAction {
     std::string type;  ///< Asset type it applies to ("Texture", "Model"... or "*" for every type).
     std::string label; ///< Menu label.
     std::function<void(EditorContext&, const AssetRecord&)> run; ///< The action.
+    ModuleId module = 0; ///< Code module that registered it.
+};
+
+/// @brief A per-frame UI callback (Registry::uiHook / Registry::menuBarWidget).
+struct UiHook {
+    std::function<void(EditorContext&)> draw; ///< The callback.
+    ModuleId module = 0;                      ///< Code module that registered it.
 };
 
 /// @brief Custom inspector widget for a reflected field.
@@ -88,6 +96,7 @@ public:
         static_assert(std::is_base_of_v<Plugin, T>, "T must derive from nova::editor::Plugin");
         auto p = makeScope<T>(std::forward<Args>(args)...);
         T& ref = *p;
+        m_owners[&ref] = currentModule();
         m_plugins.push_back(std::move(p));
         ref.onRegister(*this);
         return ref;
@@ -230,16 +239,16 @@ public:
     /// @endcode
     template <typename F, typename Draw>
     void fieldDrawer(Draw draw) {
-        m_typeDrawers[std::type_index(typeid(F))] = [d = std::move(draw)](void* p, const reflect::FieldInfo& f,
-                                                                         EditorContext& ctx) -> bool {
+        FieldDrawer drawer = [d = std::move(draw)](void* p, const reflect::FieldInfo& f, EditorContext& ctx) -> bool {
             return d(*static_cast<F*>(p), f, ctx);
         };
+        m_typeDrawers[std::type_index(typeid(F))] = {std::move(drawer), currentModule()};
     }
     /// @brief Custom widget for one field of one reflected type (wins over type drawers).
     /// @param typeName Reflected type name (e.g. "Health").
     /// @param fieldName Field name (e.g. "current").
     void fieldDrawer(const std::string& typeName, const std::string& fieldName, FieldDrawer draw) {
-        m_fieldDrawers[typeName + "." + fieldName] = std::move(draw);
+        m_fieldDrawers[typeName + "." + fieldName] = {std::move(draw), currentModule()};
     }
     /// @brief The drawer for a field (field-specific first, then by C++ type), or `nullptr`.
     const FieldDrawer* findFieldDrawer(const reflect::TypeInfo& owner, const reflect::FieldInfo& field) const;
@@ -261,14 +270,26 @@ public:
     /// @name UI hooks
     /// @{
     /// @brief Called every frame after the panels (modal popups, overlays, floating tools).
-    void uiHook(std::function<void(EditorContext&)> draw) { m_uiHooks.push_back(std::move(draw)); }
+    void uiHook(std::function<void(EditorContext&)> draw) { m_uiHooks.push_back({std::move(draw), currentModule()}); }
     /// @brief Called inside the main menu bar after the menus (status text, play buttons...).
-    void menuBarWidget(std::function<void(EditorContext&)> draw) { m_menuBarWidgets.push_back(std::move(draw)); }
+    void menuBarWidget(std::function<void(EditorContext&)> draw) {
+        m_menuBarWidgets.push_back({std::move(draw), currentModule()});
+    }
     /// @brief Registered UI hooks.
-    const std::vector<std::function<void(EditorContext&)>>& uiHooks() const { return m_uiHooks; }
+    const std::vector<UiHook>& uiHooks() const { return m_uiHooks; }
     /// @brief Registered menu bar widgets.
-    const std::vector<std::function<void(EditorContext&)>>& menuBarWidgets() const { return m_menuBarWidgets; }
+    const std::vector<UiHook>& menuBarWidgets() const { return m_menuBarWidgets; }
     /// @}
+
+    /// @brief Removes everything registered while module was current (plugins, panels, tools,
+    ///        commands, component editors, field drawers, hooks, asset actions), detaching panels.
+    ///
+    /// Used by the game module host before unloading a game DLL. Module 0 (the host) is ignored.
+    /// @return Number of entries removed.
+    size_t removeModule(ModuleId module);
+
+    /// @brief The context passed to panels and commands.
+    EditorContext& context() { return m_context; }
 
     /// @brief Attaches every panel registered so far (called once by the editor at startup).
     void attachAll();
@@ -286,11 +307,16 @@ private:
     std::vector<Scope<Tool>> m_tools;
     std::deque<Command> m_commands;                 // deque: references stay valid on append
     std::deque<ComponentEditor> m_componentEditors;
-    std::unordered_map<std::type_index, FieldDrawer> m_typeDrawers;
-    std::map<std::string, FieldDrawer> m_fieldDrawers;
-    std::vector<std::function<void(EditorContext&)>> m_uiHooks;
+    struct DrawerEntry {
+        FieldDrawer draw;
+        ModuleId module = 0;
+    };
+    std::unordered_map<std::type_index, DrawerEntry> m_typeDrawers;
+    std::map<std::string, DrawerEntry> m_fieldDrawers;
+    std::vector<UiHook> m_uiHooks;
     std::deque<AssetAction> m_assetActions;
-    std::vector<std::function<void(EditorContext&)>> m_menuBarWidgets;
+    std::vector<UiHook> m_menuBarWidgets;
+    std::unordered_map<const void*, ModuleId> m_owners; // plugins, panels, tools
 };
 
 /// @brief Splits a menu path (`"File/Recent/Scene.json"`) into its parts, ignoring empty ones.

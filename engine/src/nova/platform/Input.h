@@ -180,7 +180,7 @@ public:
     static f32 applyTriggerDeadZone(f32 rawTrigger, f32 deadZone);
 
 private:
-    static platform::Window* s_window;
+    static NOVA_API platform::Window* s_window;
 };
 
 } // namespace nova

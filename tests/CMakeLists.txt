@@ -23,6 +23,18 @@ if(TARGET Nova::Editor)
     target_link_libraries(NovaEditorTests PRIVATE Nova::Editor)
     set_target_properties(NovaEditorTests PROPERTIES FOLDER "Tests")
     add_test(NAME editor COMMAND NovaEditorTests)
+    if(NOVA_SHARED)
+        # Two builds of the same game module, swapped on disk by the hot reload test.
+        foreach(version 1 2)
+            nova_add_game_module(NovaTestGameModuleV${version} TestGameModule.cpp)
+            target_compile_definitions(NovaTestGameModuleV${version} PRIVATE TEST_MODULE_VERSION=${version})
+            set_target_properties(NovaTestGameModuleV${version} PROPERTIES FOLDER "Tests")
+            add_dependencies(NovaEditorTests NovaTestGameModuleV${version})
+        endforeach()
+        target_compile_definitions(NovaEditorTests PRIVATE
+            NOVA_TEST_MODULE_V1="$<TARGET_FILE:NovaTestGameModuleV1>"
+            NOVA_TEST_MODULE_V2="$<TARGET_FILE:NovaTestGameModuleV2>")
+    endif()
 endif()
 
 # A failing assert opens a dialog on Windows debug builds: never let it block the suite.

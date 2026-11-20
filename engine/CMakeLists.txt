@@ -14,17 +14,28 @@ set(SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/nova)
 # Backend-agnostic engine code.
 file(GLOB_RECURSE NOVA_CORE_SOURCES CONFIGURE_DEPENDS
     ${SRC}/core/*.cpp      ${SRC}/core/*.h
-    ${SRC}/platform/*.h    ${SRC}/platform/Window.cpp ${SRC}/platform/Input.cpp ${SRC}/platform/FileSystem.cpp
+    ${SRC}/platform/*.h    ${SRC}/platform/Window.cpp ${SRC}/platform/Input.cpp ${SRC}/platform/FileSystem.cpp ${SRC}/platform/DynamicLibrary.cpp
     ${SRC}/rhi/*.h         ${SRC}/rhi/Device.cpp
     ${SRC}/renderer/*.cpp  ${SRC}/renderer/*.h
     ${SRC}/scene/*.cpp     ${SRC}/scene/*.h
     ${SRC}/physics/*.cpp   ${SRC}/physics/*.h
     ${SRC}/reflect/*.cpp   ${SRC}/reflect/*.h
     ${SRC}/assets/*.cpp    ${SRC}/assets/*.h
-    ${SRC}/ui/*.cpp        ${SRC}/ui/*.h
+    ${SRC}/ui/*.h          ${SRC}/ui/ImGuiTheme.cpp ${SRC}/ui/ImGuiSync.cpp
     ${SRC}/Nova.h)
 
-add_library(NovaEngine STATIC ${NOVA_CORE_SOURCES})
+if(NOVA_SHARED)
+    add_library(NovaEngine SHARED ${NOVA_CORE_SOURCES})
+    # Functions/classes are exported automatically; data uses NOVA_API (see Base.h).
+    set_target_properties(NovaEngine PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    target_compile_definitions(NovaEngine PUBLIC NOVA_SHARED PRIVATE NOVA_BUILDING_ENGINE)
+    # Dear ImGui is a static library, so every module that uses Nova gets its own copy of it:
+    # this file, compiled into each consumer (exe, editor, game DLL), keeps their ImGui context
+    # in sync with the engine's.
+    target_sources(NovaEngine INTERFACE ${SRC}/ui/ImGuiModuleSync.cpp)
+else()
+    add_library(NovaEngine STATIC ${NOVA_CORE_SOURCES})
+endif()
 add_library(Nova::Engine ALIAS NovaEngine)
 target_include_directories(NovaEngine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src PRIVATE ${CGLTF_INCLUDE_DIRS} ${STB_INCLUDE_DIRS})
 

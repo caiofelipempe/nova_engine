@@ -7,6 +7,8 @@
 
 namespace nova::editor::builtin {
 
+VisualSettings CoreVisualsPlugin::settings;
+
 namespace {
 const glm::vec4 kSelection{1.0f, 0.6f, 0.1f, 1.0f};
 const glm::vec4 kCollider{0.3f, 1.0f, 0.4f, 0.9f};

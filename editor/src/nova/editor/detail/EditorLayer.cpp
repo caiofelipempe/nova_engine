@@ -97,22 +97,81 @@ void EditorLayer::onAttach() {
     if (m_desc.builtinComponents) m_registry.plugin<builtin::CoreComponentsPlugin>();
 
     m_app->onSetup(m_registry);
+    setupGameModule();
     // Every reflected component/script gets an inspector, unless one with that name was registered.
     m_registry.addReflectedEditors();
     m_registry.attachAll();
     m_app->onNewScene(m_context);
+    if (m_gameModule && m_gameModule->module()) {
+        ModuleScope scope(m_gameModule->moduleId());
+        m_gameModule->module()->onNewScene(m_context);
+    }
     NOVA_CORE_INFO("Editor ready: {} panels, {} commands, {} component editors", m_registry.panels().size(),
                    m_registry.commands().size(), m_registry.componentEditors().size());
 }
 
 void EditorLayer::onDetach() {
     m_context.stop();
+    m_context.setGameModule(nullptr);
+    m_gameModule.reset(); // unload the game code while its panels can still detach
     m_registry.detachAll();
     m_scene.clear();
     m_scene.stopSimulation();
     // The ImGui context outlives this layer: save now and stop it from using our string.
     ImGui::SaveIniSettingsToDisk(m_desc.layoutFile.c_str());
     ImGui::GetIO().IniFilename = nullptr;
+}
+
+void EditorLayer::setupGameModule() {
+    const GameModuleDesc& desc = m_desc.gameModule;
+    if (desc.library.empty()) return;
+    m_gameModule = makeScope<GameModuleHost>(m_context, m_registry);
+    m_gameModule->buildCommand = desc.buildCommand;
+    m_gameModule->watch = desc.watch;
+    m_context.setGameModule(m_gameModule.get());
+    std::string error;
+    if (!m_gameModule->load(desc.library, &error)) NOVA_CORE_ERROR("Game module: {}", error);
+
+    GameModuleHost* host = m_gameModule.get();
+    Command reload;
+    reload.id = "game.reload";
+    reload.menuPath = "Game/Reload Code";
+    reload.shortcut = *KeyChord::parse("Ctrl+R");
+    reload.execute = [host](EditorContext&) {
+        std::string err;
+        if (!host->reload(&err) && !err.empty()) NOVA_CORE_ERROR("Reload: {}", err);
+    };
+    reload.isEnabled = [host](EditorContext&) { return !host->isBuilding(); };
+    m_registry.command(std::move(reload));
+
+    Command build;
+    build.id = "game.build";
+    build.menuPath = "Game/Build and Reload";
+    build.shortcut = *KeyChord::parse("Ctrl+B");
+    build.order = 1;
+    build.execute = [host](EditorContext&) { host->build(); };
+    build.isEnabled = [host](EditorContext&) { return !host->isBuilding() && !host->buildCommand.empty(); };
+    m_registry.command(std::move(build));
+
+    Command watch;
+    watch.id = "game.watch";
+    watch.menuPath = "Game/Reload When the DLL Changes";
+    watch.order = 2;
+    watch.separatorBefore = true;
+    watch.execute = [host](EditorContext&) { host->watch = !host->watch; };
+    watch.isChecked = [host](EditorContext&) { return host->watch; };
+    m_registry.command(std::move(watch));
+
+    m_registry.menuBarWidget([host](EditorContext&) {
+        ImGui::Separator();
+        const std::string name = host->library().stem().string();
+        if (host->isBuilding()) ImGui::TextColored({1.0f, 0.8f, 0.3f, 1.0f}, "%s: building...", name.c_str());
+        else if (!host->isLoaded()) ImGui::TextColored({1.0f, 0.4f, 0.4f, 1.0f}, "%s: not loaded", name.c_str());
+        else if (!host->lastBuildSucceeded()) ImGui::TextColored({1.0f, 0.4f, 0.4f, 1.0f}, "%s: build failed", name.c_str());
+        else ImGui::TextDisabled("%s (reload %u)", name.c_str(), host->reloadCount());
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Game code: %s\nCtrl+B build and reload, Ctrl+R reload", host->library().string().c_str());
+    });
 }
 
 void EditorLayer::registerFrameworkCommands() {
@@ -136,6 +195,7 @@ void EditorLayer::registerFrameworkCommands() {
 
 // ------------------------------------------------------------------ update --
 void EditorLayer::onUpdate(f32 dt) {
+    if (m_gameModule) m_gameModule->update(); // finished builds, changed DLL → reload
     m_context.validateSelection();
     m_app->onUpdate(m_context, dt);
 
@@ -182,7 +242,7 @@ void EditorLayer::onImGui() {
     ImGui::DockSpaceOverViewport(dockId, ImGui::GetMainViewport());
 
     drawPanels();
-    for (size_t i = 0; i < m_registry.uiHooks().size(); ++i) m_registry.uiHooks()[i](m_context);
+    for (size_t i = 0; i < m_registry.uiHooks().size(); ++i) m_registry.uiHooks()[i].draw(m_context);
     drawCommandPalette();
 
     // Automatic undo for the selection: whatever changed it this frame (inspector, gizmo, custom
@@ -210,6 +270,12 @@ void EditorLayer::drawMainMenu() {
     }
     child(root, "Window", 0); // always present: lists the panels
     sortTree(root, true);
+    // Top-level menus keep the place where they first appeared (hot reloads re-register commands).
+    for (const MenuNode& m : root.children)
+        if (std::find(m_menuOrder.begin(), m_menuOrder.end(), m.name) == m_menuOrder.end()) m_menuOrder.push_back(m.name);
+    auto slot = [this](const std::string& name) { return std::find(m_menuOrder.begin(), m_menuOrder.end(), name) - m_menuOrder.begin(); };
+    std::stable_sort(root.children.begin(), root.children.end(),
+                     [&](const MenuNode& a, const MenuNode& b) { return slot(a.name) < slot(b.name); });
     // Conventional placement: game menus (Tools, ...) before Window and Help.
     std::stable_partition(root.children.begin(), root.children.end(),
                           [](const MenuNode& m) { return m.name != "Window" && m.name != "Help"; });
@@ -240,7 +306,7 @@ void EditorLayer::drawMainMenu() {
         ImGui::EndMenu();
     }
 
-    for (size_t i = 0; i < m_registry.menuBarWidgets().size(); ++i) m_registry.menuBarWidgets()[i](m_context);
+    for (size_t i = 0; i < m_registry.menuBarWidgets().size(); ++i) m_registry.menuBarWidgets()[i].draw(m_context);
     ImGui::EndMainMenuBar();
 }
 

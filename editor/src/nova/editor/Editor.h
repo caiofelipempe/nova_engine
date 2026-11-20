@@ -18,6 +18,7 @@
 #include "nova/editor/EditorApp.h"
 #include "nova/editor/EditorCamera.h"
 #include "nova/editor/EditorContext.h"
+#include "nova/editor/GameModule.h"
 #include "nova/editor/Panel.h"
 #include "nova/editor/Picking.h"
 #include "nova/editor/Registry.h"
