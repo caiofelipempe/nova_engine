@@ -28,6 +28,10 @@ private:
 
     nova::Entity createPrimitive(const char* name, nova::MeshHandle mesh);
 
+    enum class PlayState { Edit, Play, Pause };
+    void play();
+    void stop();
+
     nova::Application& app() { return nova::Application::get(); }
     nova::Renderer& renderer() { return app().renderer(); }
 
@@ -40,7 +44,9 @@ private:
     glm::vec2 m_viewportSize{1280.0f, 720.0f};
     bool m_viewportHovered = false;
     bool m_cameraActive = false;
-    bool m_playing = true;
+    PlayState m_state = PlayState::Edit;
+    // Transforms captured when entering Play, restored on Stop.
+    std::vector<std::pair<entt::entity, nova::TransformComponent>> m_snapshot;
     bool m_useSceneCamera = false;
     int m_gizmoOperation = 0; // 0 translate, 1 rotate, 2 scale
     bool m_gizmoLocal = false;

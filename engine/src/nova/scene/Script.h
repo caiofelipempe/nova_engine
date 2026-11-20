@@ -18,11 +18,14 @@ public:
     virtual void onCreate() {}
     virtual void onUpdate(f32 /*dt*/) {}
     virtual void onDestroy() {}
+    // Called when this entity's rigid body starts touching another one.
+    virtual void onCollision(Entity /*other*/, const glm::vec3& /*point*/) {}
 
     Entity entity() const { return m_entity; }
     TransformComponent& transform() { return m_entity.transform(); }
     template <typename T>
     T& get() { return m_entity.get<T>(); }
+    Scene& scene() { return *m_entity.scene(); }
 
 private:
     friend class Scene;

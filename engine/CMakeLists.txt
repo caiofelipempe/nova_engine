@@ -16,6 +16,7 @@ file(GLOB_RECURSE NOVA_CORE_SOURCES CONFIGURE_DEPENDS
     ${SRC}/rhi/*.h         ${SRC}/rhi/Device.cpp
     ${SRC}/renderer/*.cpp  ${SRC}/renderer/*.h
     ${SRC}/scene/*.cpp     ${SRC}/scene/*.h
+    ${SRC}/physics/*.cpp   ${SRC}/physics/*.h
     ${SRC}/assets/*.cpp    ${SRC}/assets/*.h
     ${SRC}/ui/*.cpp        ${SRC}/ui/*.h
     ${SRC}/Nova.h)
@@ -56,7 +57,15 @@ if(NOVA_PLATFORM_GLFW)
     target_compile_definitions(NovaEngine PUBLIC NOVA_PLATFORM_GLFW=1)
 endif()
 
-source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/src FILES ${NOVA_CORE_SOURCES} ${NOVA_VK_SOURCES} ${NOVA_GLFW_SOURCES})
+if(NOVA_PHYSICS_JOLT)
+    find_package(Jolt CONFIG REQUIRED)
+    file(GLOB NOVA_JOLT_SOURCES CONFIGURE_DEPENDS ${SRC}/physics/jolt/*.cpp ${SRC}/physics/jolt/*.h)
+    target_sources(NovaEngine PRIVATE ${NOVA_JOLT_SOURCES})
+    target_link_libraries(NovaEngine PRIVATE Jolt::Jolt)
+    target_compile_definitions(NovaEngine PUBLIC NOVA_PHYSICS_JOLT=1)
+endif()
+
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/src FILES ${NOVA_CORE_SOURCES} ${NOVA_VK_SOURCES} ${NOVA_GLFW_SOURCES} ${NOVA_JOLT_SOURCES})
 
 # ----------------------------------------------------------------- shaders --
 set(SH ${CMAKE_CURRENT_SOURCE_DIR}/shaders)

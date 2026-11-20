@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nova/physics/PhysicsWorld.h"
 #include "nova/renderer/Mesh.h"
 
 #include <glm/glm.hpp>
@@ -61,6 +62,38 @@ struct PointLightComponent {
     glm::vec3 color{1.0f};
     f32 intensity = 10.0f;
     f32 radius = 8.0f;
+};
+
+// ----------------------------------------------------------------- physics --
+// A rigid body needs a collider component (Box/Sphere/Capsule). Without one, a box matching
+// the entity's scale is used. Collider sizes are multiplied by the transform scale.
+struct RigidBodyComponent {
+    physics::BodyType type = physics::BodyType::Dynamic;
+    f32 mass = 1.0f;
+    f32 friction = 0.5f;
+    f32 restitution = 0.1f;
+    f32 linearDamping = 0.05f;
+    f32 angularDamping = 0.05f;
+    f32 gravityFactor = 1.0f;
+    bool isSensor = false;
+
+    physics::BodyId body; // runtime handle, valid while the scene is simulating
+};
+
+struct BoxColliderComponent {
+    glm::vec3 halfExtents{0.5f};
+    glm::vec3 offset{0.0f};
+};
+
+struct SphereColliderComponent {
+    f32 radius = 0.5f;
+    glm::vec3 offset{0.0f};
+};
+
+struct CapsuleColliderComponent {
+    f32 radius = 0.5f;
+    f32 halfHeight = 0.5f; // half length of the cylinder part, along local Y
+    glm::vec3 offset{0.0f};
 };
 
 // Built-in behaviour: spins the entity around `axis`.

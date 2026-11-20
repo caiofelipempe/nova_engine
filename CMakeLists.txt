@@ -20,6 +20,7 @@ endif()
 # ---------------------------------------------------------------------------
 option(NOVA_RHI_VULKAN       "Build the Vulkan RHI backend"      ON)
 option(NOVA_PLATFORM_GLFW    "Build the GLFW window backend"     ON)
+option(NOVA_PHYSICS_JOLT     "Build the Jolt Physics backend"    ON)
 # Editor/sandbox are on when this is the top-level project, off when a game embeds the engine
 # via add_subdirectory().
 option(NOVA_BUILD_EDITOR     "Build the Nova editor"             ${PROJECT_IS_TOP_LEVEL})

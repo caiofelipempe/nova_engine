@@ -59,7 +59,7 @@ build\bin\Debug\NovaEditor.exe
 build\bin\Debug\Sandbox.exe
 ```
 
-As dependências (manifest [vcpkg.json](vcpkg.json)) são instaladas automaticamente no configure: GLFW, Vulkan Memory Allocator, glm, EnTT, spdlog, Dear ImGui (docking), ImGuizmo, cgltf.
+As dependências (manifest [vcpkg.json](vcpkg.json)) são instaladas automaticamente no configure: GLFW, Vulkan Memory Allocator, glm, EnTT, spdlog, Dear ImGui (docking), ImGuizmo, cgltf, Jolt Physics.
 Em Debug, as validation layers do Vulkan ficam ligadas e as mensagens vão para o console e para `nova.log`.
 
 ## Arquitetura
@@ -71,6 +71,7 @@ engine/src/nova/
   rhi/        Device, CommandList (interfaces)  → vulkan/ (backend Vulkan)
   renderer/   Renderer, RenderView, Mesh — só fala com o RHI
   scene/      Scene (EnTT), Entity, Components, Script, GameLayer
+  physics/    PhysicsWorld (interface)          → jolt/ (backend Jolt)
   assets/     glTF (cgltf)
   ui/         tema/fontes do ImGui
 engine/shaders/  GLSL → SPIR-V em build-time (glslc)
@@ -90,6 +91,31 @@ Isso mapeia direto para Vulkan (BDA + descriptor indexing) e para D3D12 (SM 6.6 
 **Recursos.** São handles geracionais (`BufferHandle`, `TextureHandle`, …): handles obsoletos são detectados em vez de apontarem para outro recurso. A destruição é adiada até a GPU terminar os frames em voo. O estado das texturas é rastreado e as barreiras (sync2) são emitidas automaticamente.
 
 **Frame.** `[TLAS build] → sky → forward PBR (HDR, RGBA16F) → tonemap (ACES) → UI`. Os dados por frame vêm de um alocador linear num buffer de upload por frame em voo.
+
+## Física (Jolt Physics)
+
+A física 3D usa o [Jolt Physics](https://github.com/jrouwe/JoltPhysics) (multi-thread, usado em Horizon Forbidden West), atrás da interface `physics::PhysicsWorld` — mesmo esquema de backends do RHI (`NOVA_PHYSICS_JOLT`). Nenhum header do Jolt vaza para a API pública.
+
+```cpp
+auto box = scene().createEntity("Crate");
+box.add<nova::MeshComponent>(renderer().cube());
+box.add<nova::RigidBodyComponent>();                    // dinâmico, 1 kg
+box.add<nova::BoxColliderComponent>();                  // opcional: sem collider usa uma caixa do tamanho do scale
+
+ground.add<nova::RigidBodyComponent>(nova::physics::BodyType::Static);
+
+scene().setLinearVelocity(ball, dir * 25.0f);           // também addForce / addImpulse
+if (auto hit = scene().raycast(origin, dir)) hit->entity.name();
+
+struct Bomb : nova::Script {                            // eventos de colisão nos scripts
+    void onCollision(nova::Entity other, const glm::vec3& point) override { /* ... */ }
+};
+```
+
+- Corpos **Static**, **Kinematic** (seguem o transform do ECS e empurram os dinâmicos) e **Dynamic**; colliders Box, Sphere e Capsule com offset; tamanhos multiplicados pelo scale.
+- Passo fixo de 60 Hz com acumulador; transforms dos dinâmicos são escritos de volta no ECS.
+- `GameLayer` liga a simulação sozinho. No editor: **Play / Pause / Stop** (Stop restaura os transforms), gizmo arrasta corpos durante o Play.
+- Próximos passos: mesh/convex colliders (para cenas glTF), character controller, joints, debug draw dos colliders, interpolação de transforms.
 
 ## Ray tracing
 

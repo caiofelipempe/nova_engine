@@ -20,6 +20,8 @@
 
 #include "nova/rhi/Device.h"
 
+#include "nova/physics/PhysicsWorld.h"
+
 #include "nova/renderer/Mesh.h"
 #include "nova/renderer/Renderer.h"
 

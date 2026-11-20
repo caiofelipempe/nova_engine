@@ -70,12 +70,32 @@ void EditorLayer::onAttach() {
     buildDemoScene();
     m_camera.position = {0.0f, 4.5f, 13.0f};
     m_camera.pitch = -0.28f;
-    NOVA_INFO("Editor ready. RMB+WASD fly | W/E/R gizmo | F focus | Del delete");
+    NOVA_INFO("Editor ready. Press Play to simulate. RMB+WASD fly | W/E/R gizmo | F focus | Del delete");
 }
 
 void EditorLayer::onDetach() {
     m_scene.clear();
+    m_scene.stopSimulation();
     m_view.reset();
+}
+
+void EditorLayer::play() {
+    if (m_state == PlayState::Pause) {
+        m_state = PlayState::Play;
+        return;
+    }
+    m_snapshot.clear();
+    for (auto [e, t] : m_scene.registry().view<TransformComponent>().each()) m_snapshot.emplace_back(e, t);
+    m_scene.startSimulation();
+    m_state = PlayState::Play;
+}
+
+void EditorLayer::stop() {
+    m_scene.stopSimulation();
+    for (auto& [e, t] : m_snapshot)
+        if (m_scene.registry().valid(e)) m_scene.registry().replace<TransformComponent>(e, t);
+    m_snapshot.clear();
+    m_state = PlayState::Edit;
 }
 
 Entity EditorLayer::createPrimitive(const char* name, MeshHandle mesh) {
@@ -102,6 +122,28 @@ void EditorLayer::buildDemoScene() {
     gm.baseColor = {0.75f, 0.75f, 0.78f, 1.0f};
     gm.roughness = 0.8f;
     gm.checker = true;
+    ground.add<RigidBodyComponent>(physics::BodyType::Static);
+    ground.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
+
+    // Physics playground: a stack of boxes and balls falling onto it (press Play).
+    for (int y = 0; y < 6; ++y) {
+        Entity b = createPrimitive(("Box " + std::to_string(y)).c_str(), r.cube());
+        b.transform().position = {7.5f + (y % 2) * 0.15f, 0.4f + y * 0.81f, 1.0f};
+        b.transform().scale = glm::vec3(0.8f);
+        b.get<MeshComponent>().material.baseColor = {0.55f, 0.38f, 0.2f, 1.0f};
+        b.add<RigidBodyComponent>();
+        b.add<BoxColliderComponent>();
+    }
+    for (int i = 0; i < 4; ++i) {
+        Entity ball = createPrimitive(("Ball " + std::to_string(i)).c_str(), r.sphere());
+        ball.transform().position = {7.3f + 0.2f * i, 7.0f + 1.5f * i, 1.0f + 0.15f * i};
+        ball.transform().scale = glm::vec3(0.6f);
+        auto& bm = ball.get<MeshComponent>().material;
+        bm.baseColor = {0.2f, 0.8f, 0.35f, 1.0f};
+        bm.roughness = 0.3f;
+        ball.add<RigidBodyComponent>().restitution = 0.6f;
+        ball.add<SphereColliderComponent>();
+    }
 
     // Row of spheres sweeping roughness (dielectric) and metallic (gold).
     for (int i = 0; i < 6; ++i) {
@@ -111,6 +153,8 @@ void EditorLayer::buildDemoScene() {
         auto& m = s.get<MeshComponent>().material;
         m.baseColor = {0.85f, 0.15f, 0.12f, 1.0f};
         m.roughness = 0.05f + 0.18f * i;
+        s.add<RigidBodyComponent>(physics::BodyType::Static);
+        s.add<SphereColliderComponent>();
 
         Entity g = createPrimitive(("Gold " + std::to_string(i)).c_str(), r.sphere());
         g.transform().position = {-5.0f + 2.0f * i, 0.6f, 2.5f};
@@ -127,6 +171,8 @@ void EditorLayer::buildDemoScene() {
         p.transform().position = {-6.0f + 4.0f * i, 2.0f, -4.0f};
         p.transform().scale = {0.6f, 4.0f, 0.6f};
         p.get<MeshComponent>().material.baseColor = {0.6f, 0.62f, 0.66f, 1.0f};
+        p.add<RigidBodyComponent>(physics::BodyType::Static);
+        p.add<BoxColliderComponent>();
     }
 
     Entity crate = createPrimitive("Spinning Crate", r.cube());
@@ -134,6 +180,7 @@ void EditorLayer::buildDemoScene() {
     crate.transform().scale = glm::vec3(1.2f);
     crate.get<MeshComponent>().material.baseColor = {0.2f, 0.45f, 0.9f, 1.0f};
     crate.add<RotatorComponent>(glm::vec3(0.4f, 1.0f, 0.2f), 0.7f);
+    crate.add<RigidBodyComponent>(physics::BodyType::Kinematic);
 
     Entity lamp = createPrimitive("Lamp", r.sphere());
     lamp.transform().position = {4.0f, 1.5f, -2.0f};
@@ -177,7 +224,7 @@ void EditorLayer::onUpdate(float dt) {
         }
     }
 
-    if (m_playing) m_scene.update(dt);
+    if (m_state == PlayState::Play) m_scene.update(dt);
     if (m_selected && !m_selected.valid()) m_selected = {};
 }
 
@@ -247,7 +294,16 @@ void EditorLayer::drawMenuBar() {
         ImGui::EndMenu();
     }
     ImGui::Separator();
-    if (ImGui::MenuItem(m_playing ? "Pause" : "Play")) m_playing = !m_playing;
+    if (m_state != PlayState::Play) {
+        if (ImGui::MenuItem(m_state == PlayState::Pause ? "Resume" : "Play")) play();
+    } else if (ImGui::MenuItem("Pause")) {
+        m_state = PlayState::Pause;
+    }
+    ImGui::BeginDisabled(m_state == PlayState::Edit);
+    if (ImGui::MenuItem("Stop")) stop();
+    ImGui::EndDisabled();
+    ImGui::TextColored(m_state == PlayState::Edit ? ImVec4(0.6f, 0.6f, 0.65f, 1) : ImVec4(0.4f, 0.9f, 0.5f, 1), "%s",
+                       m_state == PlayState::Edit ? "EDIT" : m_state == PlayState::Play ? "PLAYING" : "PAUSED");
     ImGui::Separator();
     ImGui::TextDisabled("%.0f FPS  %.2f ms", app().fps(), app().deltaTime() * 1000.0f);
     ImGui::EndMainMenuBar();
@@ -305,6 +361,7 @@ void EditorLayer::drawViewport() {
                 t.position = translation;
                 t.rotation = glm::eulerAngles(rot);
                 t.scale = scale;
+                if (m_scene.isSimulating()) m_scene.syncTransformToPhysics(m_selected); // drag bodies while playing
             }
         }
     }
@@ -408,6 +465,38 @@ void EditorLayer::drawInspector() {
         ImGui::DragFloat3("Axis", glm::value_ptr(r.axis), 0.01f);
         ImGui::DragFloat("Speed", &r.speed, 0.01f);
     });
+    componentSection<RigidBodyComponent>(e, "Rigid Body", [&](RigidBodyComponent& rb) {
+        const char* types[] = {"Static", "Kinematic", "Dynamic"};
+        int type = static_cast<int>(rb.type);
+        ImGui::BeginDisabled(m_scene.isSimulating());
+        if (ImGui::Combo("Type", &type, types, 3)) rb.type = static_cast<physics::BodyType>(type);
+        ImGui::EndDisabled();
+        ImGui::DragFloat("Mass", &rb.mass, 0.05f, 0.001f, 10000.0f);
+        ImGui::SliderFloat("Friction", &rb.friction, 0.0f, 1.0f);
+        ImGui::SliderFloat("Restitution", &rb.restitution, 0.0f, 1.0f);
+        ImGui::SliderFloat("Linear damping", &rb.linearDamping, 0.0f, 1.0f);
+        ImGui::SliderFloat("Angular damping", &rb.angularDamping, 0.0f, 1.0f);
+        ImGui::DragFloat("Gravity factor", &rb.gravityFactor, 0.01f, -10.0f, 10.0f);
+        ImGui::Checkbox("Sensor", &rb.isSensor);
+        if (m_scene.isSimulating()) {
+            ImGui::TextDisabled("Body properties apply on next Play.");
+            glm::vec3 v = m_scene.linearVelocity(e);
+            ImGui::Text("Velocity %.2f %.2f %.2f", v.x, v.y, v.z);
+        }
+    });
+    componentSection<BoxColliderComponent>(e, "Box Collider", [](BoxColliderComponent& c) {
+        ImGui::DragFloat3("Half extents", glm::value_ptr(c.halfExtents), 0.01f, 0.001f, 1000.0f);
+        ImGui::DragFloat3("Offset", glm::value_ptr(c.offset), 0.01f);
+    });
+    componentSection<SphereColliderComponent>(e, "Sphere Collider", [](SphereColliderComponent& c) {
+        ImGui::DragFloat("Radius", &c.radius, 0.01f, 0.001f, 1000.0f);
+        ImGui::DragFloat3("Offset", glm::value_ptr(c.offset), 0.01f);
+    });
+    componentSection<CapsuleColliderComponent>(e, "Capsule Collider", [](CapsuleColliderComponent& c) {
+        ImGui::DragFloat("Radius", &c.radius, 0.01f, 0.001f, 1000.0f);
+        ImGui::DragFloat("Half height", &c.halfHeight, 0.01f, 0.001f, 1000.0f);
+        ImGui::DragFloat3("Offset", glm::value_ptr(c.offset), 0.01f);
+    });
     if (e.has<ScriptComponent>())
         ImGui::TextDisabled("%zu native script(s)", e.get<ScriptComponent>().scripts.size());
 
@@ -420,6 +509,15 @@ void EditorLayer::drawInspector() {
             e.add<DirectionalLightComponent>();
         if (!e.has<PointLightComponent>() && ImGui::MenuItem("Point Light")) e.add<PointLightComponent>();
         if (!e.has<RotatorComponent>() && ImGui::MenuItem("Rotator")) e.add<RotatorComponent>();
+        ImGui::Separator();
+        if (!e.has<RigidBodyComponent>() && ImGui::MenuItem("Rigid Body")) e.add<RigidBodyComponent>();
+        const bool hasCollider =
+            e.has<BoxColliderComponent>() || e.has<SphereColliderComponent>() || e.has<CapsuleColliderComponent>();
+        ImGui::BeginDisabled(hasCollider);
+        if (ImGui::MenuItem("Box Collider")) e.add<BoxColliderComponent>();
+        if (ImGui::MenuItem("Sphere Collider")) e.add<SphereColliderComponent>();
+        if (ImGui::MenuItem("Capsule Collider")) e.add<CapsuleColliderComponent>();
+        ImGui::EndDisabled();
         ImGui::EndPopup();
     }
     ImGui::End();
@@ -437,6 +535,8 @@ void EditorLayer::drawRendererPanel() {
                         caps.rayTracingPipeline ? " + pipeline" : "");
     ImGui::Text("Draws %u | Tris %llu | TLAS inst %u", st.drawCalls, static_cast<unsigned long long>(st.triangles),
                 st.tlasInstances);
+    ImGui::Text("Physics: %s (%u bodies)", m_scene.isSimulating() ? "Jolt, running" : "stopped",
+                m_scene.physics() ? m_scene.physics()->bodyCount() : 0u);
     ImGui::Separator();
 
     ImGui::BeginDisabled(!caps.rayQuery);

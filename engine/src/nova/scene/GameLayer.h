@@ -30,10 +30,14 @@ public:
     Renderer& renderer() { return Application::get().renderer(); }
     Application& app() { return Application::get(); }
 
-    void onAttach() override { onStart(); }
+    void onAttach() override {
+        onStart();
+        m_scene.startSimulation(); // physics runs for every entity with a RigidBodyComponent
+    }
     void onDetach() override {
         onStop();
         m_scene.clear();
+        m_scene.stopSimulation();
     }
     void onUpdate(f32 dt) override {
         onTick(dt);
