@@ -232,4 +232,11 @@ Próximos passos (a estrutura já está preparada):
 
 ## Roadmap geral
 
-Texturas em materiais (o slot bindless já está no `InstanceData`), hierarquia de transforms, serialização de cena, shadow maps como fallback sem RT, render graph, culling em GPU, e um backend D3D12.
+- **Shaders do jogo**: o jogo pode trazer os próprios shaders (materiais, pós-processamento, compute) e escolher, por shader, entre
+  - **compilar em runtime** dentro do próprio jogo/editor (GLSL → SPIR-V embutido na engine, com cache em disco e recompilação a quente quando o arquivo muda — ideal durante o desenvolvimento e para shaders gerados ou configuráveis), ou
+  - **enviar pré-compilado** (SPIR-V gerado no build pelo CMake, como os shaders da engine — para shaders que não vão mudar, sem custo de compilação nem compilador no jogo final).
+  
+  A mesma API carrega os dois casos (fonte ou binário), e o pipeline do renderer aceita shaders do jogo sem alterar o código da engine.
+- Editor: receitas para IA / servidor MCP (fase 5).
+- Renderer: materiais com mais texturas (normal, metallic-roughness, emissive), shadow maps como fallback sem RT, render graph, culling em GPU, backend D3D12.
+- Cena: hierarquia de transforms; colliders de malha/convexos; character controller.
