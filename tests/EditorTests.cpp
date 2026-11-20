@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <vector>
 
@@ -564,6 +565,60 @@ void signals() {
     CHECK(sum == 12 && s.size() == 0);
 }
 
+void assets() {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "nova_editor_assets_test";
+    fs::remove_all(root);
+    Fixture f;
+    f.ctx.assets().setRoot(root);
+
+    // Prefab from the "selection", then placed through the context (one undo step, selected).
+    Entity a = f.scene.createEntity("Pillar");
+    a.transform().position = {4, 0, 0};
+    Entity b = f.scene.createEntity("Cap");
+    b.transform().position = {4, 3, 0};
+    auto guid = f.ctx.assets().createPrefab({a, b}, "pillar");
+    CHECK(guid.has_value());
+    if (!guid) return;
+    const size_t before = f.ctx.undoStack().actions().size();
+    auto placed = f.ctx.instantiateAsset(*guid, {0, 0, -2});
+    CHECK(placed.size() == 2 && f.ctx.selection().size() == 2 && f.ctx.isSelected(placed[1]));
+    CHECK(f.ctx.undoStack().actions().size() == before + 1);
+    CHECK(f.ctx.undoStack().actions().back().name == "Add pillar.prefab.json");
+    const u64 capUuid = placed.size() == 2 ? placed[1].uuid() : 0;
+    CHECK(f.scene.findEntityByUuid(capUuid).transform().position == glm::vec3(0, 3, -2));
+    f.ctx.undo();
+    CHECK(!f.scene.findEntityByUuid(capUuid).valid());
+    f.ctx.redo();
+    CHECK(f.scene.findEntityByUuid(capUuid).valid());
+
+    // The adjust callback runs inside the same undo step.
+    auto lifted = f.ctx.instantiateAsset(*guid, {}, [](std::vector<Entity>& es) {
+        for (Entity e : es) e.transform().position.y += 10.0f;
+    });
+    CHECK(lifted.size() == 2 && lifted[0].transform().position.y == 10.0f);
+    CHECK(f.ctx.undoStack().actions().size() == before + 2);
+    CHECK(f.ctx.instantiateAsset(12345, {}).empty());
+
+    // Asset actions: type-specific first, then "*"; same type + label replaces.
+    int runs = 0;
+    f.registry.assetAction("*", "Copy", [&](EditorContext&, const AssetRecord&) { runs += 100; });
+    f.registry.assetAction("Prefab", "Place", [&](EditorContext&, const AssetRecord&) { runs += 1; });
+    f.registry.assetAction("Prefab", "Place", [&](EditorContext&, const AssetRecord&) { runs += 2; });
+    auto actions = f.registry.assetActions("Prefab");
+    CHECK(actions.size() == 2 && actions[0]->label == "Place" && actions[1]->label == "Copy");
+    actions[0]->run(f.ctx, *f.ctx.assets().find(*guid));
+    CHECK(runs == 2);
+    CHECK(f.registry.assetActions("Texture").size() == 1);
+    CHECK(f.registry.removeAssetAction("Prefab", "Place") && !f.registry.removeAssetAction("Prefab", "Place"));
+
+    // Scenes saved inside the asset folder become assets.
+    CHECK(f.ctx.saveScene(root / "levels" / "one.scene.json"));
+    const AssetRecord* scene = f.ctx.assets().findByPath("levels/one.scene.json");
+    CHECK(scene && scene->type == "Scene");
+    fs::remove_all(root);
+}
+
 } // namespace
 
 int main() {
@@ -588,6 +643,7 @@ int main() {
         {"tools", tools},
         {"picking", picking},
         {"signals", signals},
+        {"assets (prefabs, instantiate + undo, actions)", assets},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

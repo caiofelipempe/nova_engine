@@ -105,6 +105,13 @@ void buildDemoScene(editor::EditorContext& ctx) {
         lamp.addScript<Bob>().speed = 1.5f + i; // reflected script: editable, saved, restored on Stop
     }
 
+    // Assets from the project folder (assets/): a textured glTF model and a prefab.
+    AssetDatabase& assets = ctx.assets();
+    if (const AssetRecord* model = assets.findByPath("models/crate/crate.gltf"))
+        assets.instantiate(model->guid, scene, {3.5f, 0.5f, 3.0f});
+    if (const AssetRecord* stack = assets.findByPath("prefabs/crate_stack.prefab.json"))
+        assets.instantiate(stack->guid, scene, {-8.5f, 0.5f, 2.0f});
+
     ctx.camera().position = {0.0f, 4.5f, 13.0f};
     ctx.camera().pitch = -0.28f;
     ctx.select(crate);

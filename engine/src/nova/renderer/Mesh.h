@@ -4,6 +4,7 @@
 /// @brief Vertex format, CPU mesh data, mesh handles and materials.
 
 #include "nova/core/Base.h"
+#include "nova/rhi/RHITypes.h"
 
 #include <glm/glm.hpp>
 
@@ -94,6 +95,7 @@ struct Material {
     glm::vec3 emissive{0.0f};     ///< Emitted linear RGB color.
     f32 emissiveStrength = 0.0f;  ///< Multiplier for `emissive` (HDR; values > 1 bloom-ready).
     bool checker = false;         ///< Procedural world-space checker pattern (handy for floors).
+    rhi::TextureHandle baseColorTexture; ///< Optional albedo texture (multiplies baseColor), sampled with the mesh UVs.
 };
 
 } // namespace nova

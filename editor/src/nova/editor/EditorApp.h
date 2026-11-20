@@ -7,6 +7,7 @@
 #include "nova/editor/EditorContext.h"
 #include "nova/editor/Registry.h"
 
+#include <filesystem>
 #include <string>
 
 namespace nova::editor {
@@ -16,7 +17,9 @@ struct EditorDesc {
     ApplicationDesc app{.name = "Nova Editor", .maximized = true}; ///< Window/device settings.
     /// @brief ImGui layout file (docking, window sizes). Use a distinct name per game editor.
     std::string layoutFile = "editor_layout.ini";
-    bool builtinPanels = true;     ///< Viewport, Hierarchy, Inspector, Renderer and Console panels.
+    /// @brief The project's asset folder (created if missing), shown in the Assets panel.
+    std::filesystem::path assetsDir = "assets";
+    bool builtinPanels = true;     ///< Viewport, Hierarchy, Inspector, Renderer, Console, History and Assets panels.
     bool builtinCommands = true;   ///< File/Edit/Entity/Play/Window menus, shortcuts and the command palette.
     bool builtinComponents = true; ///< Inspector support for the engine's components.
 };

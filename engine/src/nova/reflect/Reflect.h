@@ -45,7 +45,8 @@ enum class FieldKind {
     Vec4,   ///< `glm::vec4`
     String, ///< `std::string`
     Enum,   ///< any enum registered with enumeration()
-    Mesh,   ///< MeshHandle (serialized by mesh name or id)
+    Mesh,   ///< MeshHandle (serialized by mesh name/asset or id)
+    Texture, ///< rhi::TextureHandle (serialized by texture asset or id)
     Struct, ///< any struct registered with type() (nested object)
 };
 
@@ -169,6 +170,7 @@ constexpr FieldKind kindOf() {
     else if constexpr (std::is_same_v<F, std::string>) return FieldKind::String;
     else if constexpr (std::is_enum_v<F>) return FieldKind::Enum;
     else if constexpr (std::is_same_v<F, MeshHandle>) return FieldKind::Mesh;
+    else if constexpr (std::is_same_v<F, rhi::TextureHandle>) return FieldKind::Texture;
     else return FieldKind::Struct;
 }
 

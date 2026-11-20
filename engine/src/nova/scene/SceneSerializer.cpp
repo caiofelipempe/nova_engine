@@ -21,6 +21,7 @@ using Json = nlohmann::ordered_json; // keeps field order: readable, diff-friend
 namespace {
 
 constexpr const char* kFormat = "nova.scene";
+constexpr const char* kPrefabFormat = "nova.prefab";
 constexpr int kVersion = 1;
 
 // ---------------------------------------------------------------- writing --
@@ -62,8 +63,20 @@ Json writeField(const reflect::FieldInfo& f, void* p, const SerializeOptions& op
         case K::Mesh: {
             const MeshHandle m = *static_cast<MeshHandle*>(p);
             if (!m) return nullptr;
-            if (opt.meshName) return opt.meshName(m);
+            if (opt.meshName) {
+                std::string name = opt.meshName(m);
+                if (!name.empty()) return name;
+            }
             return m.id;
+        }
+        case K::Texture: {
+            const rhi::TextureHandle t = *static_cast<rhi::TextureHandle*>(p);
+            if (!t) return nullptr;
+            if (opt.textureName) {
+                std::string name = opt.textureName(t);
+                if (!name.empty()) return name;
+            }
+            return t.key();
         }
         case K::Struct: {
             const reflect::TypeInfo* t = f.nestedType();
@@ -147,6 +160,19 @@ void readField(const reflect::FieldInfo& f, void* p, const Json& j, const Serial
                 const std::string name = j.get<std::string>();
                 m = opt.findMesh ? opt.findMesh(name) : MeshHandle{};
                 if (!m) NOVA_CORE_WARN("Scene: mesh '{}' not found", name);
+            }
+            break;
+        }
+        case K::Texture: {
+            auto& t = *static_cast<rhi::TextureHandle*>(p);
+            if (j.is_null()) t = {};
+            else if (j.is_number_unsigned() || j.is_number_integer()) {
+                const u64 key = j.get<u64>();
+                t = rhi::TextureHandle{static_cast<u32>(key & 0xFFFFFFFFu), static_cast<u32>(key >> 32)};
+            } else if (j.is_string()) {
+                const std::string name = j.get<std::string>();
+                t = opt.findTexture ? opt.findTexture(name) : rhi::TextureHandle{};
+                if (!t) NOVA_CORE_WARN("Scene: texture '{}' not found", name);
             }
             break;
         }
@@ -290,6 +316,52 @@ Entity duplicateEntity(Entity entity) {
     Entity copy = readEntity(scene, je, ids, warned);
     if (auto* name = copy.tryGet<NameComponent>()) name->name += " (copy)";
     return copy;
+}
+
+std::string serializePrefab(const std::vector<Entity>& entities, const SerializeOptions& options) {
+    std::set<std::string> warned;
+    Json root = Json::object();
+    root["format"] = kPrefabFormat;
+    root["version"] = kVersion;
+    Json list = Json::array();
+    glm::vec3 pivot(0.0f);
+    bool first = true;
+    for (Entity e : entities) {
+        if (!e.valid()) continue;
+        if (first) pivot = e.transform().position;
+        first = false;
+        Json je = writeEntity(e, options, warned);
+        je["components"].erase("Id");
+        je["components"].erase("PrefabInstance");
+        const glm::vec3 local = e.transform().position - pivot; // relative to the first entity
+        je["components"]["Transform"]["position"] = writeVec(&local.x, 3);
+        list.push_back(std::move(je));
+    }
+    root["entities"] = std::move(list);
+    return root.dump(2);
+}
+
+std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const glm::vec3& position,
+                                      const SerializeOptions& options, std::string* error) {
+    std::vector<Entity> out;
+    Json root = Json::parse(json, nullptr, /*allow_exceptions=*/false);
+    if (root.is_discarded() || !root.is_object() || root.value("format", "") != kPrefabFormat) {
+        if (error) *error = "not a nova.prefab file";
+        return out;
+    }
+    std::set<std::string> warned;
+    try {
+        if (root.contains("entities") && root["entities"].is_array())
+            for (Json je : root["entities"]) {
+                if (je.contains("components")) je["components"].erase("Id"); // fresh UUIDs
+                Entity e = readEntity(scene, je, options, warned);
+                e.transform().position += position;
+                out.push_back(e);
+            }
+    } catch (const nlohmann::json::exception& ex) {
+        if (error) *error = std::string("malformed prefab: ") + ex.what();
+    }
+    return out;
 }
 
 std::string serializeEntity(Entity entity, const SerializeOptions& options) {

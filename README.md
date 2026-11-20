@@ -63,7 +63,7 @@ doxygen docs/Doxyfile             # referência da API em build/docs/html (reque
 
 A API pública é documentada no estilo Doxygen nos headers de `engine/src/nova/`. Com o Doxygen instalado, o CMake também cria o target `NovaDocs`.
 
-As dependências (manifest [vcpkg.json](vcpkg.json)) são instaladas automaticamente no configure: GLFW, Vulkan Memory Allocator, glm, EnTT, spdlog, Dear ImGui (docking), ImGuizmo, cgltf, Jolt Physics, nlohmann-json.
+As dependências (manifest [vcpkg.json](vcpkg.json)) são instaladas automaticamente no configure: GLFW, Vulkan Memory Allocator, glm, EnTT, spdlog, Dear ImGui (docking), ImGuizmo, cgltf, stb_image, Jolt Physics, nlohmann-json.
 Em Debug, as validation layers do Vulkan ficam ligadas e as mensagens vão para o console e para `nova.log`.
 
 ## Arquitetura
@@ -77,7 +77,7 @@ engine/src/nova/
   scene/      Scene (EnTT), Entity, Components, Script, GameLayer, SceneSerializer (JSON)
   physics/    PhysicsWorld (interface)          → jolt/ (backend Jolt)
   reflect/    reflexão de tipos (componentes, scripts, structs, enums)
-  assets/     glTF (cgltf)
+  assets/     AssetDatabase (GUIDs em .meta, importadores), glTF (cgltf), imagens (stb_image)
   ui/         tema/fontes do ImGui
 engine/shaders/  GLSL → SPIR-V em build-time (glslc)
 editor/src/      Nova::Editor — framework de editor extensível (painéis, comandos, inspetores, plugins)
@@ -136,7 +136,7 @@ int main() { return nova::editor::run<MyGameEditor>(); }
 
 No CMake: `nova_add_editor(MyGameEditor editor/main.cpp ...)`. Guia com receitas: [docs/EDITOR.md](docs/EDITOR.md).
 
-Recursos do editor: undo/redo automático para qualquer edição (incluindo ferramentas do jogo) com painel *History*; seleção múltipla (clique na viewport, Ctrl/Shift, hierarquia); ferramentas de viewport registráveis (gizmos Move/Rotate/Scale, exemplo de pincel); visualização de seleção, colliders, luzes e câmeras via `DebugDraw`; cenas em JSON com Play/Stop restaurando tudo; paleta de comandos.
+Recursos do editor: undo/redo automático para qualquer edição (incluindo ferramentas do jogo) com painel *History*; seleção múltipla (clique na viewport, Ctrl/Shift, hierarquia); ferramentas de viewport registráveis (gizmos Move/Rotate/Scale, exemplo de pincel); visualização de seleção, colliders, luzes e câmeras via `DebugDraw`; cenas em JSON com Play/Stop restaurando tudo; paleta de comandos; painel **Assets** (pasta `assets/`) com arrastar-e-soltar de modelos, prefabs e texturas para a viewport e importadores/ações registráveis pelo jogo.
 
 ## Reflexão e cenas
 
@@ -148,11 +148,15 @@ nova::reflect::type<Health>("Health")
     .field("invulnerable", &Health::invulnerable, {.tooltip = "Ignores all damage"})
     .component();
 
-nova::saveScene(scene, "levels/forest.scene.json", nova::SerializeOptions::fromRenderer(renderer));
-nova::loadScene(scene, "levels/forest.scene.json", nova::SerializeOptions::fromRenderer(renderer));
+nova::AssetDatabase assets(&renderer);
+assets.setRoot("assets");                                    // GUIDs em <arquivo>.meta
+assets.instantiate(assets.findByPath("models/crate/crate.gltf")->guid, scene, {0, 0, 0});
+nova::saveScene(scene, "assets/levels/forest.scene.json", assets.serializeOptions());
+nova::loadScene(scene, "assets/levels/forest.scene.json", assets.serializeOptions());
 ```
 
-- Cenas em JSON legível e estável para diff (`"format": "nova.scene"`): enums e malhas por nome, floats curtos e exatos, ordem de campos preservada.
+- Cenas em JSON legível e estável para diff (`"format": "nova.scene"`): enums por nome, malhas/texturas por referência de asset (`"asset:<guid>#0"`) ou nome, floats curtos e exatos, ordem de campos preservada.
+- Prefabs (`.prefab.json`): `serializePrefab`/`instantiatePrefab` ou `AssetDatabase::createPrefab`/`instantiate`; posições relativas à primeira entidade, UUIDs novos a cada instância.
 - Toda entidade tem um UUID (`IdComponent`) que sobrevive a salvar/abrir e ao Play/Stop.
 - Arquivos antigos continuam abrindo: campos novos usam o padrão, componentes/scripts desconhecidos são ignorados com aviso.
 - Os componentes da engine são refletidos em [engine/src/nova/reflect/EngineTypes.cpp](engine/src/nova/reflect/EngineTypes.cpp).

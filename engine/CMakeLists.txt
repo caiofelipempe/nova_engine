@@ -6,6 +6,7 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_path(CGLTF_INCLUDE_DIRS "cgltf.h" REQUIRED)
+find_path(STB_INCLUDE_DIRS "stb_image.h" REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 set(SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/nova)
@@ -25,7 +26,7 @@ file(GLOB_RECURSE NOVA_CORE_SOURCES CONFIGURE_DEPENDS
 
 add_library(NovaEngine STATIC ${NOVA_CORE_SOURCES})
 add_library(Nova::Engine ALIAS NovaEngine)
-target_include_directories(NovaEngine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src PRIVATE ${CGLTF_INCLUDE_DIRS})
+target_include_directories(NovaEngine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src PRIVATE ${CGLTF_INCLUDE_DIRS} ${STB_INCLUDE_DIRS})
 
 target_link_libraries(NovaEngine
     PUBLIC  glm::glm EnTT::EnTT spdlog::spdlog imgui::imgui

@@ -12,5 +12,5 @@ struct NovaEditorApp : nova::editor::EditorApp {
 
 int main() {
     reflectGameTypes(); // game types must be reflected before scenes are loaded or edited
-    return nova::editor::run<NovaEditorApp>({.layoutFile = "nova_editor_layout.ini"});
+    return nova::editor::run<NovaEditorApp>({.layoutFile = "nova_editor_layout.ini", .assetsDir = NOVA_EDITOR_ASSETS_DIR});
 }

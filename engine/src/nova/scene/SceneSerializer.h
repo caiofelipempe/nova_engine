@@ -9,6 +9,7 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace nova {
 
@@ -16,11 +17,15 @@ class Renderer;
 
 /// @brief How mesh references are written/read.
 ///
-/// By default meshes are stored by numeric id, which is exact within one session (editor
-/// Play/Stop). For files use fromRenderer(), which stores mesh **names** ("Cube").
+/// By default meshes and textures are stored by numeric id, which is exact within one session
+/// (editor Play/Stop). For files use AssetDatabase::serializeOptions() (asset references, e.g.
+/// "asset:3f2a...#0") or fromRenderer() (mesh **names**, e.g. "Cube"). A callback returning an
+/// empty string falls back to the id.
 struct SerializeOptions {
     std::function<std::string(MeshHandle)> meshName;            ///< Mesh → name (null = write ids).
     std::function<MeshHandle(const std::string&)> findMesh;     ///< Name → mesh when reading names.
+    std::function<std::string(rhi::TextureHandle)> textureName; ///< Texture → reference string (null = write ids).
+    std::function<rhi::TextureHandle(const std::string&)> findTexture; ///< Reference string → texture.
 
     /// @brief Options that store meshes by name using `renderer`.
     static SerializeOptions fromRenderer(Renderer& renderer);
@@ -64,6 +69,15 @@ std::string serializeEntity(Entity entity, const SerializeOptions& options = {})
 /// **in place** (its handle and position in the scene stay the same); otherwise it is created.
 /// @return The restored entity, or an invalid Entity if the JSON is malformed.
 Entity restoreEntity(Scene& scene, std::string_view json, const SerializeOptions& options = {});
+
+/// @brief Writes entities as a prefab (`"format": "nova.prefab"`): same entity format as scenes,
+///        without UUIDs, positions relative to the first entity.
+std::string serializePrefab(const std::vector<Entity>& entities, const SerializeOptions& options = {});
+
+/// @brief Creates the entities of a prefab (new UUIDs), with the first one at `position`.
+/// @return The created entities (empty, with `error` set, if the text is not a prefab).
+std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const glm::vec3& position = glm::vec3(0.0f),
+                                      const SerializeOptions& options = {}, std::string* error = nullptr);
 
 /// @brief Scene name for a file: `levels/forest.scene.json` → `forest`.
 std::string sceneNameFromPath(const std::filesystem::path& path);

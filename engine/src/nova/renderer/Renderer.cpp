@@ -355,7 +355,9 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Textur
         u32 flags = d.material.checker ? gpu::kMaterialFlagChecker : 0u;
         f32 flagsAsFloat;
         std::memcpy(&flagsAsFloat, &flags, sizeof(f32));
-        inst.params = glm::vec4(d.material.metallic, d.material.roughness, flagsAsFloat, -1.0f);
+        const u32 tex = d.material.baseColorTexture ? m_device.bindlessIndex(d.material.baseColorTexture) : ~0u;
+        inst.params = glm::vec4(d.material.metallic, d.material.roughness, flagsAsFloat,
+                                tex == ~0u ? -1.0f : static_cast<f32>(tex));
 
         if (tlasRecords && d.castShadows && d.mesh.id < m_meshes.size() && m_meshes[d.mesh.id].alive &&
             m_meshes[d.mesh.id].blas) {

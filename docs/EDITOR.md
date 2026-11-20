@@ -204,6 +204,32 @@ r.uiHook([](EditorContext& ctx) { /* janelas modais, overlays: chamado todo fram
 r.menuBarWidget([](EditorContext& ctx) { ImGui::TextDisabled("Level: %s", currentLevel()); });
 ```
 
+### Assets: importador e ação do jogo
+
+A pasta de assets (`EditorDesc::assetsDir`, padrão `assets/`) aparece no painel **Assets**. Cada arquivo reconhecido por um importador vira um asset com GUID estável num arquivo `<arquivo>.meta` (versione os `.meta` junto). Cenas referenciam malhas e texturas por `"asset:<guid>#<índice>"`, então mover/renomear arquivos (com o `.meta`) não quebra nada.
+
+```cpp
+// Um tipo de arquivo do jogo (no onSetup, ou em qualquer lugar com acesso ao AssetDatabase):
+ctx.assets().addImporter({
+    .type = "Dialogue",
+    .extensions = {".dlg.json"},
+    .load = [](nova::AssetDatabase&, const std::filesystem::path& file, nova::AssetData& out) {
+        out.payload = std::make_shared<Dialogue>(loadDialogue(file));
+        return true;
+    },
+    // opcional: .instantiate = [...] cria entidades (arrastar para a viewport, "Add to Scene")
+});
+// O que fazer com ele no painel (a primeira ação roda no duplo clique):
+r.assetAction("Dialogue", "Preview", [](EditorContext& ctx, const nova::AssetRecord& a) {
+    openDialoguePreview(ctx.assets().load(a.guid)->as<Dialogue>());
+});
+```
+
+- Embutidos: **Texture** (png/jpg/tga/bmp), **Model** (gltf/glb, com textura base color), **Prefab** (`.prefab.json`), **Scene** (`.scene.json`).
+- Arrastar para a viewport: modelos/prefabs são colocados onde o raio do mouse acerta (apoiados na superfície); texturas vão para a malha sob o mouse. Arrastar uma textura para um campo de textura do Inspector também funciona.
+- Prefabs: selecione entidades → *Assets/Create Prefab from Selection*. Por código: `ctx.assets().createPrefab(entities, "prefabs/torre")` e `ctx.instantiateAsset(guid, posição)` (um passo de undo, seleciona o resultado).
+- *File/Import Asset...* (Ctrl+I) copia um arquivo externo (e os `.bin`/imagens de um glTF) para a pasta de assets.
+
 ### Substituir ou remover algo embutido
 
 ```cpp
@@ -224,6 +250,7 @@ if (auto* vp = r.findPanel<nova::editor::builtin::ViewportPanel>()) vp->useScene
 | Ferramentas | `ctx.activeTool()`, `ctx.setActiveTool(tool)` |
 | Modo de jogo | `ctx.play()`, `ctx.pause()`, `ctx.stop()`, `ctx.playState()` — o Stop restaura a cena inteira (entidades criadas somem, destruídas voltam); handles mudam, **UUIDs** (`entity.uuid()`, `scene.findEntityByUuid`) não |
 | Arquivos de cena | `ctx.newScene()`, `ctx.openScene(path)`, `ctx.saveScene(path)`, `ctx.scenePath()` |
+| Assets | `ctx.assets()` (`AssetDatabase`: `find`, `findByPath`, `load`, `instantiate`, `import`, `createPrefab`, `addImporter`), `ctx.instantiateAsset(guid, pos)`, `ctx.spawnPoint()` |
 | Câmera do editor | `ctx.camera()` (`focus(pos)`, `position`, `yaw`, `pitch`) |
 | Engine | `ctx.app()`, `ctx.renderer()` |
 | Extensões | `ctx.registry()` (`execute("id")`, `findPanel<T>()`...) |
@@ -235,7 +262,8 @@ Widgets prontos com o visual do editor: `nova::editor::widgets::vec3`, `widgets:
 | Menu | Atalho |
 |---|---|
 | File/New Scene · Open Scene... · Save Scene · Save Scene As... | Ctrl+N · Ctrl+O · Ctrl+S · Ctrl+Shift+S |
-| File/Import glTF... | Ctrl+I |
+| File/Import Asset... | Ctrl+I |
+| Assets/Create Prefab from Selection · Refresh | — |
 | Edit/Undo · Redo | Ctrl+Z · Ctrl+Y (ou Ctrl+Shift+Z) |
 | Edit/Select All · Duplicate · Delete · Focus Selection · Deselect | Ctrl+A · Ctrl+D · Delete · F · Escape |
 | Entity/Create Empty, Cube, Sphere, Plane, Point Light | — |

@@ -1,0 +1,27 @@
+{
+  "format": "nova.prefab",
+  "version": 1,
+  "entities": [
+    { "components": {
+        "Name": { "name": "Crate A" },
+        "Transform": { "position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+        "Mesh": { "mesh": "asset:4e6f7661c7a7e001#0", "castShadows": true,
+                  "material": { "baseColor": [1, 1, 1, 1], "metallic": 0, "roughness": 0.75, "baseColorTexture": "asset:4e6f7661c7a7e001#0" } },
+        "RigidBody": { "type": "Dynamic", "mass": 1 },
+        "BoxCollider": { "halfExtents": [0.5, 0.5, 0.5], "offset": [0, 0, 0] } } },
+    { "components": {
+        "Name": { "name": "Crate B" },
+        "Transform": { "position": [1.05, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+        "Mesh": { "mesh": "asset:4e6f7661c7a7e001#0", "castShadows": true,
+                  "material": { "baseColor": [1, 1, 1, 1], "metallic": 0, "roughness": 0.75, "baseColorTexture": "asset:4e6f7661c7a7e001#0" } },
+        "RigidBody": { "type": "Dynamic", "mass": 1 },
+        "BoxCollider": { "halfExtents": [0.5, 0.5, 0.5], "offset": [0, 0, 0] } } },
+    { "components": {
+        "Name": { "name": "Crate C" },
+        "Transform": { "position": [0.52, 1, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1] },
+        "Mesh": { "mesh": "asset:4e6f7661c7a7e001#0", "castShadows": true,
+                  "material": { "baseColor": [1, 1, 1, 1], "metallic": 0, "roughness": 0.75, "baseColorTexture": "asset:4e6f7661c7a7e001#0" } },
+        "RigidBody": { "type": "Dynamic", "mass": 1 },
+        "BoxCollider": { "halfExtents": [0.5, 0.5, 0.5], "offset": [0, 0, 0] } } }
+  ]
+}

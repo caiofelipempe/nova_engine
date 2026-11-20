@@ -3,6 +3,7 @@
 /// @file
 /// @brief Shared editor state and services (scene, selection, undo, play mode, camera, tools).
 
+#include "nova/assets/AssetDatabase.h"
 #include "nova/editor/EditorCamera.h"
 #include "nova/editor/Signal.h"
 #include "nova/editor/UndoStack.h"
@@ -26,6 +27,9 @@ namespace nova::editor {
 class Registry;
 class Tool;
 class EditorContext;
+
+/// @brief ImGui drag-and-drop payload type for assets (payload: one AssetGuid).
+inline constexpr const char* kAssetDragPayload = "NOVA_ASSET";
 
 /// @brief Edit / Play / Pause.
 enum class PlayState {
@@ -194,8 +198,19 @@ public:
     const std::filesystem::path& scenePath() const { return m_scenePath; }
     /// @brief Emitted after the scene's entities were replaced (new, open, or stop restoring the snapshot).
     Signal<> sceneReloaded;
-    /// @brief How meshes are referenced in files (the editor sets mesh names via the renderer).
-    SerializeOptions fileOptions;
+    /// @}
+
+    /// @name Assets
+    /// @{
+    /// @brief The project's assets (root = EditorDesc::assetsDir). Scenes reference assets by GUID.
+    AssetDatabase& assets() { return m_assets; }
+    /// @brief Instantiates an asset (model, prefab...) at `position` as one undo step and selects the result.
+    /// @param adjust Optional tweak of the new entities, recorded in the same undo step (e.g. placement).
+    /// @return The created entities (empty if the asset cannot be placed).
+    std::vector<Entity> instantiateAsset(AssetGuid guid, const glm::vec3& position,
+                                         const std::function<void(std::vector<Entity>&)>& adjust = {});
+    /// @brief Point in front of the editor camera where new things are placed.
+    glm::vec3 spawnPoint() const;
     /// @}
 
     /// @name Viewport camera, tools and input
@@ -235,6 +250,7 @@ private:
     PlayState m_playState = PlayState::Edit;
     std::string m_snapshot; // scene JSON captured by play()
     std::filesystem::path m_scenePath;
+    AssetDatabase m_assets;
     EditorCamera m_camera;
     Tool* m_activeTool = nullptr;
     bool m_inputCaptured = false;

@@ -18,7 +18,8 @@ void registerEngineTypes() {
         .field("roughness", &Material::roughness, {.min = 0.0f, .max = 1.0f})
         .field("emissive", &Material::emissive, {.color = true})
         .field("emissiveStrength", &Material::emissiveStrength, {.min = 0.0f, .max = 100.0f})
-        .field("checker", &Material::checker, {.label = "Checker Pattern"});
+        .field("checker", &Material::checker, {.label = "Checker Pattern"})
+        .field("baseColorTexture", &Material::baseColorTexture, {.label = "Base Color Texture"});
 
     // Identity and name: always present, edited specially (name at the top of the inspector).
     type<IdComponent>("Id").field("uuid", &IdComponent::uuid, {.readOnly = true}).component().hideInInspector();
@@ -84,6 +85,11 @@ void registerEngineTypes() {
         .field("axis", &RotatorComponent::axis, {.speed = 0.01f})
         .field("speed", &RotatorComponent::speed, {.speed = 0.01f, .tooltip = "Radians per second"})
         .component();
+
+    type<PrefabInstanceComponent>("PrefabInstance")
+        .field("asset", &PrefabInstanceComponent::asset, {.readOnly = true, .tooltip = "GUID of the source asset"})
+        .component()
+        .displayName("Prefab Instance");
 }
 
 } // namespace nova::reflect::detail

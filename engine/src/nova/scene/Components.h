@@ -140,4 +140,9 @@ struct RotatorComponent {
     f32 speed = 1.0f;                 ///< Angular speed in radians per second.
 };
 
+/// @brief Marks an entity created from a prefab or model asset (see AssetDatabase::instantiate).
+struct PrefabInstanceComponent {
+    u64 asset = 0; ///< GUID of the source asset.
+};
+
 } // namespace nova

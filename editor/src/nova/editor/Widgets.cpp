@@ -112,6 +112,43 @@ bool reflectedField(const reflect::TypeInfo& owner, const reflect::FieldInfo& f,
             }
             break;
         }
+        case K::Texture: {
+            auto& t = *static_cast<rhi::TextureHandle*>(p);
+            AssetDatabase& db = ctx.assets();
+            std::string current = "<none>";
+            if (t) {
+                current = db.textureLabel(t);
+                if (current.empty()) current = "<texture " + std::to_string(t.index) + ">";
+            }
+            if (ImGui::BeginCombo(f.label.c_str(), current.c_str())) {
+                if (ImGui::Selectable("<none>", !t)) {
+                    t = {};
+                    changed = true;
+                }
+                for (const AssetRecord& r : db.assets()) {
+                    if (r.type != "Texture") continue;
+                    if (ImGui::Selectable(r.path.generic_string().c_str(), t && db.textureRef(t) == AssetDatabase::makeRef(r.guid))) {
+                        if (const AssetData* d = db.load(r.guid); d && !d->textures.empty()) {
+                            t = d->textures[0];
+                            changed = true;
+                        }
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (!a.readOnly && ImGui::BeginDragDropTarget()) { // drop a texture from the Assets panel
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+                    AssetGuid guid = 0;
+                    std::memcpy(&guid, payload->Data, sizeof(guid));
+                    if (const AssetData* d = db.load(guid); d && !d->textures.empty()) {
+                        t = d->textures[0];
+                        changed = true;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            break;
+        }
         case K::Struct: {
             const reflect::TypeInfo* t = f.nestedType();
             if (!t) {

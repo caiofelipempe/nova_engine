@@ -268,7 +268,7 @@ void EditorContext::newScene() {
 bool EditorContext::openScene(const std::filesystem::path& path, std::string* error) {
     stop();
     clearSelection();
-    const bool ok = loadScene(*m_scene, path, fileOptions, error);
+    const bool ok = loadScene(*m_scene, path, m_assets.serializeOptions(), error);
     if (ok) m_scenePath = path;
     m_undo.clear();
     m_trackValid = false;
@@ -279,10 +279,33 @@ bool EditorContext::openScene(const std::filesystem::path& path, std::string* er
 bool EditorContext::saveScene(const std::filesystem::path& path, std::string* error) {
     std::error_code ec;
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
-    if (!nova::saveScene(*m_scene, path, fileOptions, error)) return false;
+    if (!nova::saveScene(*m_scene, path, m_assets.serializeOptions(), error)) return false;
     m_scenePath = path;
     m_scene->setName(sceneNameFromPath(path));
+    m_assets.refresh(); // the scene may be inside the asset folder
     return true;
+}
+
+// ------------------------------------------------------------------ assets --
+std::vector<Entity> EditorContext::instantiateAsset(AssetGuid guid, const glm::vec3& position,
+                                                    const std::function<void(std::vector<Entity>&)>& adjust) {
+    const AssetRecord* record = m_assets.find(guid);
+    if (!record || !m_assets.canInstantiate(*record)) return {};
+    std::vector<Entity> created;
+    auto create = [&] {
+        created = m_assets.instantiate(guid, *m_scene, position);
+        if (adjust && !created.empty()) adjust(created);
+    };
+    if (isPlaying()) create(); // undone by Stop
+    else recordCreation("Add " + record->fileName(), create);
+    if (!created.empty()) setSelection(created);
+    return created;
+}
+
+glm::vec3 EditorContext::spawnPoint() const {
+    glm::vec3 p = m_camera.position + m_camera.forward() * 6.0f;
+    p.y = std::max(p.y, 0.5f);
+    return p;
 }
 
 // ------------------------------------------------------------------- tools --

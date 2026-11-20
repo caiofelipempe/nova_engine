@@ -6,6 +6,7 @@
 #include "nova/editor/EditorApp.h"
 
 #include <string>
+#include <unordered_set>
 
 namespace nova::editor::detail {
 
@@ -29,6 +30,7 @@ private:
     void dispatchShortcuts();
     void drawMainMenu();
     void drawPanels();
+    void dockNewPanel(Panel& panel);
     void buildDefaultLayout(unsigned int dockId);
     void drawCommandPalette();
 
@@ -42,6 +44,7 @@ private:
     bool m_openPalette = false;
     char m_paletteFilter[128] = "";
     int m_paletteSelection = 0;
+    std::unordered_set<const Panel*> m_dockChecked;
 };
 
 } // namespace nova::editor::detail

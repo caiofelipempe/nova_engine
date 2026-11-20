@@ -17,7 +17,6 @@ namespace nova::editor::builtin {
 /// | file.open           | File/Open Scene...         | Ctrl+O       |
 /// | file.save           | File/Save Scene            | Ctrl+S       |
 /// | file.saveAs         | File/Save Scene As...      | Ctrl+Shift+S |
-/// | file.importGltf     | File/Import glTF...        | Ctrl+I       |
 /// | file.exit           | File/Exit                  |              |
 /// | edit.undo           | Edit/Undo                  | Ctrl+Z       |
 /// | edit.redo           | Edit/Redo                  | Ctrl+Y (also Ctrl+Shift+Z: edit.redoAlt) |
@@ -37,7 +36,7 @@ public:
     void onRegister(Registry& registry) override;
 
 private:
-    enum class Prompt { None, Open, SaveAs, ImportGltf };
+    enum class Prompt { None, Open, SaveAs };
     void requestPrompt(Prompt prompt, const std::string& initialPath);
     void drawPrompt(EditorContext& ctx);
 

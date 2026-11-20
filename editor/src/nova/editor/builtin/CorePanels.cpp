@@ -14,10 +14,59 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
+#include <limits>
 
 namespace nova::editor::builtin {
 
 // ---------------------------------------------------------------- viewport --
+namespace {
+// Asset dropped on the viewport: textures go onto the mesh under the mouse; models/prefabs are
+// placed where the mouse ray hits the scene (or the ground plane), resting on upward surfaces.
+void dropAsset(EditorContext& ctx, AssetGuid guid, const ViewportState& vp) {
+    const AssetRecord* record = ctx.assets().find(guid);
+    if (!record) return;
+    Renderer& renderer = ctx.renderer();
+    const auto hit = pick(ctx.scene(), [&](MeshHandle m) { return renderer.meshData(m); }, vp.rayOrigin, vp.rayDirection);
+
+    if (record->type == "Texture") {
+        const AssetData* data = ctx.assets().load(guid);
+        if (!hit || !hit->entity.has<MeshComponent>() || !data || data->textures.empty()) return;
+        Entity target = hit->entity;
+        const rhi::TextureHandle texture = data->textures[0];
+        ctx.edit("Apply texture", {target}, [&] { target.get<MeshComponent>().material.baseColorTexture = texture; });
+        ctx.select(target);
+        return;
+    }
+    if (!ctx.assets().canInstantiate(*record)) return;
+
+    glm::vec3 position = vp.rayOrigin + vp.rayDirection * 6.0f;
+    bool onSurface = false;
+    if (hit) {
+        position = hit->point;
+        onSurface = hit->normal.y > 0.5f;
+    } else if (vp.rayDirection.y < -1e-4f) {
+        position = vp.rayOrigin + vp.rayDirection * (-vp.rayOrigin.y / vp.rayDirection.y);
+        onSurface = true;
+    }
+    ctx.instantiateAsset(guid, position, [&](std::vector<Entity>& created) {
+        if (!onSurface) return;
+        f32 minY = std::numeric_limits<f32>::max();
+        for (Entity e : created) {
+            const auto* mesh = e.tryGet<MeshComponent>();
+            if (!mesh) continue;
+            const Bounds b = renderer.meshBounds(mesh->mesh);
+            const glm::mat4 m = e.transform().matrix();
+            for (int i = 0; i < 8; ++i) {
+                const glm::vec3 corner{i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z};
+                minY = std::min(minY, glm::vec3(m * glm::vec4(corner, 1.0f)).y);
+            }
+        }
+        if (minY == std::numeric_limits<f32>::max()) return;
+        for (Entity e : created) e.transform().position.y += position.y - minY; // rest on the surface
+    });
+}
+} // namespace
 ViewportPanel::ViewportPanel() : Panel("Viewport", DockSlot::Center) { noPadding = true; }
 
 void ViewportPanel::onAttach(EditorContext& ctx) { m_view = ctx.renderer().createView({1280, 720}); }
@@ -54,6 +103,12 @@ void ViewportPanel::onImGui(EditorContext& ctx) {
     const ImVec2 imagePos = ImGui::GetCursorScreenPos();
     if (auto* imgui = ctx.app().imgui()) ImGui::Image(static_cast<ImTextureID>(imgui->textureId(m_view->output())), avail);
     m_hovered = ImGui::IsItemHovered();
+    AssetGuid dropped = 0;
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kAssetDragPayload))
+            std::memcpy(&dropped, payload->Data, sizeof(dropped));
+        ImGui::EndDragDropTarget();
+    }
 
     // Viewport state for tools: rect, camera and the mouse ray.
     ViewportState& vp = m_state;
@@ -70,6 +125,8 @@ void ViewportPanel::onImGui(EditorContext& ctx) {
         vp.rayOrigin = glm::vec3(nearP) / nearP.w;
         vp.rayDirection = glm::normalize(glm::vec3(farP) / farP.w - vp.rayOrigin);
     }
+
+    if (dropped) dropAsset(ctx, dropped, vp);
 
     // Toolbar: one button per registered tool.
     ImGui::SetCursorScreenPos({imagePos.x + 8, imagePos.y + 8});

@@ -23,4 +23,6 @@ if(PROJECT_IS_TOP_LEVEL)
         app/ExamplePlugin.cpp
         app/ExamplePlugin.h)
     set_target_properties(NovaEditor PROPERTIES FOLDER "Apps")
+    # The sample project's assets live in the repository (models, textures, prefabs, scenes).
+    target_compile_definitions(NovaEditor PRIVATE NOVA_EDITOR_ASSETS_DIR="${PROJECT_SOURCE_DIR}/assets")
 endif()

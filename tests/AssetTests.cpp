@@ -1,0 +1,346 @@
+// Headless tests of the asset database: GUID sidecars, importers, references, prefabs, import.
+#include <nova/Nova.h>
+
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <vector>
+
+using namespace nova;
+namespace fs = std::filesystem;
+
+namespace {
+
+int g_failures = 0;
+int g_checks = 0;
+
+void check(bool cond, const char* expr, const char* file, int line) {
+    ++g_checks;
+    if (!cond) {
+        ++g_failures;
+        std::printf("  FAILED: %s (%s:%d)\n", expr, file, line);
+    }
+}
+#define CHECK(x) check((x), #x, __FILE__, __LINE__)
+
+void writeFile(const fs::path& p, const std::string& text) {
+    fs::create_directories(p.parent_path());
+    std::ofstream(p, std::ios::binary) << text;
+}
+
+std::string readFile(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+}
+
+// Fresh, empty folder per test.
+fs::path tempRoot(const char* name) {
+    fs::path p = fs::temp_directory_path() / "nova_asset_tests" / name;
+    fs::remove_all(p);
+    fs::create_directories(p);
+    return p;
+}
+
+// A GPU-free importer whose "resources" are fake handles: lets references be tested headless.
+int g_fakeLoads = 0;
+AssetImporter fakeImporter() {
+    return {
+        .type = "Fake",
+        .extensions = {".fake"},
+        .load = [](AssetDatabase&, const fs::path&, AssetData& out) {
+            ++g_fakeLoads;
+            out.meshes = {MeshHandle{1001}, MeshHandle{1002}};
+            out.textures = {rhi::TextureHandle{77, 3}};
+            return true;
+        },
+        .instantiate = [](AssetDatabase&, const AssetData& data, Scene& scene, const glm::vec3& position) {
+            Entity e = scene.createEntity("Fake");
+            e.transform().position = position;
+            e.add<MeshComponent>(data.meshes[1]);
+            e.get<MeshComponent>().material.baseColorTexture = data.textures[0];
+            return std::vector<Entity>{e};
+        },
+    };
+}
+
+// ------------------------------------------------------------------ tests --
+void references() {
+    const std::string ref = AssetDatabase::makeRef(0x00ab00cd00ef0012ull, 3);
+    CHECK(ref == "asset:00ab00cd00ef0012#3");
+    AssetGuid g = 0;
+    u32 i = 99;
+    CHECK(AssetDatabase::parseRef(ref, g, i) && g == 0x00ab00cd00ef0012ull && i == 3);
+    CHECK(AssetDatabase::parseRef("asset:ff", g, i) && g == 0xff && i == 0); // index optional
+    CHECK(!AssetDatabase::parseRef("Cube", g, i));
+    CHECK(!AssetDatabase::parseRef("asset:", g, i));
+    CHECK(!AssetDatabase::parseRef("asset:0#1", g, i));          // GUID 0 is invalid
+    CHECK(!AssetDatabase::parseRef("asset:xyz#1", g, i));
+    CHECK(!AssetDatabase::parseRef("asset:12#a", g, i));
+    CHECK(!AssetDatabase::parseRef("asset:12345678901234567#0", g, i)); // > 64 bits
+    CHECK(AssetDatabase::newGuid() != 0 && AssetDatabase::newGuid() != AssetDatabase::newGuid());
+}
+
+void scanAndMeta() {
+    const fs::path root = tempRoot("scan");
+    writeFile(root / "textures/wood.png", "not really a png");
+    writeFile(root / "models/ship.glb", "x");
+    writeFile(root / "prefabs/enemy.prefab.json", "{}");
+    writeFile(root / "levels/one.scene.json", "{}");
+    writeFile(root / "notes.txt", "ignored");
+    writeFile(root / "data.json", "ignored: plain .json has no importer");
+
+    AssetDatabase db;
+    db.setRoot(root);
+    CHECK(db.assets().size() == 4);
+    const AssetRecord* tex = db.findByPath("textures/wood.png");
+    const AssetRecord* model = db.findByPath(root / "models" / "ship.glb"); // absolute works too
+    const AssetRecord* prefab = db.findByPath("prefabs/enemy.prefab.json");
+    const AssetRecord* scene = db.findByPath("levels/one.scene.json");
+    CHECK(tex && tex->type == "Texture" && tex->fileName() == "wood.png");
+    CHECK(model && model->type == "Model");
+    CHECK(prefab && prefab->type == "Prefab");   // compound suffix wins over nothing
+    CHECK(scene && scene->type == "Scene" && !scene->importer->load && !db.canInstantiate(*scene));
+    CHECK(fs::exists(root / "textures/wood.png.meta") && !fs::exists(root / "notes.txt.meta"));
+    CHECK(db.assets().front().path.generic_string() <= db.assets().back().path.generic_string()); // sorted
+    const AssetGuid texGuid = tex->guid;
+
+    // GUIDs are stable across sessions (read back from the .meta files).
+    AssetDatabase again;
+    again.setRoot(root);
+    CHECK(again.findByPath("textures/wood.png") && again.findByPath("textures/wood.png")->guid == texGuid);
+    CHECK(again.find(texGuid) && again.find(texGuid)->path == fs::path("textures/wood.png"));
+
+    // Moving a file together with its .meta keeps its identity.
+    fs::create_directories(root / "art");
+    fs::rename(root / "textures/wood.png", root / "art/wood.png");
+    fs::rename(root / "textures/wood.png.meta", root / "art/wood.png.meta");
+    db.refresh();
+    CHECK(db.find(texGuid) && db.find(texGuid)->path == fs::path("art/wood.png"));
+
+    // A copy that kept the .meta gets a new GUID; the original keeps its own.
+    fs::copy_file(root / "art/wood.png", root / "art/wood2.png");
+    fs::copy_file(root / "art/wood.png.meta", root / "art/wood2.png.meta");
+    db.refresh();
+    const AssetRecord* copy = db.findByPath("art/wood2.png");
+    CHECK(copy && copy->guid != texGuid && db.find(texGuid) && db.find(texGuid)->fileName() == "wood.png");
+
+    // Deleted files disappear; a broken .meta is regenerated.
+    fs::remove(root / "art/wood2.png");
+    writeFile(root / "models/ship.glb.meta", "garbage");
+    db.refresh();
+    CHECK(!db.findByPath("art/wood2.png") && db.assets().size() == 4);
+    CHECK(db.findByPath("models/ship.glb") && db.findByPath("models/ship.glb")->guid != 0);
+}
+
+void importersAndLoading() {
+    const fs::path root = tempRoot("importers");
+    writeFile(root / "a.fake", "");
+    writeFile(root / "b.dlg.json", "{\"lines\": 3}");
+    AssetDatabase db;
+    db.setRoot(root);
+    CHECK(db.assets().empty()); // no importer for .fake yet
+
+    db.addImporter(fakeImporter()); // registering rescans
+    db.addImporter({.type = "Dialogue",
+                    .extensions = {".DLG.json"}, // case-insensitive
+                    .load = [](AssetDatabase&, const fs::path& file, AssetData& out) {
+                        out.payload = std::make_shared<std::string>(readFile(file));
+                        return true;
+                    }});
+    CHECK(db.assets().size() == 2);
+    CHECK(db.importerFor("x/Y.FAKE") && db.importerFor("x/Y.FAKE")->type == "Fake");
+    CHECK(db.importerFor("level.scene.json")->type == "Scene"); // longest suffix
+    CHECK(!db.importerFor("x.json") && !db.importerFor(".fake"));
+
+    const AssetRecord* fake = db.findByPath("a.fake");
+    CHECK(fake && !db.isLoaded(fake->guid));
+    g_fakeLoads = 0;
+    const AssetData* data = db.load(fake->guid);
+    CHECK(data && data->meshes.size() == 2 && db.isLoaded(fake->guid));
+    CHECK(db.load(fake->guid) == data && g_fakeLoads == 1); // cached
+    db.unload(fake->guid);
+    CHECK(db.load(fake->guid) && g_fakeLoads == 2);
+
+    const AssetRecord* dlg = db.findByPath("b.dlg.json");
+    const AssetData* dd = dlg ? db.load(dlg->guid) : nullptr;
+    CHECK(dd && dd->as<std::string>() && dd->as<std::string>()->find("lines") != std::string::npos);
+
+    const AssetGuid fakeGuid = fake->guid, dlgGuid = dlg->guid; // records are rebuilt by refresh()
+
+    // GPU assets without a renderer fail cleanly (once).
+    writeFile(root / "t.png", "x");
+    db.refresh();
+    const AssetRecord* png = db.findByPath("t.png");
+    CHECK(png && !db.load(png->guid) && !db.load(png->guid) && !db.isLoaded(png->guid));
+    CHECK(!db.load(0) && !db.load(12345));
+
+    // Instantiation tags entities with their source asset.
+    Scene scene;
+    auto created = db.instantiate(fakeGuid, scene, {1, 2, 3});
+    CHECK(created.size() == 1);
+    if (created.size() == 1) {
+        CHECK(created[0].transform().position == glm::vec3(1, 2, 3));
+        CHECK(created[0].has<PrefabInstanceComponent>() && created[0].get<PrefabInstanceComponent>().asset == fakeGuid);
+    }
+    CHECK(db.instantiate(dlgGuid, scene).empty()); // no instantiate callback
+}
+
+void sceneReferences() {
+    const fs::path root = tempRoot("refs");
+    writeFile(root / "thing.fake", "");
+    AssetDatabase db;
+    db.addImporter(fakeImporter());
+    db.setRoot(root);
+    const AssetGuid guid = db.findByPath("thing.fake")->guid;
+
+    Scene scene;
+    Entity e = db.instantiate(guid, scene).front();
+    CHECK(db.meshRef(MeshHandle{1002}) == AssetDatabase::makeRef(guid, 1));
+    CHECK(db.textureRef(rhi::TextureHandle{77, 3}) == AssetDatabase::makeRef(guid, 0));
+    CHECK(db.meshRef(MeshHandle{5}).empty() && db.textureRef(rhi::TextureHandle{1, 1}).empty());
+    CHECK(db.textureLabel(rhi::TextureHandle{77, 3}) == "thing.fake #0");
+
+    const std::string json = serializeScene(scene, db.serializeOptions());
+    CHECK(json.find(AssetDatabase::makeRef(guid, 1)) != std::string::npos);
+    CHECK(json.find(AssetDatabase::makeRef(guid, 0)) != std::string::npos);
+    CHECK(json.find("\"PrefabInstance\"") != std::string::npos);
+
+    // A new session resolves the references by loading the asset on demand.
+    AssetDatabase fresh;
+    fresh.addImporter(fakeImporter());
+    fresh.setRoot(root);
+    Scene loaded;
+    CHECK(deserializeScene(loaded, json, fresh.serializeOptions()));
+    Entity back = loaded.findEntityByUuid(e.uuid());
+    CHECK(back.valid() && back.has<MeshComponent>());
+    CHECK(back.get<MeshComponent>().mesh == MeshHandle{1002});
+    CHECK(back.get<MeshComponent>().material.baseColorTexture == (rhi::TextureHandle{77, 3}));
+    CHECK(fresh.isLoaded(guid));
+
+    // Unknown references load as empty handles; meshes not from assets fall back to ids.
+    Scene other;
+    Entity plain = other.createEntity("Plain");
+    plain.add<MeshComponent>(MeshHandle{9});
+    const std::string plainJson = serializeScene(other, db.serializeOptions());
+    CHECK(plainJson.find("\"mesh\": 9") != std::string::npos);
+    const std::string missing = "{\"format\":\"nova.scene\",\"version\":1,\"entities\":[{\"components\":{\"Mesh\":"
+                                "{\"mesh\":\"asset:00000000000000aa#0\",\"material\":{\"baseColorTexture\":\"asset:bb#0\"}}}}]}";
+    Scene broken;
+    CHECK(deserializeScene(broken, missing, fresh.serializeOptions()));
+    bool emptyHandles = false;
+    for (auto [h, m] : broken.registry().view<MeshComponent>().each()) emptyHandles = !m.mesh && !m.material.baseColorTexture;
+    CHECK(emptyHandles);
+}
+
+void prefabs() {
+    const fs::path root = tempRoot("prefabs");
+    AssetDatabase db;
+    db.setRoot(root);
+
+    Scene scene;
+    Entity a = scene.createEntity("Base");
+    a.transform().position = {10, 0, 5};
+    a.add<RotatorComponent>(glm::vec3(0, 1, 0), 2.5f);
+    Entity b = scene.createEntity("Top");
+    b.transform().position = {10, 2, 5};
+    b.transform().scale = glm::vec3(0.5f);
+
+    std::string error;
+    CHECK(!db.createPrefab({}, "empty", &error) && !error.empty());
+    auto guid = db.createPrefab({a, b}, "props/tower", &error);
+    CHECK(guid.has_value());
+    CHECK(fs::exists(root / "props/tower.prefab.json") && fs::exists(root / "props/tower.prefab.json.meta"));
+    const AssetRecord* rec = guid ? db.find(*guid) : nullptr;
+    CHECK(rec && rec->type == "Prefab" && db.canInstantiate(*rec));
+
+    const std::string text = readFile(root / "props/tower.prefab.json");
+    CHECK(text.find("nova.prefab") != std::string::npos && text.find("\"Id\"") == std::string::npos);
+
+    Scene level;
+    auto first = db.instantiate(*guid, level, {0, 1, 0});
+    auto second = db.instantiate(*guid, level, {-4, 0, 0});
+    CHECK(first.size() == 2 && second.size() == 2);
+    if (first.size() == 2 && second.size() == 2) {
+        CHECK(first[0].name() == "Base" && first[1].name() == "Top");
+        CHECK(first[0].transform().position == glm::vec3(0, 1, 0));  // pivot = first entity
+        CHECK(first[1].transform().position == glm::vec3(0, 3, 0));  // relative offset kept
+        CHECK(second[1].transform().position == glm::vec3(-4, 2, 0));
+        CHECK(first[1].transform().scale == glm::vec3(0.5f));
+        CHECK(first[0].has<RotatorComponent>() && first[0].get<RotatorComponent>().speed == 2.5f);
+        CHECK(first[0].uuid() != second[0].uuid() && first[0].uuid() != a.uuid()); // fresh UUIDs
+        CHECK(first[0].get<PrefabInstanceComponent>().asset == *guid);
+    }
+
+    // Saving again over the same file updates the asset (same GUID, reloaded data).
+    a.transform().position = {0, 0, 0};
+    b.transform().position = {0, 5, 0};
+    auto again = db.createPrefab({a, b}, "props/tower.prefab.json");
+    CHECK(again && *again == *guid);
+    auto third = db.instantiate(*guid, level);
+    CHECK(third.size() == 2 && third[1].transform().position == glm::vec3(0, 5, 0));
+
+    // Engine-level API without a database.
+    Scene s2;
+    auto direct = instantiatePrefab(s2, serializePrefab({b}), {1, 1, 1});
+    CHECK(direct.size() == 1 && direct[0].transform().position == glm::vec3(1, 1, 1));
+    error.clear();
+    CHECK(instantiatePrefab(s2, "{\"format\":\"nova.scene\"}", {}, {}, &error).empty() && !error.empty());
+}
+
+void importFiles() {
+    const fs::path root = tempRoot("import");
+    const fs::path outside = tempRoot("import_src");
+    AssetDatabase db;
+    db.setRoot(root);
+
+    std::string error;
+    CHECK(!db.import(outside / "missing.png", {}, &error) && !error.empty());
+    writeFile(outside / "readme.txt", "x");
+    CHECK(!db.import(outside / "readme.txt", {}, &error)); // no importer
+
+    // A .gltf brings the files it references.
+    writeFile(outside / "ship/ship.gltf",
+              R"({"asset":{"version":"2.0"},"buffers":[{"uri":"ship%20data.bin","byteLength":4}],)"
+              R"("images":[{"uri":"tex/hull.png"},{"uri":"data:image/png;base64,AAAA"}]})");
+    writeFile(outside / "ship/ship data.bin", "1234");
+    writeFile(outside / "ship/tex/hull.png", "png");
+    const auto deps = gltfDependencies(outside / "ship/ship.gltf");
+    CHECK(deps.size() == 2); // the data: URI is embedded
+    auto guid = db.import(outside / "ship/ship.gltf", "models/ship", &error);
+    CHECK(guid.has_value());
+    CHECK(fs::exists(root / "models/ship/ship.gltf") && fs::exists(root / "models/ship/ship data.bin"));
+    CHECK(fs::exists(root / "models/ship/tex/hull.png"));
+    CHECK(guid && db.find(*guid) && db.find(*guid)->path == fs::path("models/ship/ship.gltf"));
+    CHECK(db.findByPath("models/ship/tex/hull.png") != nullptr); // the image is an asset too
+
+    // Files already inside the root are registered, not copied.
+    writeFile(root / "inside.png", "x");
+    auto inside = db.import(root / "inside.png", "elsewhere");
+    CHECK(inside && db.find(*inside)->path == fs::path("inside.png") && !fs::exists(root / "elsewhere/inside.png"));
+}
+
+} // namespace
+
+int main() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0); // keep output if a check crashes
+    Log::init();
+    Log::core().set_level(spdlog::level::off); // the tests trigger expected errors
+    const std::vector<std::pair<const char*, std::function<void()>>> tests = {
+        {"references", references},
+        {"scan, meta files and stable GUIDs", scanAndMeta},
+        {"importers and loading", importersAndLoading},
+        {"scene references by GUID", sceneReferences},
+        {"prefabs", prefabs},
+        {"import", importFiles},
+    };
+    for (auto& [name, fn] : tests) {
+        int before = g_failures;
+        fn();
+        std::printf("[%s] %s\n", g_failures == before ? " OK " : "FAIL", name);
+    }
+    std::printf("\n%d checks, %d failed\n", g_checks, g_failures);
+    fs::remove_all(fs::temp_directory_path() / "nova_asset_tests");
+    Log::shutdown();
+    return g_failures == 0 ? 0 : 1;
+}

@@ -1,6 +1,5 @@
 #include "nova/editor/builtin/CoreCommands.h"
 
-#include "nova/assets/GltfLoader.h"
 #include "nova/core/Application.h"
 #include "nova/core/Log.h"
 #include "nova/editor/EditorContext.h"
@@ -15,13 +14,6 @@
 namespace nova::editor::builtin {
 
 namespace {
-glm::vec3 spawnPoint(EditorContext& ctx) {
-    const EditorCamera& cam = ctx.camera();
-    glm::vec3 p = cam.position + cam.forward() * 6.0f;
-    p.y = std::max(p.y, 0.5f);
-    return p;
-}
-
 Command make(const char* id, const char* menuPath, std::function<void(EditorContext&)> fn, const char* shortcut = nullptr,
              int order = 0) {
     Command c;
@@ -38,13 +30,15 @@ bool editing(EditorContext& ctx) { return !ctx.isPlaying(); }
 
 std::string defaultScenePath(EditorContext& ctx) {
     if (!ctx.scenePath().empty()) return ctx.scenePath().string();
-    return "scenes/" + ctx.scene().name() + ".scene.json";
+    const std::string file = ctx.scene().name() + ".scene.json";
+    const auto& root = ctx.assets().root();
+    return root.empty() ? "scenes/" + file : (root / "scenes" / file).string();
 }
 } // namespace
 
 Entity createMeshEntity(EditorContext& ctx, const std::string& name, MeshHandle mesh) {
     Entity e = ctx.scene().createEntity(name);
-    e.transform().position = spawnPoint(ctx);
+    e.transform().position = ctx.spawnPoint();
     if (mesh) e.add<MeshComponent>(mesh);
     ctx.select(e);
     return e;
@@ -95,11 +89,6 @@ void CoreCommandsPlugin::onRegister(Registry& r) {
                           "Ctrl+Shift+S", 3);
     saveAs.isEnabled = editing;
     r.command(std::move(saveAs));
-
-    Command import = make("file.importGltf", "File/Import glTF...",
-                          [this](EditorContext&) { requestPrompt(Prompt::ImportGltf, ""); }, "Ctrl+I", 10);
-    import.separatorBefore = true;
-    r.command(std::move(import));
 
     Command exit = make("file.exit", "File/Exit", [](EditorContext& ctx) { ctx.app().quit(); }, nullptr, 100);
     exit.separatorBefore = true;
@@ -205,7 +194,7 @@ void CoreCommandsPlugin::onRegister(Registry& r) {
 }
 
 void CoreCommandsPlugin::drawPrompt(EditorContext& ctx) {
-    static constexpr const char* kTitles[] = {"", "Open Scene", "Save Scene As", "Import glTF"};
+    static constexpr const char* kTitles[] = {"", "Open Scene", "Save Scene As"};
     const char* title = kTitles[static_cast<int>(m_prompt)];
     if (m_openPrompt) {
         ImGui::OpenPopup(title);
@@ -213,29 +202,19 @@ void CoreCommandsPlugin::drawPrompt(EditorContext& ctx) {
     }
     if (m_prompt == Prompt::None || !ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
 
-    ImGui::TextUnformatted(m_prompt == Prompt::ImportGltf ? "Path to a .gltf or .glb file:"
-                                                          : "Scene file (.scene.json), relative to the editor folder:");
+    ImGui::TextUnformatted("Scene file (.scene.json), absolute or relative to the editor folder:");
     ImGui::SetNextItemWidth(520.0f);
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     const bool enter = ImGui::InputText("##path", m_path, sizeof(m_path), ImGuiInputTextFlags_EnterReturnsTrue);
     if (!m_error.empty()) ImGui::TextColored({1.0f, 0.4f, 0.4f, 1.0f}, "%s", m_error.c_str());
 
-    const char* action = m_prompt == Prompt::Open ? "Open" : m_prompt == Prompt::SaveAs ? "Save" : "Import";
+    const char* action = m_prompt == Prompt::Open ? "Open" : "Save";
     if (ImGui::Button(action, {120, 0}) || enter) {
         bool ok = false;
         std::string error;
         switch (m_prompt) {
             case Prompt::Open: ok = ctx.openScene(m_path, &error); break;
             case Prompt::SaveAs: ok = ctx.saveScene(m_path, &error); break;
-            case Prompt::ImportGltf: {
-                std::optional<Entity> root;
-                ctx.recordCreation("Import glTF", [&] { root = loadGltf(ctx.scene(), ctx.renderer(), m_path); });
-                if (root) {
-                    ctx.select(*root);
-                    ok = true;
-                } else error = "import failed (see console)";
-                break;
-            }
             case Prompt::None: break;
         }
         if (ok) {

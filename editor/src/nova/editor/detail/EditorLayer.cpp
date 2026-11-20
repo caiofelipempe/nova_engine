@@ -2,6 +2,7 @@
 
 #include "nova/core/Log.h"
 #include "nova/renderer/Renderer.h"
+#include "nova/editor/builtin/CoreAssets.h"
 #include "nova/editor/builtin/CoreCommands.h"
 #include "nova/editor/builtin/CoreComponents.h"
 #include "nova/editor/builtin/CorePanels.h"
@@ -77,6 +78,11 @@ void EditorLayer::onAttach() {
     // Per-game layout file. ImGui loads it lazily on the first NewFrame.
     ImGui::GetIO().IniFilename = m_desc.layoutFile.c_str();
 
+    // Assets first: plugins and onSetup may add importers or look assets up.
+    m_context.assets().setRenderer(&Application::get().renderer());
+    m_context.assets().setRoot(m_desc.assetsDir);
+    NOVA_CORE_INFO("Assets: {} ({} assets)", m_context.assets().root().string(), m_context.assets().assets().size());
+
     // Order matters only for menu order (File, Edit, Entity, Play, View, ...).
     if (m_desc.builtinCommands) {
         m_registry.plugin<builtin::CoreCommandsPlugin>();
@@ -86,13 +92,13 @@ void EditorLayer::onAttach() {
         m_registry.plugin<builtin::CorePanelsPlugin>();
         m_registry.plugin<builtin::CoreToolsPlugin>();
         m_registry.plugin<builtin::CoreVisualsPlugin>();
+        m_registry.plugin<builtin::CoreAssetsPlugin>();
     }
     if (m_desc.builtinComponents) m_registry.plugin<builtin::CoreComponentsPlugin>();
 
     m_app->onSetup(m_registry);
     // Every reflected component/script gets an inspector, unless one with that name was registered.
     m_registry.addReflectedEditors();
-    m_context.fileOptions = SerializeOptions::fromRenderer(Application::get().renderer());
     m_registry.attachAll();
     m_app->onNewScene(m_context);
     NOVA_CORE_INFO("Editor ready: {} panels, {} commands, {} component editors", m_registry.panels().size(),
@@ -243,11 +249,27 @@ void EditorLayer::drawPanels() {
     for (size_t i = 0; i < panels.size(); ++i) {
         Panel& p = *panels[i];
         if (!p.open) continue;
+        dockNewPanel(p);
         if (p.noPadding) ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 0});
         const bool visible = ImGui::Begin(p.title().c_str(), &p.open, p.windowFlags);
         if (p.noPadding) ImGui::PopStyleVar();
         if (visible) p.onImGui(m_context);
         ImGui::End();
+    }
+}
+
+// A panel the saved layout does not know (added since the .ini was written) joins the dock node
+// of another panel with the same DockSlot instead of floating.
+void EditorLayer::dockNewPanel(Panel& panel) {
+    if (!m_dockChecked.insert(&panel).second) return; // once per panel
+    if (panel.dockSlot == DockSlot::Floating || ImGui::FindWindowSettingsByID(ImHashStr(panel.title().c_str())))
+        return;
+    for (auto& other : m_registry.panels()) {
+        if (other.get() == &panel || other->dockSlot != panel.dockSlot) continue;
+        if (ImGuiWindow* w = ImGui::FindWindowByName(other->title().c_str()); w && w->DockId) {
+            ImGui::SetNextWindowDockID(w->DockId, ImGuiCond_FirstUseEver);
+            return;
+        }
     }
 }
 

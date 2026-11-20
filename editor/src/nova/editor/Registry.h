@@ -3,6 +3,7 @@
 /// @file
 /// @brief The editor's extension registry: panels, commands, component editors, plugins and UI hooks.
 
+#include "nova/assets/AssetDatabase.h"
 #include "nova/core/Log.h"
 #include "nova/editor/Command.h"
 #include "nova/editor/Panel.h"
@@ -35,6 +36,13 @@ struct ComponentEditor {
     std::function<bool(Entity)> canAdd;               ///< Extra condition to offer it in "Add Component".
     std::function<void(Entity, EditorContext&)> draw; ///< Draws the section's widgets.
     bool defaultOpen = true;                          ///< Section starts expanded.
+};
+
+/// @brief Something the Assets panel can do with an asset (context menu; the first one runs on double-click).
+struct AssetAction {
+    std::string type;  ///< Asset type it applies to ("Texture", "Model"... or "*" for every type).
+    std::string label; ///< Menu label.
+    std::function<void(EditorContext&, const AssetRecord&)> run; ///< The action.
 };
 
 /// @brief Custom inspector widget for a reflected field.
@@ -237,6 +245,19 @@ public:
     const FieldDrawer* findFieldDrawer(const reflect::TypeInfo& owner, const reflect::FieldInfo& field) const;
     /// @}
 
+    /// @name Asset actions
+    /// @{
+    /// @brief Adds an action for assets of `type` (replacing one with the same type and label).
+    /// @code
+    /// r.assetAction("Dialogue", "Preview", [](EditorContext& ctx, const nova::AssetRecord& a) { openPreview(ctx, a.guid); });
+    /// @endcode
+    AssetAction& assetAction(std::string type, std::string label, std::function<void(EditorContext&, const AssetRecord&)> run);
+    /// @brief Actions for a type (type-specific first, then "*"), in registration order.
+    std::vector<const AssetAction*> assetActions(std::string_view type) const;
+    /// @brief Removes an action. @return False if not found.
+    bool removeAssetAction(std::string_view type, std::string_view label);
+    /// @}
+
     /// @name UI hooks
     /// @{
     /// @brief Called every frame after the panels (modal popups, overlays, floating tools).
@@ -268,6 +289,7 @@ private:
     std::unordered_map<std::type_index, FieldDrawer> m_typeDrawers;
     std::map<std::string, FieldDrawer> m_fieldDrawers;
     std::vector<std::function<void(EditorContext&)>> m_uiHooks;
+    std::deque<AssetAction> m_assetActions;
     std::vector<std::function<void(EditorContext&)>> m_menuBarWidgets;
 };
 

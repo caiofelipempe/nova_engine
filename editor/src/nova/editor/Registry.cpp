@@ -203,4 +203,32 @@ std::vector<std::string> splitMenuPath(std::string_view path) {
     return parts;
 }
 
+// ----------------------------------------------------------- asset actions --
+AssetAction& Registry::assetAction(std::string type, std::string label,
+                                   std::function<void(EditorContext&, const AssetRecord&)> run) {
+    for (AssetAction& a : m_assetActions)
+        if (a.type == type && a.label == label) {
+            a.run = std::move(run);
+            return a;
+        }
+    m_assetActions.push_back({std::move(type), std::move(label), std::move(run)});
+    return m_assetActions.back();
+}
+
+std::vector<const AssetAction*> Registry::assetActions(std::string_view type) const {
+    std::vector<const AssetAction*> out;
+    for (const AssetAction& a : m_assetActions)
+        if (a.type == type) out.push_back(&a);
+    for (const AssetAction& a : m_assetActions)
+        if (a.type == "*") out.push_back(&a);
+    return out;
+}
+
+bool Registry::removeAssetAction(std::string_view type, std::string_view label) {
+    auto it = std::find_if(m_assetActions.begin(), m_assetActions.end(),
+                           [&](const AssetAction& a) { return a.type == type && a.label == label; });
+    if (it == m_assetActions.end()) return false;
+    m_assetActions.erase(it);
+    return true;
+}
 } // namespace nova::editor
