@@ -44,6 +44,14 @@ function(nova_add_app NAME)
     nova_copy_shaders(${NAME})
 endfunction()
 
+# Creates a game-specific editor executable (requires NOVA_BUILD_EDITOR):
+#
+#   nova_add_editor(MyGameEditor editor/main.cpp editor/WavePanel.cpp)
+function(nova_add_editor NAME)
+    nova_add_app(${NAME} ${ARGN})
+    target_link_libraries(${NAME} PRIVATE Nova::Editor)
+endfunction()
+
 # Copies the compiled shader folder next to an application's executable.
 function(nova_copy_shaders APP)
     add_custom_command(TARGET ${APP} POST_BUILD

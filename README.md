@@ -79,7 +79,8 @@ engine/src/nova/
   assets/     glTF (cgltf)
   ui/         tema/fontes do ImGui
 engine/shaders/  GLSL → SPIR-V em build-time (glslc)
-editor/          editor com docking, hierarquia, inspetor, gizmos, console
+editor/src/      Nova::Editor — framework de editor extensível (painéis, comandos, inspetores, plugins)
+editor/app/      NovaEditor — editor da Nova montado sobre o framework (exemplo de editor de jogo)
 sandbox/         jogo mínimo usando só a API pública
 ```
 
@@ -116,6 +117,23 @@ for (nova::u32 p = 0; p < nova::Input::playerCount(); ++p) {
 - Analógicos com **zona morta radial** reescalada (padrão 0.15) e +Y = cima; gatilhos de 0 a 1 com zona morta própria.
 - Consultas diretas por dispositivo continuam disponíveis (`isKeyPressed`, `isMouseButtonPressed`, `isGamepadButtonPressed`, `gamepadLeftStick`, `gamepadDpad`…); controles sem mapeamento (volantes, manches) via `Input::joystickState` (eixos, botões e hats crus); mapeamentos extras com `Input::addGamepadMappings`.
 - Conexões e desconexões aparecem no log; o Sandbox cria uma bola controlável para cada gamepad conectado.
+
+## Editor extensível
+
+O editor é uma biblioteca (`Nova::Editor`): cada jogo monta o **seu** editor registrando painéis, comandos (menu + atalho + paleta `Ctrl+Shift+P`) e inspetores de componentes — os painéis embutidos usam a mesma API e podem ser substituídos ou removidos.
+
+```cpp
+struct MyGameEditor : nova::editor::EditorApp {
+    void onSetup(nova::editor::Registry& r) override {
+        r.panel<WavesPanel>();
+        r.component<Health>("Health", [](Health& h) { ImGui::DragFloat("HP", &h.current); });
+        r.command("Tools/Spawn Wave", [](auto& ctx) { spawnWave(ctx.scene()); }, "Ctrl+W");
+    }
+};
+int main() { return nova::editor::run<MyGameEditor>(); }
+```
+
+No CMake: `nova_add_editor(MyGameEditor editor/main.cpp ...)`. Guia com receitas: [docs/EDITOR.md](docs/EDITOR.md).
 
 ## Física (Jolt Physics)
 

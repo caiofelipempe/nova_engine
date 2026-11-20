@@ -8,14 +8,14 @@ PROJECT_BRIEF          = "C++20 game engine: Vulkan, ECS, Jolt Physics, ray trac
 OUTPUT_DIRECTORY       = build/docs
 CREATE_SUBDIRS         = NO
 
-INPUT                  = engine/src/nova README.md
+INPUT                  = engine/src/nova editor/src/nova README.md docs/EDITOR.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
 # Backend implementation headers are internal; keep them out of the public reference.
-EXCLUDE_PATTERNS       = */rhi/vulkan/* */physics/jolt/* */platform/glfw/*
+EXCLUDE_PATTERNS       = */rhi/vulkan/* */physics/jolt/* */platform/glfw/* */editor/detail/*
 USE_MDFILE_AS_MAINPAGE = README.md
-STRIP_FROM_PATH        = engine/src
-STRIP_FROM_INC_PATH    = engine/src
+STRIP_FROM_PATH        = engine/src editor/src
+STRIP_FROM_INC_PATH    = engine/src editor/src
 
 EXTRACT_ALL            = NO
 EXTRACT_PRIVATE        = NO

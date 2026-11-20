@@ -23,7 +23,7 @@ option(NOVA_PLATFORM_GLFW    "Build the GLFW window backend"     ON)
 option(NOVA_PHYSICS_JOLT     "Build the Jolt Physics backend"    ON)
 # Editor/sandbox are on when this is the top-level project, off when a game embeds the engine
 # via add_subdirectory().
-option(NOVA_BUILD_EDITOR     "Build the Nova editor"             ${PROJECT_IS_TOP_LEVEL})
+option(NOVA_BUILD_EDITOR     "Build the editor library (Nova::Editor) and, top-level, the NovaEditor app" ON)
 option(NOVA_BUILD_SANDBOX    "Build the runtime sandbox sample"  ${PROJECT_IS_TOP_LEVEL})
 option(NOVA_BUILD_TESTS      "Build the headless engine tests"   ${PROJECT_IS_TOP_LEVEL})
 
