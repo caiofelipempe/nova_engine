@@ -1,0 +1,48 @@
+# Doxygen configuration for the Nova Engine API reference.
+# Generate from the repository root:   doxygen docs/Doxyfile
+# or via CMake:                         cmake --build --preset debug --target NovaDocs
+# Output: build/docs/html/index.html
+
+PROJECT_NAME           = "Nova Engine"
+PROJECT_BRIEF          = "C++20 game engine: Vulkan, ECS, Jolt Physics, ray tracing"
+OUTPUT_DIRECTORY       = build/docs
+CREATE_SUBDIRS         = NO
+
+INPUT                  = engine/src/nova README.md
+FILE_PATTERNS          = *.h *.md
+RECURSIVE              = YES
+# Backend implementation headers are internal; keep them out of the public reference.
+EXCLUDE_PATTERNS       = */rhi/vulkan/* */physics/jolt/* */platform/glfw/*
+USE_MDFILE_AS_MAINPAGE = README.md
+STRIP_FROM_PATH        = engine/src
+STRIP_FROM_INC_PATH    = engine/src
+
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+HIDE_UNDOC_MEMBERS     = NO
+INHERIT_DOCS           = YES
+JAVADOC_AUTOBRIEF      = NO
+MARKDOWN_SUPPORT       = YES
+BUILTIN_STL_SUPPORT    = YES
+SORT_MEMBER_DOCS       = NO
+CLANG_ASSISTED_PARSING = NO
+
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+# Document the Debug variants of configuration-dependent declarations.
+PREDEFINED             = NOVA_DEBUG NOVA_RHI_VULKAN=1 NOVA_PLATFORM_GLFW=1 NOVA_PHYSICS_JOLT=1
+EXPAND_AS_DEFINED      = NOVA_ENUM_FLAGS
+
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = NO
+WARN_AS_ERROR          = NO
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_TREEVIEW      = YES
+HTML_COLORSTYLE        = TOGGLE
+SOURCE_BROWSER         = YES
+HAVE_DOT               = NO

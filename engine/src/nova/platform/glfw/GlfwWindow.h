@@ -1,13 +1,22 @@
 #pragma once
 
+/// @file
+/// @brief GLFW implementation of platform::Window.
+
 #include "nova/platform/Window.h"
 
 struct GLFWwindow;
 
 namespace nova::platform {
 
+/// @brief Window backend built on GLFW 3.
+///
+/// Created through `Window::create(WindowBackend::Glfw, ...)`. GLFW is initialized with the first
+/// window and terminated with the last one. The window is created without a client API
+/// (`GLFW_NO_API`); the RHI owns the swapchain. See Window for the member documentation.
 class GlfwWindow final : public Window {
 public:
+    /// @param desc Creation parameters.
     explicit GlfwWindow(const WindowDesc& desc);
     ~GlfwWindow() override;
 
@@ -26,6 +35,11 @@ public:
     glm::vec2 mousePosition() const override;
     f32 consumeScrollDelta() override;
     void setCursorCaptured(bool captured) override;
+
+    bool gamepadState(u32 joystick, GamepadState& out) const override;
+    bool joystickState(u32 joystick, JoystickState& out) const override;
+    std::string joystickName(u32 joystick) const override;
+    bool addGamepadMappings(const char* mappings) override;
 
     void* nativeHandle() const override;
 

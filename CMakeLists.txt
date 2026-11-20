@@ -48,3 +48,14 @@ if(NOVA_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# API reference (Doxygen). Optional: only when doxygen is installed.
+find_package(Doxygen QUIET)
+if(DOXYGEN_FOUND AND PROJECT_IS_TOP_LEVEL)
+    add_custom_target(NovaDocs
+        COMMAND ${DOXYGEN_EXECUTABLE} docs/Doxyfile
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Generating API reference in build/docs/html"
+        VERBATIM)
+    set_target_properties(NovaDocs PROPERTIES FOLDER "Docs")
+endif()

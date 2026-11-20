@@ -1,13 +1,23 @@
 #pragma once
 
+/// @file
+/// @brief Jolt Physics implementation of physics::PhysicsWorld.
+
 #include "nova/physics/PhysicsWorld.h"
 
 namespace nova::physics {
 
-// Jolt Physics backend. Jolt headers are confined to the .cpp (pimpl).
+/// @brief PhysicsWorld backed by Jolt Physics.
+///
+/// Created through `PhysicsWorld::create(Backend::Jolt)`. Jolt headers are confined to the .cpp
+/// (pimpl), so they never leak into engine or game code. Uses two object layers (static /
+/// moving), a job-system thread pool and a 16 MB temp allocator. Jolt's global state (factory,
+/// type registry) is reference-counted across worlds. See PhysicsWorld for member documentation.
 class JoltPhysicsWorld final : public PhysicsWorld {
 public:
+    /// @param desc World parameters.
     explicit JoltPhysicsWorld(const WorldDesc& desc);
+    /// @brief Destroys every remaining body, then the world.
     ~JoltPhysicsWorld() override;
 
     BodyId createBody(const BodyDesc& desc) override;

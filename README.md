@@ -58,7 +58,10 @@ cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
 build\bin\Debug\Sandbox.exe
 ctest --preset debug              # testes headless (física)
+doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
+
+A API pública é documentada no estilo Doxygen nos headers de `engine/src/nova/`. Com o Doxygen instalado, o CMake também cria o target `NovaDocs`.
 
 As dependências (manifest [vcpkg.json](vcpkg.json)) são instaladas automaticamente no configure: GLFW, Vulkan Memory Allocator, glm, EnTT, spdlog, Dear ImGui (docking), ImGuizmo, cgltf, Jolt Physics.
 Em Debug, as validation layers do Vulkan ficam ligadas e as mensagens vão para o console e para `nova.log`.
@@ -92,6 +95,27 @@ Isso mapeia direto para Vulkan (BDA + descriptor indexing) e para D3D12 (SM 6.6 
 **Recursos.** São handles geracionais (`BufferHandle`, `TextureHandle`, …): handles obsoletos são detectados em vez de apontarem para outro recurso. A destruição é adiada até a GPU terminar os frames em voo. O estado das texturas é rastreado e as barreiras (sync2) são emitidas automaticamente.
 
 **Frame.** `[TLAS build] → sky → forward PBR (HDR, RGBA16F) → tonemap (ACES) → UI`. Os dados por frame vêm de um alocador linear num buffer de upload por frame em voo.
+
+## Input e players
+
+**Player 0 é teclado + mouse; players 1, 2, … são os gamepads conectados** (Xbox, PlayStation, Switch e outros, via o banco de mapeamentos SDL embutido no GLFW). Declare ações e eixos uma vez e consulte por player — o mesmo código serve para todos:
+
+```cpp
+nova::Input::bindAction("Jump", {.keys = {nova::Key::Space}, .gamepadButtons = {nova::GamepadButton::A}});
+nova::Input::bindAction("Fire", {.mouseButtons = {nova::MouseButton::Left}, .gamepadTriggers = {nova::GamepadAxis::RightTrigger}});
+nova::Input::bindAxis("Move", {.up = nova::Key::W, .down = nova::Key::S, .left = nova::Key::A,
+                               .right = nova::Key::D, .stick = nova::GamepadStick::Left});
+
+for (nova::u32 p = 0; p < nova::Input::playerCount(); ++p) {
+    if (nova::Input::isActionPressed("Jump", p)) { /* ... */ }
+    glm::vec2 move = nova::Input::axis("Move", p);     // +Y = frente/cima
+}
+```
+
+- Ações: `isActionDown / Pressed / Released`; eixos 2D combinam 4 teclas (diagonais normalizadas) e opcionalmente o mouse para o player 0, e um analógico ou o d-pad para gamepads.
+- Analógicos com **zona morta radial** reescalada (padrão 0.15) e +Y = cima; gatilhos de 0 a 1 com zona morta própria.
+- Consultas diretas por dispositivo continuam disponíveis (`isKeyPressed`, `isMouseButtonPressed`, `isGamepadButtonPressed`, `gamepadLeftStick`, `gamepadDpad`…); controles sem mapeamento (volantes, manches) via `Input::joystickState` (eixos, botões e hats crus); mapeamentos extras com `Input::addGamepadMappings`.
+- Conexões e desconexões aparecem no log; o Sandbox cria uma bola controlável para cada gamepad conectado.
 
 ## Física (Jolt Physics)
 

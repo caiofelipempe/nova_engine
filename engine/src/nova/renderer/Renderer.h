@@ -1,5 +1,8 @@
 #pragma once
 
+/// @file
+/// @brief High-level renderer: frame inputs, settings, render views and the Renderer itself.
+
 #include "nova/renderer/Mesh.h"
 #include "nova/rhi/Device.h"
 
@@ -13,46 +16,65 @@
 namespace nova {
 
 // ------------------------------------------------------------- frame input --
-struct CameraData {
-    glm::mat4 view{1.0f};
-    glm::mat4 projection{1.0f}; // Vulkan-style clip space (Y down, depth 0..1)
-    glm::vec3 position{0.0f};
 
+/// @brief View and projection of the camera a frame is rendered from.
+struct CameraData {
+    glm::mat4 view{1.0f};       ///< World → view.
+    glm::mat4 projection{1.0f}; ///< View → clip, Vulkan convention (Y down, depth 0..1).
+    glm::vec3 position{0.0f};   ///< Camera position in world space.
+
+    /// @brief Perspective camera looking from `position` at `target` (Y up).
+    /// @param fovY Vertical field of view in radians.
+    /// @param aspect Width / height of the target.
+    /// @param nearClip Near plane distance.
+    /// @param farClip Far plane distance.
     static CameraData perspective(const glm::vec3& position, const glm::vec3& target, f32 fovY, f32 aspect,
                                   f32 nearClip = 0.05f, f32 farClip = 500.0f);
+    /// @brief Perspective camera from a camera-to-world matrix (camera looks down its local -Z).
+    /// @param cameraToWorld Rigid transform of the camera (no scale).
+    /// @param fovY Vertical field of view in radians.
+    /// @param aspect Width / height of the target.
+    /// @param nearClip Near plane distance.
+    /// @param farClip Far plane distance.
     static CameraData fromTransform(const glm::mat4& cameraToWorld, f32 fovY, f32 aspect, f32 nearClip,
                                     f32 farClip);
 };
 
+/// @brief The scene's single directional light ("sun").
 struct DirectionalLightData {
-    glm::vec3 direction{-0.35f, -1.0f, -0.45f}; // direction the light travels
-    glm::vec3 color{1.0f, 0.96f, 0.9f};
-    f32 intensity = 3.0f;
+    glm::vec3 direction{-0.35f, -1.0f, -0.45f}; ///< Direction the light travels (need not be normalized).
+    glm::vec3 color{1.0f, 0.96f, 0.9f};         ///< Linear RGB color.
+    f32 intensity = 3.0f;                       ///< Radiance multiplier.
 };
 
+/// @brief A point light with a finite radius (smooth windowed inverse-square falloff).
 struct PointLightData {
-    glm::vec3 position{0.0f};
-    f32 radius = 8.0f;
-    glm::vec3 color{1.0f};
-    f32 intensity = 10.0f;
+    glm::vec3 position{0.0f}; ///< World position.
+    f32 radius = 8.0f;        ///< Distance at which the light reaches zero.
+    glm::vec3 color{1.0f};    ///< Linear RGB color.
+    f32 intensity = 10.0f;    ///< Radiance multiplier.
 };
 
+/// @brief One mesh instance to draw.
 struct DrawItem {
-    MeshHandle mesh;
-    glm::mat4 transform{1.0f};
-    Material material;
-    bool castShadows = true;
+    MeshHandle mesh;           ///< Mesh created with Renderer::createMesh.
+    glm::mat4 transform{1.0f}; ///< Object → world.
+    Material material;         ///< Surface parameters.
+    bool castShadows = true;   ///< Include in the ray tracing scene (ray-traced shadows).
 };
 
-// Everything needed to draw one frame of a scene. Built by Scene::buildRenderScene()
-// or by hand if you don't use the ECS.
+/// @brief Everything needed to draw one frame of a scene.
+///
+/// Built by Scene::buildRenderScene(), or filled by hand when not using the ECS.
+/// Reuse the same object every frame to avoid reallocations (see clear()).
 struct RenderScene {
-    CameraData camera;
-    DirectionalLightData sun;
-    std::vector<PointLightData> pointLights;
-    std::vector<DrawItem> draws;
-    f32 time = 0.0f;
+    CameraData camera;                       ///< Point of view.
+    DirectionalLightData sun;                ///< Directional light.
+    std::vector<PointLightData> pointLights; ///< Point lights (the first 16 are used).
+    std::vector<DrawItem> draws;             ///< Mesh instances.
+    f32 time = 0.0f;                         ///< Scene time in seconds (available to shaders).
 
+    /// @brief Empties the lists, keeping their capacity.
     void clear() {
         pointLights.clear();
         draws.clear();
@@ -60,38 +82,61 @@ struct RenderScene {
 };
 
 // ---------------------------------------------------------------- settings --
-enum class DebugView : u32 { Lit = 0, Normals, Shadows, Albedo };
-enum class Tonemapper : u32 { ACES = 0, Reinhard, None };
 
-struct RenderSettings {
-    bool rayTracedShadows = true; // used when the GPU supports ray queries
-    bool wireframe = false;
-    DebugView debugView = DebugView::Lit;
-    Tonemapper tonemapper = Tonemapper::ACES;
-    f32 exposure = 1.0f;
-    f32 shadowBias = 0.02f;
-    f32 ambientIntensity = 0.3f;
-    glm::vec3 skyZenith{0.22f, 0.42f, 0.85f};
-    glm::vec3 skyHorizon{0.78f, 0.84f, 0.92f};
-    glm::vec3 groundColor{0.28f, 0.25f, 0.22f};
+/// @brief Debug visualization of the forward pass.
+enum class DebugView : u32 {
+    Lit = 0, ///< Normal shading.
+    Normals, ///< World-space normals as colors.
+    Shadows, ///< Sun visibility (white = lit).
+    Albedo,  ///< Base color only.
 };
 
+/// @brief HDR → display mapping.
+enum class Tonemapper : u32 {
+    ACES = 0, ///< ACES filmic (Narkowicz fit).
+    Reinhard, ///< `c / (1 + c)`.
+    None,     ///< Clamp only.
+};
+
+/// @brief Runtime-tweakable rendering options (Renderer::settings()).
+struct RenderSettings {
+    bool rayTracedShadows = true;                ///< Ray-query shadows; ignored when the GPU lacks ray queries.
+    bool wireframe = false;                      ///< Draw meshes as lines (needs DeviceCaps::wireframe).
+    DebugView debugView = DebugView::Lit;        ///< Debug visualization.
+    Tonemapper tonemapper = Tonemapper::ACES;    ///< Tonemapping operator.
+    f32 exposure = 1.0f;                         ///< Linear exposure multiplier applied before tonemapping.
+    f32 shadowBias = 0.02f;                      ///< Shadow ray origin offset along the normal (world units).
+    f32 ambientIntensity = 0.3f;                 ///< Strength of the hemisphere ambient light.
+    glm::vec3 skyZenith{0.22f, 0.42f, 0.85f};    ///< Sky color straight up (also the ambient's upper color).
+    glm::vec3 skyHorizon{0.78f, 0.84f, 0.92f};   ///< Sky color at the horizon.
+    glm::vec3 groundColor{0.28f, 0.25f, 0.22f};  ///< Color below the horizon (also the ambient's lower color).
+};
+
+/// @brief Counters of the last completed frame.
 struct RenderStats {
-    u32 drawCalls = 0;
-    u32 instances = 0;
-    u64 triangles = 0;
-    u32 tlasInstances = 0;
+    u32 drawCalls = 0;     ///< Draw calls issued.
+    u32 instances = 0;     ///< Mesh instances submitted.
+    u64 triangles = 0;     ///< Triangles drawn.
+    u32 tlasInstances = 0; ///< Instances in the ray tracing scene.
 };
 
 class Renderer;
 
-// Offscreen render targets for one view (editor viewport, minimap, ...).
+/// @brief Offscreen render targets for one view (editor viewport, minimap, ...).
+///
+/// Holds an HDR color target, a depth buffer and a tonemapped output in the swapchain format.
+/// Created with Renderer::createView(); must be destroyed before the Renderer.
 class RenderView : NonCopyable {
 public:
     ~RenderView();
+    /// @brief Recreates the targets if `size` differs (clamped to at least 1×1).
+    /// @note Call outside of rendering (e.g. in Layer::onUpdate); old targets are released safely.
     void resize(Extent2D size);
+    /// @brief Current size in pixels.
     Extent2D size() const { return m_size; }
-    // Tonemapped result (sampled-ready after Renderer::render). Use with ImGui::Image via textureId().
+    /// @brief Tonemapped result, in ResourceState::ShaderRead after Renderer::render.
+    ///
+    /// Display it with `ImGui::Image((ImTextureID)app.imgui()->textureId(view.output()), size)`.
     rhi::TextureHandle output() const { return m_output; }
 
 private:
@@ -108,43 +153,74 @@ private:
     rhi::TextureHandle m_output;
 };
 
-// Hybrid forward renderer: raster G-buffer-free forward shading + ray-queried shadows.
-//
-// Frame graph:  [TLAS build] -> sky -> opaque forward (HDR) -> tonemap (LDR output)
+/// @brief Hybrid forward renderer: rasterized PBR shading with ray-queried shadows.
+///
+/// Frame graph: `[TLAS build] → sky → opaque forward (HDR) → tonemap (LDR output)`.
+///
+/// - Meshes are stored once on the GPU (vertex pulling via device addresses) and, when ray
+///   tracing is available, each gets a BLAS.
+/// - Per-frame data (camera, lights, instances, TLAS instances) is written into a linear upload
+///   buffer per frame in flight; a TLAS per frame in flight is rebuilt from the draw list.
+/// - Without ray query support the same scene renders unshadowed, with no code changes.
 class Renderer : NonCopyable {
 public:
+    /// @brief Loads shaders from `<exe dir>/shaders`, creates pipelines, per-frame buffers and the built-in meshes.
     explicit Renderer(rhi::Device& device);
+    /// @brief Waits for the GPU and destroys every mesh, texture and pipeline it owns.
     ~Renderer();
 
-    // -- meshes
+    /// @name Meshes
+    /// @{
+    /// @brief Uploads a mesh (and builds its BLAS when ray tracing is available).
+    /// @param data Geometry; must not be empty.
+    /// @param name Display/debug name.
+    /// @return Handle to use in DrawItem / MeshComponent.
     MeshHandle createMesh(const MeshData& data, const std::string& name = "Mesh");
+    /// @brief Releases a mesh. Invalid handles are ignored.
     void destroyMesh(MeshHandle mesh);
+    /// @brief Built-in unit cube (side 1, centered).
     MeshHandle cube() const { return m_cube; }
+    /// @brief Built-in sphere (diameter 1).
     MeshHandle sphere() const { return m_sphere; }
+    /// @brief Built-in 1×1 plane on XZ facing +Y.
     MeshHandle plane() const { return m_plane; }
+    /// @brief Name given at creation, or "<none>" for invalid handles.
     const std::string& meshName(MeshHandle mesh) const;
+    /// @brief Every live mesh.
     std::vector<MeshHandle> meshes() const;
+    /// @}
 
-    // -- textures (RGBA8, sRGB)
+    /// @brief Creates a sampled sRGB texture from RGBA8 pixels; owned by the renderer.
+    /// @param width Width in pixels.
+    /// @param height Height in pixels.
+    /// @param rgba8 `width * height * 4` bytes, tightly packed.
+    /// @param name Debug name.
     rhi::TextureHandle createTexture2D(u32 width, u32 height, const void* rgba8, const char* name = nullptr);
 
-    // -- views
+    /// @brief Creates offscreen targets to render a scene into.
     Scope<RenderView> createView(Extent2D size);
 
-    // -- frame
-    void beginFrame(); // called by Application each frame
-    // Renders into the view; its output ends in ShaderRead state.
+    /// @name Frame
+    /// @{
+    /// @brief Resets per-frame allocations and statistics. Called by Application each frame.
+    void beginFrame();
+    /// @brief Renders `scene` into `view`; RenderView::output() ends in ResourceState::ShaderRead.
     void render(rhi::CommandList& cmd, const RenderScene& scene, RenderView& view);
-    // Renders straight to the swapchain image (games without an editor).
+    /// @brief Renders `scene` straight into the swapchain image (games without an editor).
     void renderToBackbuffer(rhi::CommandList& cmd, const RenderScene& scene);
+    /// @}
 
+    /// @brief Mutable rendering options, read at render time.
     RenderSettings& settings() { return m_settings; }
-    const RenderStats& stats() const { return m_lastStats; } // previous completed frame
+    /// @brief Statistics of the previous completed frame (UI code runs before this frame renders).
+    const RenderStats& stats() const { return m_lastStats; }
+    /// @brief True if ray-traced shadows can be used on this GPU.
     bool rayTracingAvailable() const { return m_device.caps().rayQuery; }
+    /// @brief The device the renderer draws with.
     rhi::Device& device() { return m_device; }
 
-    static constexpr rhi::Format kHdrFormat = rhi::Format::RGBA16_FLOAT;
-    static constexpr rhi::Format kDepthFormat = rhi::Format::D32_FLOAT;
+    static constexpr rhi::Format kHdrFormat = rhi::Format::RGBA16_FLOAT; ///< Format of the HDR color target.
+    static constexpr rhi::Format kDepthFormat = rhi::Format::D32_FLOAT;  ///< Format of the depth target.
 
 private:
     struct GpuMesh {

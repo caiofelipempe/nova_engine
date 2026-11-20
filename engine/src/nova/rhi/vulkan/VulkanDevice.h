@@ -1,5 +1,8 @@
 #pragma once
 
+/// @file
+/// @brief Vulkan 1.3 implementation of rhi::Device and rhi::CommandList (internal to the backend).
+
 #include "nova/rhi/Device.h"
 #include "nova/rhi/HandlePool.h"
 #include "nova/rhi/vulkan/VulkanCommon.h"
@@ -9,60 +12,69 @@
 #include <functional>
 #include <vector>
 
+/// @brief Vulkan backend of the RHI. Not part of the public API: use rhi::Device.
 namespace nova::rhi::vk {
 
 class VulkanDevice;
 class VulkanImGuiRenderer;
 
+/// @brief Backend storage behind a BufferHandle.
 struct VulkanBuffer {
-    VkBuffer buffer = VK_NULL_HANDLE;
-    VmaAllocation allocation = nullptr;
-    u64 size = 0;
-    void* mapped = nullptr;
-    VkDeviceAddress address = 0;
+    VkBuffer buffer = VK_NULL_HANDLE;   ///< Vulkan buffer.
+    VmaAllocation allocation = nullptr; ///< VMA allocation.
+    u64 size = 0;                       ///< Size in bytes.
+    void* mapped = nullptr;             ///< Persistent mapping (host-visible buffers only).
+    VkDeviceAddress address = 0;        ///< Buffer device address.
 };
 
+/// @brief Backend storage behind a TextureHandle.
 struct VulkanTexture {
-    VkImage image = VK_NULL_HANDLE;
-    VmaAllocation allocation = nullptr;
-    VkImageView view = VK_NULL_HANDLE;
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    VkExtent2D extent{};
-    u32 mipLevels = 1;
-    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
-    TextureUsage usage = TextureUsage::None;
-    ResourceState state = ResourceState::Undefined;
-    u32 sampledIndex = kInvalidIndex;
-    u32 storageIndex = kInvalidIndex;
-    bool ownsImage = true; // false for swapchain images
+    VkImage image = VK_NULL_HANDLE;                        ///< Vulkan image.
+    VmaAllocation allocation = nullptr;                    ///< VMA allocation (null for swapchain images).
+    VkImageView view = VK_NULL_HANDLE;                     ///< View over all mips.
+    VkFormat format = VK_FORMAT_UNDEFINED;                 ///< Vulkan format.
+    VkExtent2D extent{};                                   ///< Size in pixels.
+    u32 mipLevels = 1;                                     ///< Mip count.
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT; ///< Color or depth aspect.
+    TextureUsage usage = TextureUsage::None;               ///< RHI usage flags.
+    ResourceState state = ResourceState::Undefined;        ///< Tracked state (see recordTransition).
+    u32 sampledIndex = kInvalidIndex;                      ///< Bindless sampled-texture slot.
+    u32 storageIndex = kInvalidIndex;                      ///< Bindless storage-image slot.
+    bool ownsImage = true;                                 ///< False for swapchain images (owned by the swapchain).
 };
 
+/// @brief Backend storage behind a PipelineHandle.
 struct VulkanPipeline {
-    VkPipeline pipeline = VK_NULL_HANDLE;
-    VkPipelineBindPoint bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    VkPipeline pipeline = VK_NULL_HANDLE;                            ///< Vulkan pipeline.
+    VkPipelineBindPoint bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; ///< Graphics or compute.
 };
 
+/// @brief Backend storage behind an AccelStructHandle.
 struct VulkanAccelStruct {
-    VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
-    BufferHandle storage;
-    BufferHandle scratch;   // kept for TLAS rebuilds
-    VkDeviceAddress address = 0;
-    VkDeviceAddress scratchAddress = 0; // aligned
-    bool topLevel = false;
-    u32 maxInstances = 0;
+    VkAccelerationStructureKHR handle = VK_NULL_HANDLE; ///< Vulkan acceleration structure.
+    BufferHandle storage;                               ///< Buffer holding the structure.
+    BufferHandle scratch;                               ///< Build scratch memory, kept for TLAS rebuilds.
+    VkDeviceAddress address = 0;                        ///< Acceleration structure device address.
+    VkDeviceAddress scratchAddress = 0;                 ///< Scratch address, aligned as the driver requires.
+    bool topLevel = false;                              ///< TLAS (true) or BLAS.
+    u32 maxInstances = 0;                               ///< TLAS capacity.
 };
 
-// Emits an image barrier from the texture's tracked state to `state` and updates the tracking.
+/// @brief Emits an image barrier from the texture's tracked state to `state` and updates the tracking.
+/// @note No-op when the state does not change (except UnorderedAccess, which always gets a barrier).
 void recordTransition(VkCommandBuffer cmd, VulkanTexture& tex, ResourceState state);
 
-// Simple free-list allocator for bindless descriptor slots.
+/// @brief Free-list allocator for bindless descriptor slots.
 class IndexAllocator {
 public:
+    /// @brief Resets the allocator to `capacity` free slots.
     void init(u32 capacity) { m_capacity = capacity; m_next = 0; m_free.clear(); }
+    /// @brief Returns a free slot, or kInvalidIndex when full.
     u32 allocate() {
         if (!m_free.empty()) { u32 i = m_free.back(); m_free.pop_back(); return i; }
         return m_next < m_capacity ? m_next++ : kInvalidIndex;
     }
+    /// @brief Returns a slot to the free list (kInvalidIndex is ignored).
     void release(u32 i) { if (i != kInvalidIndex) m_free.push_back(i); }
 
 private:
@@ -71,10 +83,14 @@ private:
     std::vector<u32> m_free;
 };
 
+/// @brief rhi::CommandList recording into the current frame's `VkCommandBuffer`.
 class VulkanCommandList final : public CommandList {
 public:
+    /// @param device Owning device (resolves handles).
     explicit VulkanCommandList(VulkanDevice& device) : m_device(device) {}
+    /// @brief Points the list at a new, already begun command buffer (once per frame).
     void reset(VkCommandBuffer cmd);
+    /// @brief The underlying command buffer.
     VkCommandBuffer handle() const { return m_cmd; }
 
     void beginRendering(const RenderingDesc& desc) override;
@@ -99,8 +115,16 @@ private:
     VkCommandBuffer m_cmd = VK_NULL_HANDLE;
 };
 
+/// @brief rhi::Device implemented with Vulkan 1.3.
+///
+/// Requirements: dynamic rendering, synchronization2, buffer device address, descriptor indexing,
+/// scalar block layout and shaderInt64. Ray tracing (acceleration structures + ray query, and
+/// ray tracing pipelines when present) is enabled when available and requested.
+/// Memory is managed with VMA; resources live in generational HandlePools; destruction is
+/// deferred until the frames that may use the resource have completed.
 class VulkanDevice final : public Device {
 public:
+    /// @brief Creates instance, surface, device, allocator, bindless layout, frames and swapchain.
     VulkanDevice(const DeviceDesc& desc, platform::Window& window);
     ~VulkanDevice() override;
 
@@ -143,10 +167,15 @@ public:
 
     Scope<ImGuiRenderer> createImGuiRenderer() override;
 
-    // ---- backend internals (command list, ImGui renderer) ----
+    /// @name Backend internals (used by the command list and the ImGui renderer)
+    /// @{
+    /// @brief Resolves a handle (`nullptr` if invalid/stale).
     VulkanBuffer* buffer(BufferHandle h) { return m_buffers.get(h); }
+    /// @brief Resolves a handle (`nullptr` if invalid/stale).
     VulkanTexture* texture(TextureHandle h) { return m_textures.get(h); }
+    /// @brief Resolves a handle (`nullptr` if invalid/stale).
     VulkanPipeline* pipeline(PipelineHandle h) { return m_pipelines.get(h); }
+    /// @brief Resolves a handle (`nullptr` if invalid/stale).
     VulkanAccelStruct* accelStruct(AccelStructHandle h) { return m_accelStructs.get(h); }
 
     VkInstance instance() const { return m_instance; }
@@ -158,10 +187,14 @@ public:
     VkPipelineLayout pipelineLayout() const { return m_pipelineLayout; }
     VkDescriptorSet bindlessSet() const { return m_bindlessSet; }
     VkSampler defaultSampler() const { return m_defaultSampler; }
+    /// @brief Extension entry points loaded at device creation.
     const ExtFunctions& ext() const { return m_ext; }
 
+    /// @brief Runs `fn` once every frame that may still reference a resource has completed on the GPU.
     void deferRelease(std::function<void()> fn);
+    /// @brief Registers the ImGui renderer so destroyed textures release their ImGui descriptors.
     void setImGuiRenderer(VulkanImGuiRenderer* r) { m_imguiRenderer = r; }
+    /// @}
 
 private:
     struct Frame {

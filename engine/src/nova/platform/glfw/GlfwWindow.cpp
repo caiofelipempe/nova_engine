@@ -21,6 +21,19 @@ int g_glfwRefCount = 0;
 void glfwErrorCallback(int code, const char* description) {
     NOVA_CORE_ERROR("GLFW error {}: {}", code, description);
 }
+
+void glfwJoystickCallback(int jid, int event) {
+    if (event == GLFW_CONNECTED) {
+        const bool gamepad = glfwJoystickIsGamepad(jid) == GLFW_TRUE;
+        const char* name = gamepad ? glfwGetGamepadName(jid) : glfwGetJoystickName(jid);
+        NOVA_CORE_INFO("Joystick {} connected: '{}'{}", jid, name ? name : "?",
+                       gamepad ? " (gamepad)" : " (no gamepad mapping)");
+    } else if (event == GLFW_DISCONNECTED) {
+        NOVA_CORE_INFO("Joystick {} disconnected", jid);
+    }
+}
+
+bool validJoystick(u32 joystick) { return joystick < kMaxJoysticks && joystick <= GLFW_JOYSTICK_LAST; }
 } // namespace
 
 GlfwWindow::GlfwWindow(const WindowDesc& desc) {
@@ -28,6 +41,9 @@ GlfwWindow::GlfwWindow(const WindowDesc& desc) {
         glfwSetErrorCallback(glfwErrorCallback);
         NOVA_VERIFY(glfwInit() == GLFW_TRUE, "glfwInit failed");
         NOVA_VERIFY(glfwVulkanSupported() == GLFW_TRUE, "GLFW reports no Vulkan loader/ICD");
+        glfwSetJoystickCallback(glfwJoystickCallback);
+        for (int jid = GLFW_JOYSTICK_1; jid <= GLFW_JOYSTICK_LAST; ++jid)
+            if (glfwJoystickPresent(jid)) glfwJoystickCallback(jid, GLFW_CONNECTED); // log devices present at startup
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // the RHI owns the swapchain
@@ -95,6 +111,45 @@ void GlfwWindow::setCursorCaptured(bool captured) {
     glfwSetInputMode(m_window, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
     if (glfwRawMouseMotionSupported())
         glfwSetInputMode(m_window, GLFW_RAW_MOUSE_MOTION, captured ? GLFW_TRUE : GLFW_FALSE);
+}
+
+bool GlfwWindow::gamepadState(u32 joystick, GamepadState& out) const {
+    if (!validJoystick(joystick)) return false;
+    const int jid = static_cast<int>(joystick);
+    GLFWgamepadstate state;
+    if (glfwJoystickIsGamepad(jid) != GLFW_TRUE || glfwGetGamepadState(jid, &state) != GLFW_TRUE) return false;
+    static_assert(static_cast<int>(GamepadButton::Count) == GLFW_GAMEPAD_BUTTON_LAST + 1);
+    static_assert(static_cast<int>(GamepadAxis::Count) == GLFW_GAMEPAD_AXIS_LAST + 1);
+    for (size_t i = 0; i < out.buttons.size(); ++i) out.buttons[i] = state.buttons[i] == GLFW_PRESS;
+    for (size_t i = 0; i < out.axes.size(); ++i) out.axes[i] = state.axes[i];
+    return true;
+}
+
+bool GlfwWindow::joystickState(u32 joystick, JoystickState& out) const {
+    if (!validJoystick(joystick)) return false;
+    const int jid = static_cast<int>(joystick);
+    if (glfwJoystickPresent(jid) != GLFW_TRUE) return false;
+    int count = 0;
+    const float* axes = glfwGetJoystickAxes(jid, &count);
+    out.axes.assign(axes, axes + (axes ? count : 0));
+    const unsigned char* buttons = glfwGetJoystickButtons(jid, &count);
+    out.buttons.clear();
+    for (int i = 0; buttons && i < count; ++i) out.buttons.push_back(buttons[i] == GLFW_PRESS);
+    const unsigned char* hats = glfwGetJoystickHats(jid, &count);
+    out.hats.assign(hats, hats + (hats ? count : 0)); // GLFW_HAT_* bits match JoystickHat
+    return true;
+}
+
+std::string GlfwWindow::joystickName(u32 joystick) const {
+    if (!validJoystick(joystick)) return {};
+    const int jid = static_cast<int>(joystick);
+    if (glfwJoystickPresent(jid) != GLFW_TRUE) return {};
+    const char* name = glfwJoystickIsGamepad(jid) ? glfwGetGamepadName(jid) : glfwGetJoystickName(jid);
+    return name ? name : "";
+}
+
+bool GlfwWindow::addGamepadMappings(const char* mappings) {
+    return mappings && glfwUpdateGamepadMappings(mappings) == GLFW_TRUE;
 }
 
 void* GlfwWindow::nativeHandle() const {

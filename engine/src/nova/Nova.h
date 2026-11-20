@@ -1,13 +1,16 @@
 #pragma once
 
-// Nova Engine public API — the only header an application needs.
-//
-//   #include <nova/Nova.h>
-//
-//   struct MyGame : nova::GameLayer {
-//       void onStart() override { /* build the scene */ }
-//   };
-//   int main() { return nova::run<MyGame>({.name = "My Game"}); }
+/// @file
+/// @brief Nova Engine public API — the only header an application needs.
+///
+/// @code
+/// #include <nova/Nova.h>
+///
+/// struct MyGame : nova::GameLayer {
+///     void onStart() override { /* build the scene */ }
+/// };
+/// int main() { return nova::run<MyGame>({.name = "My Game"}); }
+/// @endcode
 
 #include "nova/core/Application.h"
 #include "nova/core/Base.h"
@@ -34,3 +37,14 @@
 #include "nova/assets/GltfLoader.h"
 
 #include <imgui.h>
+
+/// @brief Nova Engine.
+///
+/// Layers, from bottom to top:
+/// - **core** — Application, Layer, logging (Log, `NOVA_*` macros).
+/// - **platform** (nova::platform) — Window and Input, GLFW backend.
+/// - **rhi** (nova::rhi) — graphics API abstraction (Device, CommandList), Vulkan backend.
+/// - **physics** (nova::physics) — PhysicsWorld, Jolt backend.
+/// - **renderer** — Renderer, RenderView, meshes and materials (talks only to the RHI).
+/// - **scene** — Scene (EnTT), Entity, components, Script, GameLayer.
+namespace nova {}

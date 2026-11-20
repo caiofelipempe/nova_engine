@@ -1,66 +1,76 @@
 #pragma once
 
+/// @file
+/// @brief CPU mirrors of the GPU data layouts in shaders/common.glsl (std430).
+/// @warning Keep these structs and the GLSL declarations in sync; sizes are checked with static_assert.
+
 #include "nova/core/Base.h"
 
 #include <glm/glm.hpp>
 
-// CPU mirrors of the structures in shaders/common.glsl (std430). Keep both in sync.
+/// @brief Shader-visible data layouts used by the Renderer.
 namespace nova::gpu {
 
-constexpr u32 kMaxPointLights = 16;
-constexpr u32 kFrameFlagRtShadows = 1u;
-constexpr u32 kMaterialFlagChecker = 1u;
+constexpr u32 kMaxPointLights = 16;      ///< Point lights per frame (`MAX_POINT_LIGHTS`).
+constexpr u32 kFrameFlagRtShadows = 1u;  ///< FrameData::flags: trace shadow rays (`FRAME_FLAG_RT_SHADOWS`).
+constexpr u32 kMaterialFlagChecker = 1u; ///< InstanceData::params.z bit: checker pattern (`MATERIAL_FLAG_CHECKER`).
 
+/// @brief One point light as seen by shaders.
 struct PointLight {
-    glm::vec4 positionRadius;
-    glm::vec4 colorIntensity;
+    glm::vec4 positionRadius; ///< xyz = world position, w = radius.
+    glm::vec4 colorIntensity; ///< rgb = color, w = intensity.
 };
 
+/// @brief Per-frame constants, read through a device address.
 struct FrameData {
-    glm::mat4 view;
-    glm::mat4 proj;
-    glm::mat4 viewProj;
-    glm::mat4 invViewProj;
-    glm::vec4 cameraPos;
-    glm::vec4 sunDirection;
-    glm::vec4 sunColor;
-    glm::vec4 skyZenith;
-    glm::vec4 skyHorizon;
-    glm::vec4 groundColor;
-    u32 pointLightCount;
-    u32 flags;
-    f32 shadowBias;
-    f32 _pad0;
-    PointLight pointLights[kMaxPointLights];
+    glm::mat4 view;          ///< World → view.
+    glm::mat4 proj;          ///< View → clip.
+    glm::mat4 viewProj;      ///< World → clip.
+    glm::mat4 invViewProj;   ///< Clip → world (sky ray reconstruction).
+    glm::vec4 cameraPos;     ///< xyz = camera position, w = time in seconds.
+    glm::vec4 sunDirection;  ///< xyz = direction the light travels (normalized), w = intensity.
+    glm::vec4 sunColor;      ///< rgb = sun color.
+    glm::vec4 skyZenith;     ///< rgb = zenith color, w = ambient intensity.
+    glm::vec4 skyHorizon;    ///< rgb = horizon color.
+    glm::vec4 groundColor;   ///< rgb = ground color.
+    u32 pointLightCount;     ///< Number of valid entries in pointLights.
+    u32 flags;               ///< kFrameFlag* bits.
+    f32 shadowBias;          ///< Shadow ray origin offset along the normal.
+    f32 _pad0;               ///< Padding (std430).
+    PointLight pointLights[kMaxPointLights]; ///< Point lights.
 };
 static_assert(sizeof(FrameData) == 256 + 6 * 16 + 16 + kMaxPointLights * 32);
 
+/// @brief Per-draw instance data, indexed by DrawPush::instanceIndex.
 struct InstanceData {
-    glm::mat4 model;
-    glm::mat4 normalMatrix;
-    glm::vec4 baseColor;
-    glm::vec4 emissive;
-    glm::vec4 params; // metallic, roughness, flags (uint bits), texture index (float, -1 = none)
+    glm::mat4 model;        ///< Object → world.
+    glm::mat4 normalMatrix; ///< Inverse-transpose of `model` (upper 3x3 used).
+    glm::vec4 baseColor;    ///< Material base color.
+    glm::vec4 emissive;     ///< rgb = emissive color, w = strength.
+    glm::vec4 params;       ///< x = metallic, y = roughness, z = material flags (uint bits), w = base color texture index (-1 = none).
 };
 static_assert(sizeof(InstanceData) == 176);
 
+/// @brief Push constants of the forward pass (`forward_push.glsl`).
 struct DrawPush {
-    u64 frame;
-    u64 instances;
-    u64 vertices;
-    u64 tlas;
-    u32 instanceIndex;
-    u32 debugView;
+    u64 frame;         ///< Address of FrameData.
+    u64 instances;     ///< Address of the InstanceData array.
+    u64 vertices;      ///< Address of the mesh's Vertex array.
+    u64 tlas;          ///< TLAS address for ray queries (0 = no ray tracing).
+    u32 instanceIndex; ///< Index into `instances`.
+    u32 debugView;     ///< DebugView value.
 };
 
+/// @brief Push constants of the sky pass.
 struct SkyPush {
-    u64 frame;
+    u64 frame; ///< Address of FrameData.
 };
 
+/// @brief Push constants of the tonemap pass.
 struct TonemapPush {
-    u32 hdrTexture;
-    f32 exposure;
-    u32 tonemapper;
+    u32 hdrTexture; ///< Bindless index of the HDR color target.
+    f32 exposure;   ///< Exposure multiplier.
+    u32 tonemapper; ///< Tonemapper value.
 };
 
 } // namespace nova::gpu

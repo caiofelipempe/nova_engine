@@ -1,40 +1,57 @@
 #pragma once
 
+/// @file
+/// @brief Native C++ gameplay scripts.
+
 #include "nova/scene/Entity.h"
 
 #include <vector>
 
 namespace nova {
 
-// A contact as seen from the script's own entity ("self").
+/// @brief A contact as seen from the script's own entity ("self").
+/// @see physics::ContactEvent for the symmetric, backend-level event.
 struct Collision {
-    Entity other;
-    glm::vec3 normal{0.0f};             // contact normal, from `other` towards self (direction self is pushed out)
-    glm::vec3 point{0.0f};              // contact point on self's surface
-    glm::vec3 otherPoint{0.0f};         // contact point on the other entity's surface
-    glm::vec3 surfaceNormal{0.0f};      // self's surface normal at `point`
-    glm::vec3 otherSurfaceNormal{0.0f}; // other's surface normal at `otherPoint`
+    Entity other;                       ///< The entity that was touched.
+    glm::vec3 normal{0.0f};             ///< Contact normal, from `other` towards self (direction self is pushed out).
+    glm::vec3 point{0.0f};              ///< Contact point on self's surface.
+    glm::vec3 otherPoint{0.0f};         ///< Contact point on the other entity's surface.
+    glm::vec3 surfaceNormal{0.0f};      ///< Self's surface normal at `point` (its face that touched).
+    glm::vec3 otherSurfaceNormal{0.0f}; ///< Other's surface normal at `otherPoint`.
 };
 
-// Native gameplay script attached to an entity:
-//
-//   struct Spinner : nova::Script {
-//       void onUpdate(float dt) override { transform().rotation.y += dt; }
-//   };
-//   entity.addScript<Spinner>();
+/// @brief Native gameplay script attached to an entity.
+///
+/// Scripts run inside Scene::update(): onCreate() before the first onUpdate(), then onUpdate()
+/// every frame. An entity may have several scripts, run in the order they were added.
+/// @code
+/// struct Spinner : nova::Script {
+///     void onUpdate(float dt) override { transform().rotation.y += dt; }
+///     void onCollision(const nova::Collision& c) override { NOVA_INFO("hit {}", c.other.name()); }
+/// };
+/// entity.addScript<Spinner>();
+/// @endcode
 class Script {
 public:
     virtual ~Script() = default;
+    /// @brief Called once, on the first Scene::update() after the script was added.
     virtual void onCreate() {}
+    /// @brief Called every Scene::update(), before built-in systems and physics.
+    /// @param dt Seconds since the previous update.
     virtual void onUpdate(f32 /*dt*/) {}
+    /// @brief Called when the entity is destroyed or the scene is cleared (only if onCreate ran).
     virtual void onDestroy() {}
-    // Called when this entity's rigid body starts touching another one.
+    /// @brief Called when this entity's rigid body starts touching another one.
     virtual void onCollision(const Collision& /*collision*/) {}
 
+    /// @brief The entity this script is attached to.
     Entity entity() const { return m_entity; }
+    /// @brief Shortcut for `entity().transform()`.
     TransformComponent& transform() { return m_entity.transform(); }
+    /// @brief Shortcut for `entity().get<T>()`.
     template <typename T>
     T& get() { return m_entity.get<T>(); }
+    /// @brief The scene the entity lives in (queries, spawning, physics helpers).
     Scene& scene() { return *m_entity.scene(); }
 
 private:
@@ -44,8 +61,9 @@ private:
     bool m_created = false;
 };
 
+/// @brief Holds the scripts of an entity. Managed by Entity::addScript; move-only.
 struct ScriptComponent {
-    std::vector<Scope<Script>> scripts;
+    std::vector<Scope<Script>> scripts; ///< Scripts in execution order.
 
     ScriptComponent() = default;
     ScriptComponent(ScriptComponent&&) noexcept = default;
