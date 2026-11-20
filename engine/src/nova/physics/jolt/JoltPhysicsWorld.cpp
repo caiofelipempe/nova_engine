@@ -14,7 +14,6 @@
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
-#include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -74,18 +73,61 @@ public:
     }
 };
 
+// Surface normal of a shape at a contact, robust on edges and corners.
+//
+// A point-based normal (Shape::GetSurfaceNormal) is ambiguous when the contact point lies on an edge
+// or vertex — e.g. it can return the side face of a box that landed on its bottom edge. Instead we
+// take the face that faces the other body the most (the "supporting face" along `towardOther`) and
+// use its plane normal. Curved shapes have no such polygon (spheres return none, capsules a
+// segment), and there the point-based `pointNormal` is exact.
+JPH::Vec3 contactSurfaceNormal(const JPH::Shape::SupportingFace& face, JPH::Vec3Arg towardOther,
+                               JPH::Vec3Arg pointNormal) {
+    if (face.size() >= 3) {
+        // Newell's method: robust plane normal for any (possibly slightly non-planar) polygon.
+        JPH::Vec3 n = JPH::Vec3::sZero();
+        for (JPH::uint i = 0; i < face.size(); ++i) {
+            JPH::Vec3 a = face[i], b = face[(i + 1) % face.size()];
+            n += JPH::Vec3((a.GetY() - b.GetY()) * (a.GetZ() + b.GetZ()), (a.GetZ() - b.GetZ()) * (a.GetX() + b.GetX()),
+                           (a.GetX() - b.GetX()) * (a.GetY() + b.GetY()));
+        }
+        if (n.LengthSq() > 1e-12f) {
+            n = n.Normalized();
+            return n.Dot(towardOther) < 0.0f ? -n : n; // outward = towards the other body
+        }
+    }
+    return pointNormal.LengthSq() > 1e-12f ? pointNormal.Normalized() : pointNormal;
+}
+
+// Same, for a body (must be locked by the caller or by Jolt's callback).
+JPH::Vec3 bodyContactSurfaceNormal(const JPH::Body& body, const JPH::SubShapeID& subShape, JPH::RVec3Arg point,
+                                   JPH::Vec3Arg towardOther) {
+    JPH::Shape::SupportingFace face;
+    body.GetTransformedShape().GetSupportingFace(subShape, towardOther, body.GetCenterOfMassPosition(), face);
+    return contactSurfaceNormal(face, towardOther, body.GetWorldSpaceSurfaceNormal(subShape, point));
+}
+
 // Collects "contact began" events. Called from Jolt worker threads.
 class ContactListener final : public JPH::ContactListener {
 public:
     void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
                         JPH::ContactSettings&) override {
+        auto vec = [](const auto& v) {
+            return glm::vec3(static_cast<f32>(v.GetX()), static_cast<f32>(v.GetY()), static_cast<f32>(v.GetZ()));
+        };
         ContactEvent e;
+        e.bodyA = {a.GetID().GetIndexAndSequenceNumber()};
+        e.bodyB = {b.GetID().GetIndexAndSequenceNumber()};
         e.userDataA = a.GetUserData();
         e.userDataB = b.GetUserData();
-        JPH::RVec3 p = manifold.GetWorldSpaceContactPointOn1(0);
-        e.point = {static_cast<f32>(p.GetX()), static_cast<f32>(p.GetY()), static_cast<f32>(p.GetZ())};
-        e.normal = {manifold.mWorldSpaceNormal.GetX(), manifold.mWorldSpaceNormal.GetY(),
-                    manifold.mWorldSpaceNormal.GetZ()};
+        e.normal = vec(manifold.mWorldSpaceNormal);
+        // Both bodies are locked during this callback, so their shapes can be queried directly.
+        JPH::RVec3 pa = manifold.GetWorldSpaceContactPointOn1(0);
+        JPH::RVec3 pb = manifold.GetWorldSpaceContactPointOn2(0);
+        e.pointA = vec(pa);
+        e.pointB = vec(pb);
+        // mWorldSpaceNormal points from A to B: A's touching face faces +normal, B's faces -normal.
+        e.surfaceNormalA = vec(bodyContactSurfaceNormal(a, manifold.mSubShapeID1, pa, manifold.mWorldSpaceNormal));
+        e.surfaceNormalB = vec(bodyContactSurfaceNormal(b, manifold.mSubShapeID2, pb, -manifold.mWorldSpaceNormal));
         std::lock_guard lock(mutex);
         events.push_back(e);
     }
@@ -346,15 +388,16 @@ bool JoltPhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& directi
     if (lock.Succeeded()) {
         const JPH::Body& body = lock.GetBody();
         hit.userData = body.GetUserData();
-        hit.normal = toG(body.GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point));
+        // A ray has no surface of its own: the contact normal is the hit surface normal.
+        hit.hitSurfaceNormal = toG(body.GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point));
+        hit.normal = hit.hitSurfaceNormal;
     }
     return true;
 }
 
 namespace {
 
-// A sweep ready to run: the moving shape, its path and settings. It can be tested against the
-// whole world (broadphase + narrowphase) or against an explicit list of bodies.
+// A sweep ready to run against the world: the moving shape, its path and settings.
 struct PreparedSweep {
     JPH::RShapeCast cast;
     JPH::ShapeCastSettings settings;
@@ -382,31 +425,41 @@ void sweepWorld(const JPH::PhysicsSystem& system, const PreparedSweep& s, const 
     system.GetNarrowPhaseQuery().CastShape(s.cast, s.settings, s.baseOffset, collector, {}, {}, bodyFilter);
 }
 
-template <typename Collector>
-void sweepBodies(const JPH::PhysicsSystem& system, const PreparedSweep& s, std::span<const BodyId> bodies,
-                 Collector& collector) {
-    const JPH::BodyInterface& bi = system.GetBodyInterface();
-    for (BodyId id : bodies) {
-        if (!id) continue;
-        // Snapshot of the body's shape + pose (empty for removed/invalid ids). Hits carry its BodyID.
-        JPH::TransformedShape ts = bi.GetTransformedShape(toJ(id));
-        if (ts.mShape == nullptr) continue;
-        ts.CastShape(s.cast, s.settings, s.baseOffset, collector);
-        if (collector.ShouldEarlyOut()) break;
-    }
-}
-
 QueryHit toQueryHit(const JPH::PhysicsSystem& system, const JPH::ShapeCastResult& r, const PreparedSweep& s) {
     QueryHit hit;
     hit.body = {r.mBodyID2.GetIndexAndSequenceNumber()};
     hit.fraction = r.mFraction;
     hit.distance = r.mFraction * s.maxDistance;
-    hit.point = toG(s.baseOffset + r.mContactPointOn2);
-    // Penetration axis points from the swept shape into the hit body; the surface normal is its opposite.
+    const JPH::RVec3 pointOn2 = s.baseOffset + r.mContactPointOn2;
+    const JPH::RVec3 pointOn1 = s.baseOffset + r.mContactPointOn1;
+    hit.point = toG(pointOn2);
+    hit.sweptPoint = toG(pointOn1);
+
+    // Contact normal: the penetration axis points from the swept shape into the hit body.
     JPH::Vec3 axis = r.mPenetrationAxis;
-    hit.normal = axis.LengthSq() > 1e-12f ? -toG(axis.Normalized()) : glm::vec3(0.0f);
-    JPH::BodyLockRead lock(system.GetBodyLockInterface(), r.mBodyID2);
-    if (lock.Succeeded()) hit.userData = lock.GetBody().GetUserData();
+    const JPH::Vec3 towardQuery = axis.LengthSq() > 1e-12f ? -axis.Normalized() : JPH::Vec3::sZero();
+    hit.normal = toG(towardQuery);
+
+    // Hit body's own surface normal (its face turned towards the swept shape).
+    {
+        JPH::BodyLockRead lock(system.GetBodyLockInterface(), r.mBodyID2);
+        if (lock.Succeeded()) {
+            const JPH::Body& body = lock.GetBody();
+            hit.userData = body.GetUserData();
+            hit.hitSurfaceNormal = toG(bodyContactSurfaceNormal(body, r.mSubShapeID2, pointOn2, towardQuery));
+        }
+    }
+
+    // Swept shape's surface normal at its pose at the moment of impact (its face turned towards the hit body).
+    const JPH::RMat44 comAtImpact = s.cast.mCenterOfMassStart.PostTranslated(s.cast.mDirection * r.mFraction);
+    const JPH::Vec3 local = JPH::Vec3(comAtImpact.InversedRotationTranslation() * pointOn1);
+    const JPH::Vec3 pointNormal = comAtImpact.Multiply3x3(s.cast.mShape->GetSurfaceNormal(r.mSubShapeID1, local));
+    // Vertices relative to the impact COM (only their differences matter for the normal).
+    const JPH::Mat44 comLocal = comAtImpact.PostTranslated(-comAtImpact.GetTranslation()).ToMat44();
+    JPH::Shape::SupportingFace face;
+    s.cast.mShape->GetSupportingFace(r.mSubShapeID1, comLocal.Multiply3x3Transposed(-towardQuery), JPH::Vec3::sOne(),
+                                     comLocal, face);
+    hit.sweptSurfaceNormal = toG(contactSurfaceNormal(face, -towardQuery, pointNormal));
     return hit;
 }
 
@@ -476,30 +529,6 @@ bool JoltPhysicsWorld::sweepBody(BodyId body, const glm::vec3& direction, f32 ma
     if (!collector.HadHit()) return false;
     hit = toQueryHit(m_impl->system, collector.mHit, *s);
     return true;
-}
-
-bool JoltPhysicsWorld::sweepAgainst(const ShapeDesc& shapeDesc, const glm::vec3& position,
-                                    const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
-                                    std::span<const BodyId> bodies, SweepHit& hit) const {
-    JPH::ShapeRefC shape = buildShape(shapeDesc);
-    auto s = prepareSweep(shape, poseMatrix(position, rotation), direction, maxDistance);
-    if (!s) return false;
-    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
-    sweepBodies(m_impl->system, *s, bodies, collector);
-    if (!collector.HadHit()) return false;
-    hit = toQueryHit(m_impl->system, collector.mHit, *s);
-    return true;
-}
-
-std::vector<SweepHit> JoltPhysicsWorld::sweepAllAgainst(const ShapeDesc& shapeDesc, const glm::vec3& position,
-                                                        const glm::quat& rotation, const glm::vec3& direction,
-                                                        f32 maxDistance, std::span<const BodyId> bodies) const {
-    JPH::ShapeRefC shape = buildShape(shapeDesc);
-    auto s = prepareSweep(shape, poseMatrix(position, rotation), direction, maxDistance);
-    if (!s) return {};
-    JPH::AllHitCollisionCollector<JPH::CastShapeCollector> collector;
-    sweepBodies(m_impl->system, *s, bodies, collector);
-    return collectAll(m_impl->system, collector, *s);
 }
 
 std::vector<ContactEvent> JoltPhysicsWorld::drainContactEvents() {

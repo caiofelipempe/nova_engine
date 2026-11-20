@@ -168,18 +168,19 @@ void Scene::stepPhysics(f32 dt) {
         t.rotation = glm::eulerAngles(q);
     }
 
-    // Collision callbacks for scripts on both entities.
+    // Collision callbacks for scripts on both entities, each seen from its own side.
     for (const physics::ContactEvent& c : m_physics->drainContactEvents()) {
         Entity a{fromUserData(c.userDataA), this};
         Entity b{fromUserData(c.userDataB), this};
-        auto notify = [&](Entity self, Entity other) {
-            if (!self.valid() || !other.valid()) return;
+        auto notify = [&](Entity self, const Collision& info) {
+            if (!self.valid() || !info.other.valid()) return;
             if (auto* sc = self.tryGet<ScriptComponent>())
                 for (auto& s : sc->scripts)
-                    if (s->m_created) s->onCollision(other, c.point);
+                    if (s->m_created) s->onCollision(info);
         };
-        notify(a, b);
-        notify(b, a);
+        // c.normal points from A to B: it pushes B out of A, so A is pushed along -normal.
+        notify(a, Collision{b, -c.normal, c.pointA, c.pointB, c.surfaceNormalA, c.surfaceNormalB});
+        notify(b, Collision{a, c.normal, c.pointB, c.pointA, c.surfaceNormalB, c.surfaceNormalA});
     }
 }
 
@@ -222,7 +223,15 @@ physics::QueryFilter Scene::filterIgnoring(Entity e) {
 }
 
 SceneHit Scene::toSceneHit(const physics::QueryHit& hit) {
-    return {{fromUserData(hit.userData), this}, hit.point, hit.normal, hit.distance};
+    SceneHit out;
+    out.entity = {fromUserData(hit.userData), this};
+    out.point = hit.point;
+    out.normal = hit.normal;
+    out.hitSurfaceNormal = hit.hitSurfaceNormal;
+    out.sweptPoint = hit.sweptPoint;
+    out.sweptSurfaceNormal = hit.sweptSurfaceNormal;
+    out.distance = hit.distance;
+    return out;
 }
 
 std::optional<SceneHit> Scene::raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance,
@@ -286,35 +295,6 @@ std::optional<SceneHit> Scene::sweepEntity(Entity entity, const glm::vec3& direc
     physics::SweepHit hit;
     if (!m_physics->sweepBody(body, direction, maxDistance, hit)) return std::nullopt;
     return toSceneHit(hit);
-}
-
-std::vector<physics::BodyId> Scene::bodiesOf(std::span<const Entity> entities) {
-    std::vector<physics::BodyId> ids;
-    ids.reserve(entities.size());
-    for (Entity e : entities)
-        if (physics::BodyId b = bodyOf(e)) ids.push_back(b);
-    return ids;
-}
-
-std::optional<SceneHit> Scene::sweepAgainst(const physics::ShapeDesc& shape, const glm::vec3& position,
-                                            const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
-                                            std::span<const Entity> targets) {
-    if (!m_physics) return std::nullopt;
-    std::vector<physics::BodyId> bodies = bodiesOf(targets);
-    physics::SweepHit hit;
-    if (!m_physics->sweepAgainst(shape, position, rotation, direction, maxDistance, bodies, hit)) return std::nullopt;
-    return toSceneHit(hit);
-}
-
-std::vector<SceneHit> Scene::sweepAllAgainst(const physics::ShapeDesc& shape, const glm::vec3& position,
-                                             const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
-                                             std::span<const Entity> targets) {
-    std::vector<SceneHit> out;
-    if (!m_physics) return out;
-    std::vector<physics::BodyId> bodies = bodiesOf(targets);
-    for (const auto& h : m_physics->sweepAllAgainst(shape, position, rotation, direction, maxDistance, bodies))
-        out.push_back(toSceneHit(h));
-    return out;
 }
 
 Entity Scene::primaryCamera() {

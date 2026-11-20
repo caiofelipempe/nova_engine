@@ -5,17 +5,20 @@
 #include "nova/scene/Script.h"
 
 #include <optional>
-#include <span>
 #include <string>
 
 namespace nova {
 
 // Result of a scene raycast / sweep.
+// See physics::QueryHit for how the normals differ on edges/corners.
 struct SceneHit {
     Entity entity;
-    glm::vec3 point{0.0f};  // contact point on the hit entity
-    glm::vec3 normal{0.0f}; // surface normal, pointing back towards the query
-    f32 distance = 0.0f;    // distance travelled until contact (0 = overlapping at start)
+    glm::vec3 point{0.0f};              // contact point on the hit entity
+    glm::vec3 normal{0.0f};             // contact normal (separation direction), points towards the query
+    glm::vec3 hitSurfaceNormal{0.0f};   // hit entity's surface normal at `point`
+    glm::vec3 sweptPoint{0.0f};         // sweeps: contact point on the swept shape
+    glm::vec3 sweptSurfaceNormal{0.0f}; // sweeps: swept shape's surface normal at `sweptPoint`
+    f32 distance = 0.0f;                // distance travelled until contact (0 = overlapping at start)
 };
 using SceneRaycastHit = SceneHit;
 
@@ -69,14 +72,6 @@ public:
     // Sweeps the entity's own collider from where it is now ("if I move this way, what do I hit?").
     std::optional<SceneHit> sweepEntity(Entity entity, const glm::vec3& direction, f32 maxDistance = 1000.0f);
 
-    // Sweeps tested only against the given entities (those without a rigid body are skipped).
-    std::optional<SceneHit> sweepAgainst(const physics::ShapeDesc& shape, const glm::vec3& position,
-                                         const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
-                                         std::span<const Entity> targets);
-    std::vector<SceneHit> sweepAllAgainst(const physics::ShapeDesc& shape, const glm::vec3& position,
-                                          const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
-                                          std::span<const Entity> targets);
-
     // Fills `out` from the ECS. Uses the primary CameraComponent unless `cameraOverride` is set
     // (e.g. an editor camera). Returns false if there is no camera.
     bool buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cameraOverride = nullptr);
@@ -97,7 +92,6 @@ private:
     physics::BodyId bodyOf(Entity e);
     physics::QueryFilter filterIgnoring(Entity e);
     SceneHit toSceneHit(const physics::QueryHit& hit);
-    std::vector<physics::BodyId> bodiesOf(std::span<const Entity> entities);
 
     std::string m_name;
     entt::registry m_registry;

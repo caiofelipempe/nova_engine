@@ -31,7 +31,7 @@ struct FlyCamera : nova::Script {
 // Glows briefly whenever its rigid body hits something.
 struct FlashOnHit : nova::Script {
     float flash = 0.0f;
-    void onCollision(nova::Entity, const glm::vec3&) override { flash = 1.0f; }
+    void onCollision(const nova::Collision&) override { flash = 1.0f; }
     void onUpdate(float dt) override {
         flash = std::max(0.0f, flash - dt * 3.0f);
         auto& m = get<nova::MeshComponent>().material;

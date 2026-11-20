@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,7 @@ void check(bool cond, const char* expr, const char* file, int line) {
 }
 #define CHECK(x) check((x), #x, __FILE__, __LINE__)
 #define CHECK_NEAR(a, b, eps) check(std::abs((a) - (b)) <= (eps), #a " ~= " #b, __FILE__, __LINE__)
+#define CHECK_VEC(a, b, eps) check(glm::length((a) - (b)) <= (eps), #a " ~= " #b, __FILE__, __LINE__)
 
 constexpr f32 kEps = 0.02f;
 const glm::quat kIdentity{1, 0, 0, 0};
@@ -168,70 +170,215 @@ void overlappingAtStart() {
     CHECK_NEAR(hit.fraction, 0.0f, 1e-4f);
 }
 
-void sweepAgainstBodyList() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
-    BodyId ground = addGround(*w);
-    BodyId nearBox = addBox(*w, {3, 0, 0}, BodyType::Static, 1);
-    BodyId midBox = addBox(*w, {6, 0, 0}, BodyType::Dynamic, 2);
-    BodyId farBox = addBox(*w, {9, 0, 0}, BodyType::Static, 3);
-    BodyId sensor = addBox(*w, {1.5f, 0, 0}, BodyType::Static, 4, /*sensor*/ true);
-    const glm::vec3 origin{0, 0.4f, 0}; // centre below the boxes' top (0.5) => face hits; clear of the floor (0)
-    const glm::vec3 right{1, 0, 0};
+// ------------------------------------------------------------------ normals --
+const glm::vec3 kUp{0, 1, 0};
+const f32 kInvSqrt2 = 0.70710678f;
 
-    SweepHit hit;
-    // Only the listed bodies count: `nearBox` is in the way but not in the list.
-    std::vector<BodyId> onlyFar{farBox};
-    CHECK(w->sweepAgainst(sphere(0.25f), origin, kIdentity, right, 20.0f, onlyFar, hit));
-    CHECK(hit.body == farBox && hit.userData == 3);
-    CHECK_NEAR(hit.distance, 8.25f, kEps); // face at x = 8.5, radius 0.25
-
-    // Closest of the listed bodies wins, regardless of list order.
-    std::vector<BodyId> farAndMid{farBox, midBox};
-    CHECK(w->sweepAgainst(sphere(0.25f), origin, kIdentity, right, 20.0f, farAndMid, hit));
-    CHECK(hit.body == midBox);
-
-    // Listed sensors are tested (an explicit list means "test exactly these").
-    std::vector<BodyId> withSensor{nearBox, sensor};
-    CHECK(w->sweepAgainst(sphere(0.25f), origin, kIdentity, right, 20.0f, withSensor, hit));
-    CHECK(hit.body == sensor);
-
-    // Unlisted ground never reported even when sweeping straight into it.
-    CHECK(!w->sweepAgainst(sphere(0.25f), origin, kIdentity, kDown, 20.0f, onlyFar, hit));
-    std::vector<BodyId> onlyGround{ground};
-    CHECK(w->sweepAgainst(sphere(0.25f), origin, kIdentity, kDown, 20.0f, onlyGround, hit));
-    CHECK_NEAR(hit.distance, 0.15f, kEps);
-
-    // All hits: sorted, de-duplicated, removed/invalid ids skipped.
-    BodyId removed = addBox(*w, {12, 0, 0}, BodyType::Static, 5);
-    w->destroyBody(removed);
-    std::vector<BodyId> list{farBox, nearBox, midBox, nearBox, removed, BodyId{}};
-    auto hits = w->sweepAllAgainst(sphere(0.25f), origin, kIdentity, right, 20.0f, list);
-    CHECK(hits.size() == 3);
-    if (hits.size() == 3) CHECK(hits[0].body == nearBox && hits[1].body == midBox && hits[2].body == farBox);
-
-    // Empty list / out of range.
-    CHECK(!w->sweepAgainst(sphere(0.25f), origin, kIdentity, right, 20.0f, {}, hit));
-    CHECK(!w->sweepAgainst(sphere(0.25f), origin, kIdentity, right, 2.0f, onlyFar, hit));
+bool isAxisAligned(const glm::vec3& n) {
+    return std::abs(std::max({std::abs(n.x), std::abs(n.y), std::abs(n.z)}) - 1.0f) < kEps;
 }
 
-void sceneSweepAgainstEntities() {
+void sweepNormalsOnFace() {
+    // Sphere onto a flat face: every normal agrees.
+    auto w = PhysicsWorld::create(Backend::Jolt);
+    addGround(*w);
+    SweepHit hit;
+    CHECK(w->sweep(sphere(0.5f), {0, 5, 0}, kIdentity, kDown, 100.0f, hit));
+    CHECK_VEC(hit.normal, kUp, kEps);
+    CHECK_VEC(hit.hitSurfaceNormal, kUp, kEps);
+    CHECK_VEC(hit.sweptSurfaceNormal, -kUp, kEps);
+    CHECK_VEC(hit.point, glm::vec3(0.0f), kEps);
+    CHECK_VEC(hit.sweptPoint, glm::vec3(0.0f), kEps); // bottom of the sphere at the moment of impact
+}
+
+void sweepNormalsOnEdge() {
+    // Sphere grazing the top edge of a box: the contact normal is diagonal, the box face is not.
+    auto w = PhysicsWorld::create(Backend::Jolt);
+    addBox(*w, {0, 0, 0});
+    SweepHit hit;
+    CHECK(w->sweep(sphere(0.25f), {-3, 0.6f, 0}, kIdentity, {1, 0, 0}, 10.0f, hit));
+    CHECK(hit.normal.x < -0.3f && hit.normal.y > 0.2f);           // diagonal, back towards the sphere
+    CHECK(isAxisAligned(hit.hitSurfaceNormal));                     // a face normal of the box
+    CHECK(glm::dot(hit.normal, hit.hitSurfaceNormal) < 0.97f);      // ...that differs from the contact normal
+    CHECK_VEC(hit.sweptSurfaceNormal, -hit.normal, 0.05f);          // a sphere's normal is always along the contact
+    CHECK(glm::length(hit.sweptPoint - hit.point) < 0.05f);         // touching
+}
+
+void sweepNormalsTiltedBoxCorner() {
+    // Box rotated 45deg around Z swept down: it lands on an edge. The ground normal is up, but the
+    // box face that touched is tilted 45deg — only sweptSurfaceNormal reveals that.
+    auto w = PhysicsWorld::create(Backend::Jolt);
+    addGround(*w);
+    ShapeDesc box;
+    box.type = ShapeType::Box;
+    box.halfExtents = glm::vec3(0.5f);
+    glm::quat tilt = glm::angleAxis(glm::radians(45.0f), glm::vec3(0, 0, 1));
+    SweepHit hit;
+    CHECK(w->sweep(box, {0, 3, 0}, tilt, kDown, 10.0f, hit));
+    CHECK_VEC(hit.normal, kUp, kEps);
+    CHECK_VEC(hit.hitSurfaceNormal, kUp, kEps);
+    CHECK_NEAR(hit.sweptSurfaceNormal.y, -kInvSqrt2, 0.05f);
+    CHECK_NEAR(std::abs(hit.sweptSurfaceNormal.x), kInvSqrt2, 0.05f);
+    CHECK_NEAR(hit.sweptSurfaceNormal.z, 0.0f, kEps);
+    CHECK_NEAR(hit.sweptPoint.y, 0.0f, 0.03f);
+}
+
+void sweepNormalsCubeOnVertex() {
+    // Cube with its body diagonal pointing straight down lands on a single vertex where three faces
+    // meet. Each of them is tilted equally (normal.y = -1/sqrt(3)); any is a valid answer, a side face is not.
+    auto w = PhysicsWorld::create(Backend::Jolt);
+    addGround(*w);
+    ShapeDesc box;
+    box.type = ShapeType::Box;
+    box.halfExtents = glm::vec3(0.5f);
+    glm::quat onVertex = glm::rotation(glm::normalize(glm::vec3(1, 1, 1)), glm::vec3(0, -1, 0));
+    SweepHit hit;
+    CHECK(w->sweep(box, {0, 3, 0}, onVertex, kDown, 10.0f, hit));
+    CHECK_VEC(hit.hitSurfaceNormal, kUp, kEps);
+    CHECK_NEAR(hit.sweptSurfaceNormal.y, -0.57735f, 0.05f);
+    CHECK_NEAR(glm::length(hit.sweptSurfaceNormal), 1.0f, 1e-3f);
+}
+
+void sweepBodyNormals() {
+    // sweepBody uses the body's real shape and pose: same tilted-box case through a body.
+    auto w = PhysicsWorld::create(Backend::Jolt);
+    addGround(*w);
+    BodyDesc d;
+    d.type = BodyType::Dynamic;
+    d.shape.halfExtents = glm::vec3(0.5f);
+    d.position = {0, 3, 0};
+    d.rotation = glm::angleAxis(glm::radians(45.0f), glm::vec3(0, 0, 1));
+    BodyId box = w->createBody(d);
+    SweepHit hit;
+    CHECK(w->sweepBody(box, kDown, 10.0f, hit));
+    CHECK_VEC(hit.hitSurfaceNormal, kUp, kEps);
+    CHECK_NEAR(hit.sweptSurfaceNormal.y, -kInvSqrt2, 0.05f);
+}
+
+void raycastNormals() {
+    auto w = PhysicsWorld::create(Backend::Jolt);
+    addGround(*w);
+    RaycastHit hit;
+    CHECK(w->raycast({0, 5, 0}, kDown, 10.0f, hit));
+    CHECK_VEC(hit.normal, kUp, kEps);
+    CHECK_VEC(hit.hitSurfaceNormal, kUp, kEps);
+    CHECK_VEC(hit.sweptSurfaceNormal, glm::vec3(0.0f), 1e-6f); // rays have no surface
+    CHECK_VEC(hit.sweptPoint, glm::vec3(0.0f), 1e-6f);
+}
+
+std::optional<ContactEvent> stepUntilContact(PhysicsWorld& w, int maxSteps = 180) {
+    for (int i = 0; i < maxSteps; ++i) {
+        w.step(1.0f / 60.0f);
+        auto events = w.drainContactEvents();
+        if (!events.empty()) return events.front();
+    }
+    return std::nullopt;
+}
+
+// Returns the event with body A being the one with `userDataA` (swapping sides flips the normal).
+ContactEvent orient(ContactEvent e, u64 userDataA) {
+    if (e.userDataA == userDataA) return e;
+    std::swap(e.bodyA, e.bodyB);
+    std::swap(e.userDataA, e.userDataB);
+    std::swap(e.pointA, e.pointB);
+    std::swap(e.surfaceNormalA, e.surfaceNormalB);
+    e.normal = -e.normal;
+    return e;
+}
+
+void contactNormalsSphere() {
+    auto w = PhysicsWorld::create(Backend::Jolt);
+    addGround(*w); // userData 1000
+    BodyDesc d;
+    d.shape.type = ShapeType::Sphere;
+    d.shape.radius = 0.5f;
+    d.position = {0, 2, 0};
+    d.userData = 9;
+    w->createBody(d);
+
+    auto ev = stepUntilContact(*w);
+    CHECK(ev.has_value());
+    if (!ev) return;
+    ContactEvent e = orient(*ev, 1000); // A = ground, B = sphere
+    CHECK(e.userDataB == 9);
+    CHECK_VEC(e.normal, kUp, kEps); // from A (ground) towards B (sphere)
+    CHECK_VEC(e.surfaceNormalA, kUp, kEps);
+    CHECK_VEC(e.surfaceNormalB, -kUp, kEps);
+    CHECK_NEAR(e.pointA.y, 0.0f, 0.05f);
+    CHECK_NEAR(e.pointB.y, 0.0f, 0.05f);
+}
+
+void contactNormalsTiltedBox() {
+    auto w = PhysicsWorld::create(Backend::Jolt);
+    addGround(*w);
+    BodyDesc d;
+    d.shape.halfExtents = glm::vec3(0.5f);
+    d.position = {0, 2, 0};
+    d.rotation = glm::angleAxis(glm::radians(45.0f), glm::vec3(0, 0, 1));
+    d.userData = 9;
+    w->createBody(d);
+
+    auto ev = stepUntilContact(*w);
+    CHECK(ev.has_value());
+    if (!ev) return;
+    ContactEvent e = orient(*ev, 9); // A = box, B = ground
+    // The reported point sits at an end of the landing edge (a vertex of the box): a point-based
+    // normal there is ambiguous (it used to return the +Z side face). The face towards the ground must win.
+    CHECK_VEC(e.normal, -kUp, 0.05f);                     // from the box down into the ground
+    CHECK_VEC(e.surfaceNormalB, kUp, kEps);               // ground face
+    CHECK_NEAR(e.surfaceNormalA.y, -kInvSqrt2, 0.05f);    // tilted box face
+    CHECK_NEAR(std::abs(e.surfaceNormalA.x), kInvSqrt2, 0.05f);
+}
+
+struct RecordCollision : Script {
+    std::optional<Collision> first;
+    void onCollision(const Collision& c) override {
+        if (!first) first = c;
+    }
+};
+
+void scriptCollisionNormals() {
     Scene scene("test");
-    Entity a = scene.createEntity("A");
-    a.transform().position = {3, 0, 0};
-    a.add<RigidBodyComponent>(BodyType::Static);
-    Entity b = scene.createEntity("B");
-    b.transform().position = {6, 0, 0};
-    b.add<RigidBodyComponent>(BodyType::Static);
-    Entity noBody = scene.createEntity("No body"); // skipped: no RigidBodyComponent
+    Entity ground = scene.createEntity("Ground");
+    ground.transform().position = {0, -0.5f, 0};
+    ground.transform().scale = {100, 1, 100};
+    ground.add<RigidBodyComponent>(BodyType::Static);
+
+    Entity ball = scene.createEntity("Ball");
+    ball.transform().position = {0, 2, 0};
+    ball.add<RigidBodyComponent>();
+    ball.add<SphereColliderComponent>();
+    auto& rec = ball.addScript<RecordCollision>();
+    auto& groundRec = ground.addScript<RecordCollision>();
+
     scene.startSimulation();
+    for (int i = 0; i < 180 && !rec.first; ++i) scene.update(1.0f / 60.0f);
 
-    std::vector<Entity> targets{b, noBody};
-    auto hit = scene.sweepAgainst(sphere(0.25f), {0, 0, 0}, kIdentity, {1, 0, 0}, 20.0f, targets);
-    CHECK(hit && hit->entity == b);
+    CHECK(rec.first.has_value() && groundRec.first.has_value());
+    if (rec.first) {
+        const Collision& c = *rec.first; // seen from the ball
+        CHECK(c.other == ground);
+        CHECK_VEC(c.normal, kUp, kEps); // pushes the ball up, away from the ground
+        CHECK_VEC(c.surfaceNormal, -kUp, kEps);
+        CHECK_VEC(c.otherSurfaceNormal, kUp, kEps);
+        CHECK_NEAR(c.point.y, 0.0f, 0.05f);
+    }
+    if (groundRec.first) {
+        const Collision& c = *groundRec.first; // seen from the ground
+        CHECK(c.other == ball);
+        CHECK_VEC(c.normal, -kUp, kEps); // pushes the ground down, away from the ball
+        CHECK_VEC(c.surfaceNormal, kUp, kEps);
+        CHECK_VEC(c.otherSurfaceNormal, -kUp, kEps);
+    }
 
-    std::vector<Entity> both{b, a};
-    auto all = scene.sweepAllAgainst(sphere(0.25f), {0, 0, 0}, kIdentity, {1, 0, 0}, 20.0f, both);
-    CHECK(all.size() == 2 && all[0].entity == a && all[1].entity == b);
+    // Scene-level sweep forwards all normals.
+    auto hit = scene.sweepSphere({0, 5, 3}, 0.5f, kDown);
+    CHECK(hit && hit->entity == ground);
+    if (hit) {
+        CHECK_VEC(hit->hitSurfaceNormal, kUp, kEps);
+        CHECK_VEC(hit->sweptSurfaceNormal, -kUp, kEps);
+    }
+    scene.stopSimulation();
 }
 
 void sceneLevelQueries() {
@@ -293,8 +440,15 @@ int main() {
         {"sensors are opt-in", sensorsAreOptIn},
         {"sweepBody ignores itself", sweepBodyIgnoresItself},
         {"overlapping at start", overlappingAtStart},
-        {"sweepAgainst body list", sweepAgainstBodyList},
-        {"scene sweepAgainst entities", sceneSweepAgainstEntities},
+        {"sweep normals: sphere on face", sweepNormalsOnFace},
+        {"sweep normals: sphere on box edge", sweepNormalsOnEdge},
+        {"sweep normals: tilted box on corner", sweepNormalsTiltedBoxCorner},
+        {"sweep normals: cube on vertex", sweepNormalsCubeOnVertex},
+        {"sweepBody normals", sweepBodyNormals},
+        {"raycast normals", raycastNormals},
+        {"contact normals: sphere", contactNormalsSphere},
+        {"contact normals: tilted box", contactNormalsTiltedBox},
+        {"script Collision normals", scriptCollisionNormals},
         {"scene-level queries", sceneLevelQueries},
     };
     for (auto& [name, fn] : tests) {

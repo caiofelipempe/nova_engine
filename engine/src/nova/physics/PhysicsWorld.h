@@ -5,7 +5,6 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-#include <span>
 #include <vector>
 
 // Backend-agnostic 3D rigid body physics. The Jolt implementation lives in physics/jolt/;
@@ -54,13 +53,21 @@ struct BodyId {
 };
 
 // Result of a raycast or a sweep (a shape moved along a direction, a.k.a. shape cast).
+//
+// Normals: for smooth-vs-smooth contacts (sphere on a face) all three agree, but on edges and
+// corners they differ — e.g. a sphere grazing a box edge has a diagonal contact normal while the
+// box face there is axis-aligned.
 struct QueryHit {
     BodyId body;
     u64 userData = 0;
-    glm::vec3 point{0.0f};  // contact point on the hit body (world space)
-    glm::vec3 normal{0.0f}; // surface normal of the hit body, pointing back towards the query
-    f32 distance = 0.0f;    // distance travelled along the direction until contact
-    f32 fraction = 0.0f;    // distance / maxDistance; 0 = already overlapping at the start
+    glm::vec3 point{0.0f};            // contact point on the hit body (world space)
+    glm::vec3 normal{0.0f};           // contact normal (separation direction), points towards the query
+    glm::vec3 hitSurfaceNormal{0.0f}; // surface normal of the hit body at `point`
+    // Sweeps only (zero for raycasts — a ray has no surface). Measured at the moment of impact.
+    glm::vec3 sweptPoint{0.0f};         // contact point on the swept shape
+    glm::vec3 sweptSurfaceNormal{0.0f}; // surface normal of the swept shape at `sweptPoint`
+    f32 distance = 0.0f;                // distance travelled along the direction until contact
+    f32 fraction = 0.0f;                // distance / maxDistance; 0 = already overlapping at the start
 };
 using RaycastHit = QueryHit;
 using SweepHit = QueryHit;
@@ -72,10 +79,14 @@ struct QueryFilter {
 
 // A pair of bodies that started touching during the last step.
 struct ContactEvent {
+    BodyId bodyA, bodyB;
     u64 userDataA = 0;
     u64 userDataB = 0;
-    glm::vec3 point{0.0f};
-    glm::vec3 normal{0.0f}; // from A towards B
+    glm::vec3 normal{0.0f};         // contact normal, from A towards B (direction to push B out of A)
+    glm::vec3 pointA{0.0f};         // a contact point on A's surface
+    glm::vec3 pointB{0.0f};         // the matching contact point on B's surface
+    glm::vec3 surfaceNormalA{0.0f}; // A's surface normal at pointA
+    glm::vec3 surfaceNormalB{0.0f}; // B's surface normal at pointB
 };
 
 struct WorldDesc {
@@ -129,15 +140,6 @@ public:
     // ("will this body hit something if it moves there?").
     virtual bool sweepBody(BodyId body, const glm::vec3& direction, f32 maxDistance, SweepHit& hit,
                            const QueryFilter& filter = {}) const = 0;
-
-    // Sweep tested only against the listed bodies (no broadphase over the rest of the world).
-    // Every listed body is tested, sensors included; invalid/removed ids are skipped.
-    virtual bool sweepAgainst(const ShapeDesc& shape, const glm::vec3& position, const glm::quat& rotation,
-                              const glm::vec3& direction, f32 maxDistance, std::span<const BodyId> bodies,
-                              SweepHit& hit) const = 0;
-    virtual std::vector<SweepHit> sweepAllAgainst(const ShapeDesc& shape, const glm::vec3& position,
-                                                  const glm::quat& rotation, const glm::vec3& direction,
-                                                  f32 maxDistance, std::span<const BodyId> bodies) const = 0;
 
     // Contacts that began during the steps since the last call.
     virtual std::vector<ContactEvent> drainContactEvents() = 0;

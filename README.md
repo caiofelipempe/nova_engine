@@ -109,7 +109,10 @@ scene().setLinearVelocity(ball, dir * 25.0f);           // também addForce / ad
 if (auto hit = scene().raycast(origin, dir)) hit->entity.name();
 
 struct Bomb : nova::Script {                            // eventos de colisão nos scripts
-    void onCollision(nova::Entity other, const glm::vec3& point) override { /* ... */ }
+    void onCollision(const nova::Collision& c) override {
+        // c.other, c.point / c.otherPoint, c.normal (empurra este corpo para fora),
+        // c.surfaceNormal (minha face que tocou) e c.otherSurfaceNormal (a face do outro)
+    }
 };
 ```
 
@@ -123,12 +126,17 @@ scene().sweepBox(center, halfExtents, rotation, dir);
 scene().sweepCapsule(center, radius, halfHeight, rotation, dir);
 scene().sweepAll(shapeDesc, pos, rot, dir);                    // todos ao longo do caminho, mais próximo primeiro
 scene().sweepEntity(player, velocity, dist);                   // varre o collider da própria entidade, ignorando-a
-// Contra uma lista específica (sem broadphase no resto do mundo)
-scene().sweepAgainst(shapeDesc, pos, rot, dir, dist, targets);     // std::span<const Entity>
-scene().sweepAllAgainst(shapeDesc, pos, rot, dir, dist, targets);
 ```
 
-Cada hit traz `entity`, `point`, `normal` (voltada para quem consultou) e `distance` (0 = já encostado no início). No backend, `PhysicsWorld::sweep/sweepAll/sweepBody` aceitam um `QueryFilter` (ignorar um corpo, incluir sensores) e `sweepAgainst/sweepAllAgainst` recebem `std::span<const BodyId>` — todos os corpos listados são testados, sensores inclusive.
+Cada hit traz `entity`, `point`, `distance` (0 = já encostado no início) e três normais:
+
+| Campo | Significado | Uso típico |
+|---|---|---|
+| `normal` | normal de **contato** (direção de separação), aponta para quem consultou | deslizar, empurrar para fora |
+| `hitSurfaceNormal` | face do corpo **atingido** voltada para o contato | "é chão andável?", decalques |
+| `sweptSurfaceNormal` / `sweptPoint` | face/ponto da forma **varrida** no instante do impacto (zero em raycasts) | "qual face minha bateu?", alinhar ao pousar |
+
+Em superfícies lisas (esfera numa face) as três coincidem; em arestas e vértices divergem. As normais de superfície usam a *supporting face* voltada para o outro corpo (não o ponto), então continuam corretas quando o contato cai exatamente numa quina; em formas curvas (esfera, cápsula) usa-se a normal no ponto. Os eventos de contato (`physics::ContactEvent`, `Script::onCollision`) trazem o mesmo par de normais e de pontos. No backend, `PhysicsWorld::raycast/sweep/sweepAll/sweepBody` aceitam um `QueryFilter` (ignorar um corpo, incluir sensores).
 
 - Corpos **Static**, **Kinematic** (seguem o transform do ECS e empurram os dinâmicos) e **Dynamic**; colliders Box, Sphere e Capsule com offset; tamanhos multiplicados pelo scale.
 - Passo fixo de 60 Hz com acumulador; transforms dos dinâmicos são escritos de volta no ECS.

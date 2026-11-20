@@ -6,6 +6,16 @@
 
 namespace nova {
 
+// A contact as seen from the script's own entity ("self").
+struct Collision {
+    Entity other;
+    glm::vec3 normal{0.0f};             // contact normal, from `other` towards self (direction self is pushed out)
+    glm::vec3 point{0.0f};              // contact point on self's surface
+    glm::vec3 otherPoint{0.0f};         // contact point on the other entity's surface
+    glm::vec3 surfaceNormal{0.0f};      // self's surface normal at `point`
+    glm::vec3 otherSurfaceNormal{0.0f}; // other's surface normal at `otherPoint`
+};
+
 // Native gameplay script attached to an entity:
 //
 //   struct Spinner : nova::Script {
@@ -19,7 +29,7 @@ public:
     virtual void onUpdate(f32 /*dt*/) {}
     virtual void onDestroy() {}
     // Called when this entity's rigid body starts touching another one.
-    virtual void onCollision(Entity /*other*/, const glm::vec3& /*point*/) {}
+    virtual void onCollision(const Collision& /*collision*/) {}
 
     Entity entity() const { return m_entity; }
     TransformComponent& transform() { return m_entity.transform(); }
