@@ -121,12 +121,15 @@ Renderer::~Renderer() {
     for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline})
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
+    for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
     m_device.waitIdle();
 }
 
 void Renderer::createPipelines() {
     m_fullscreenVS = loadShader("fullscreen.vert");
     m_tonemapFS = loadShader("tonemap.frag");
+    m_lineVS = loadShader("debug_line.vert");
+    m_lineFS = loadShader("debug_line.frag");
     ShaderDesc forwardVS = loadShader("forward.vert");
 
     GraphicsPipelineDesc sky;
@@ -208,6 +211,8 @@ MeshHandle Renderer::createMesh(const MeshData& data, const std::string& name) {
         mesh.blas = m_device.createBLAS(blas);
     }
     mesh.alive = true;
+    mesh.cpu = data;
+    mesh.bounds = data.bounds();
 
     u32 id;
     if (!m_freeMeshSlots.empty()) {
@@ -242,6 +247,14 @@ MeshHandle Renderer::findMesh(const std::string& name) const {
     return {};
 }
 
+const MeshData* Renderer::meshData(MeshHandle h) const {
+    return (h.id < m_meshes.size() && m_meshes[h.id].alive) ? &m_meshes[h.id].cpu : nullptr;
+}
+
+Bounds Renderer::meshBounds(MeshHandle h) const {
+    return (h.id < m_meshes.size() && m_meshes[h.id].alive) ? m_meshes[h.id].bounds : Bounds{};
+}
+
 std::vector<MeshHandle> Renderer::meshes() const {
     std::vector<MeshHandle> out;
     for (u32 i = 0; i < m_meshes.size(); ++i)
@@ -265,6 +278,7 @@ void Renderer::beginFrame() {
     m_frameOffset = 0;
     m_lastStats = m_stats; // UI code runs before rendering, so expose the previous frame's numbers
     m_stats = {};
+    m_debugDraw.clear();
 }
 
 Renderer::FrameAllocation Renderer::allocate(u64 size, u64 alignment) {
@@ -369,7 +383,8 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Textur
     cmd.beginDebugLabel("Forward");
     RenderingDesc pass;
     pass.colors.push_back({hdr, LoadOp::DontCare, StoreOp::Store});
-    pass.depth = DepthAttachment{depth, LoadOp::Clear, StoreOp::DontCare, 1.0f};
+    // Depth is kept for the debug line pass (depth-tested lines after tonemapping).
+    pass.depth = DepthAttachment{depth, LoadOp::Clear, StoreOp::Store, 1.0f};
     cmd.beginRendering(pass);
 
     cmd.bindPipeline(m_skyPipeline);
@@ -417,7 +432,58 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Textur
     cmd.draw(3);
     cmd.endRendering();
     cmd.endDebugLabel();
+
+    if (m_debugDraw.lineCount() > 0) drawDebugLines(cmd, frameAlloc.gpu, depth, output);
     (void)extent;
+}
+
+PipelineHandle Renderer::linePipeline(Format format, bool onTop) {
+    const u32 key = static_cast<u32>(format) | (onTop ? 0x100u : 0u);
+    auto it = m_linePipelines.find(key);
+    if (it != m_linePipelines.end()) return it->second;
+    GraphicsPipelineDesc desc;
+    desc.vertex = m_lineVS;
+    desc.fragment = m_lineFS;
+    desc.colorFormats = {format};
+    desc.depthFormat = kDepthFormat;
+    desc.topology = PrimitiveTopology::LineList;
+    desc.cullMode = CullMode::None;
+    desc.depthTest = !onTop;
+    desc.depthWrite = false;
+    desc.depthCompare = CompareOp::LessEqual;
+    desc.blend = BlendMode::Alpha;
+    desc.debugName = onTop ? "pipeline.debugLines.onTop" : "pipeline.debugLines";
+    PipelineHandle p = m_device.createGraphicsPipeline(desc);
+    m_linePipelines.emplace(key, p);
+    return p;
+}
+
+void Renderer::drawDebugLines(CommandList& cmd, u64 frameAddress, TextureHandle depth, TextureHandle output) {
+    struct LinePush {
+        u64 frame;
+        u64 vertices;
+    };
+    cmd.beginDebugLabel("Debug lines");
+    RenderingDesc pass;
+    pass.colors.push_back({output, LoadOp::Load, StoreOp::Store});
+    pass.depth = DepthAttachment{depth, LoadOp::Load, StoreOp::DontCare, 1.0f};
+    cmd.beginRendering(pass);
+    for (bool onTop : {false, true}) {
+        const auto& verts = m_debugDraw.vertices(onTop);
+        if (verts.empty()) continue;
+        const u64 bytes = verts.size() * sizeof(DebugDraw::Vertex);
+        FrameAllocation alloc = allocate(bytes, 16);
+        if (!alloc.cpu) {
+            NOVA_CORE_WARN("Renderer: too many debug lines for the frame upload buffer");
+            break;
+        }
+        std::memcpy(alloc.cpu, verts.data(), bytes);
+        cmd.bindPipeline(linePipeline(m_device.backbufferFormat(), onTop)); // outputs use the swapchain format
+        cmd.pushConstants(LinePush{frameAddress, alloc.gpu});
+        cmd.draw(static_cast<u32>(verts.size()));
+    }
+    cmd.endRendering();
+    cmd.endDebugLabel();
 }
 
 } // namespace nova

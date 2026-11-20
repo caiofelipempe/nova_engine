@@ -2,13 +2,15 @@
 
 #include "nova/core/Application.h"
 #include "nova/core/Log.h"
+#include "nova/editor/Picking.h"
+#include "nova/editor/Tool.h"
 #include "nova/editor/Widgets.h"
+#include "nova/editor/builtin/CoreTools.h"
 
 #include <imgui.h> // must precede ImGuizmo.h
 #include <ImGuizmo.h>
 
 #include <glm/gtc/type_ptr.hpp>
-#include <glm/gtx/matrix_decompose.hpp>
 
 #include <algorithm>
 #include <cstdio>
@@ -49,61 +51,70 @@ void ViewportPanel::onRender(EditorContext& ctx, rhi::CommandList& cmd) {
 void ViewportPanel::onImGui(EditorContext& ctx) {
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     m_size = {avail.x, avail.y};
-    m_hovered = ImGui::IsWindowHovered();
     const ImVec2 imagePos = ImGui::GetCursorScreenPos();
     if (auto* imgui = ctx.app().imgui()) ImGui::Image(static_cast<ImTextureID>(imgui->textureId(m_view->output())), avail);
+    m_hovered = ImGui::IsItemHovered();
 
-    // Toolbar overlay
-    ImGui::SetCursorScreenPos({imagePos.x + 8, imagePos.y + 8});
-    const char* modes[] = {"Move (W)", "Rotate (E)", "Scale (R)"};
-    for (int i = 0; i < 3; ++i) {
-        if (i) ImGui::SameLine();
-        const bool active = static_cast<int>(gizmoMode) == i;
-        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        if (ImGui::Button(modes[i])) gizmoMode = static_cast<GizmoMode>(i);
-        if (active) ImGui::PopStyleColor();
+    // Viewport state for tools: rect, camera and the mouse ray.
+    ViewportState& vp = m_state;
+    vp.min = {imagePos.x, imagePos.y};
+    vp.size = {std::max(1.0f, avail.x), std::max(1.0f, avail.y)};
+    const ImVec2 mouse = ImGui::GetMousePos();
+    vp.mouse = {mouse.x - imagePos.x, mouse.y - imagePos.y};
+    vp.hovered = m_hovered;
+    vp.camera = ctx.camera().data(vp.size.x / vp.size.y);
+    {
+        const glm::vec2 ndc = vp.mouse / vp.size * 2.0f - 1.0f; // Vulkan clip space: y down
+        const glm::mat4 inv = glm::inverse(vp.camera.projection * vp.camera.view);
+        glm::vec4 nearP = inv * glm::vec4(ndc, 0.0f, 1.0f), farP = inv * glm::vec4(ndc, 1.0f, 1.0f);
+        vp.rayOrigin = glm::vec3(nearP) / nearP.w;
+        vp.rayDirection = glm::normalize(glm::vec3(farP) / farP.w - vp.rayOrigin);
     }
-    ImGui::SameLine();
-    ImGui::Checkbox("Local", &gizmoLocal);
-    ImGui::SameLine();
-    ImGui::Checkbox("Scene camera", &useSceneCamera);
 
-    // Transform gizmo
-    Entity selected = ctx.selected();
-    if (selected.valid() && !useSceneCamera) {
-        ImGuizmo::SetOrthographic(false);
-        ImGuizmo::SetDrawlist();
-        ImGuizmo::SetRect(imagePos.x, imagePos.y, avail.x, avail.y);
-        const f32 aspect = avail.y > 0 ? avail.x / avail.y : 1.0f;
-        CameraData cam = ctx.camera().data(aspect);
-        glm::mat4 proj = cam.projection;
-        proj[1][1] *= -1.0f; // ImGuizmo expects GL-style Y-up clip space
-        auto& t = selected.transform();
-        glm::mat4 model = t.matrix();
-        const ImGuizmo::OPERATION op = gizmoMode == GizmoMode::Translate ? ImGuizmo::TRANSLATE
-                                       : gizmoMode == GizmoMode::Rotate  ? ImGuizmo::ROTATE
-                                                                         : ImGuizmo::SCALE;
-        const bool snap = ImGui::GetIO().KeyCtrl;
-        const float snapValue = gizmoMode == GizmoMode::Rotate ? 15.0f : 0.5f;
-        const float snaps[3] = {snapValue, snapValue, snapValue};
-        if (ImGuizmo::Manipulate(glm::value_ptr(cam.view), glm::value_ptr(proj), op,
-                                 gizmoLocal ? ImGuizmo::LOCAL : ImGuizmo::WORLD, glm::value_ptr(model), nullptr,
-                                 snap ? snaps : nullptr)) {
-            glm::vec3 scale, translation, skew;
-            glm::vec4 persp;
-            glm::quat rot;
-            if (glm::decompose(model, scale, rot, translation, skew, persp)) {
-                t.position = translation;
-                t.rotation = glm::eulerAngles(rot);
-                t.scale = scale;
-                if (ctx.scene().isSimulating()) ctx.scene().syncTransformToPhysics(selected);
-            }
+    // Toolbar: one button per registered tool.
+    ImGui::SetCursorScreenPos({imagePos.x + 8, imagePos.y + 8});
+    Tool* active = ctx.activeTool();
+    for (auto& tool : ctx.registry().tools()) {
+        const bool isActive = tool.get() == active;
+        if (isActive) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        const std::string label = tool->shortcut().empty() ? tool->name() : tool->name() + " (" + tool->shortcut() + ")";
+        if (ImGui::Button(label.c_str())) ctx.setActiveTool(tool.get());
+        if (isActive) ImGui::PopStyleColor();
+        ImGui::SameLine();
+    }
+    if (dynamic_cast<TransformTool*>(active)) {
+        ImGui::Checkbox("Local", &TransformTool::localSpace);
+        ImGui::SameLine();
+    }
+    ImGui::Checkbox("Scene camera", &useSceneCamera);
+    const bool overToolbar = ImGui::IsAnyItemHovered();
+
+    // Active tool (gizmo, brush...) and its preview lines.
+    if (active && !useSceneCamera) {
+        active->onViewport(ctx, vp);
+        active->onDebugDraw(ctx, ctx.renderer().debugDraw());
+    }
+
+    // Click to select (Ctrl toggles, Shift adds), unless the tool uses the left button.
+    const bool clickable = m_hovered && !overToolbar && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() &&
+                           (!active || active->clickSelects()) && !useSceneCamera;
+    if (clickable && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        Renderer& renderer = ctx.renderer();
+        auto hit = pick(ctx.scene(), [&](MeshHandle m) { return renderer.meshData(m); }, vp.rayOrigin, vp.rayDirection);
+        const ImGuiIO& io = ImGui::GetIO();
+        if (hit) {
+            if (io.KeyCtrl) ctx.toggleSelection(hit->entity);
+            else if (io.KeyShift) ctx.addToSelection(hit->entity);
+            else ctx.select(hit->entity);
+        } else if (!io.KeyCtrl && !io.KeyShift) {
+            ctx.clearSelection();
         }
     }
 
     if (!ctx.inputCaptured()) {
         ImGui::SetCursorScreenPos({imagePos.x + 8, imagePos.y + avail.y - 24});
-        ImGui::TextDisabled("RMB + WASD/QE: fly   Wheel: speed   F: focus   Ctrl: snap   Ctrl+Shift+P: commands");
+        ImGui::TextDisabled("Click: select (Ctrl toggle, Shift add)   RMB + WASD/QE: fly   F: focus   "
+                            "Ctrl+Z/Y: undo/redo   Ctrl+Shift+P: commands");
     }
 }
 
@@ -122,32 +133,55 @@ void createMenuItems(EditorContext& ctx) {
 
 void HierarchyPanel::onImGui(EditorContext& ctx) {
     Scene& scene = ctx.scene();
-    ImGui::TextDisabled("%s  (%zu entities)", scene.name().c_str(),
-                        static_cast<size_t>(scene.registry().view<NameComponent>().size()));
+    // Display order: same as the view iteration, captured once so Shift ranges are well defined.
+    std::vector<Entity> rows;
+    for (auto [handle, name] : scene.registry().view<NameComponent>().each()) rows.push_back({handle, &scene});
+
+    ImGui::TextDisabled("%s  (%zu entities, %zu selected)", scene.name().c_str(), rows.size(), ctx.selection().size());
     ImGui::Separator();
 
-    Entity toDelete;
-    for (auto [handle, name] : scene.registry().view<NameComponent>().each()) {
-        Entity e{handle, &scene};
-        ImGui::PushID(static_cast<int>(entt::to_integral(handle)));
+    std::vector<Entity> toDelete;
+    for (size_t i = 0; i < rows.size(); ++i) {
+        Entity e = rows[i];
+        ImGui::PushID(static_cast<int>(entt::to_integral(e.handle())));
         const char* icon = e.has<CameraComponent>()             ? "[C] "
                            : e.has<DirectionalLightComponent>() ? "[S] "
                            : e.has<PointLightComponent>()       ? "[L] "
                            : e.has<MeshComponent>()             ? "[M] "
                                                                 : "[ ] ";
-        const std::string label = std::string(icon) + name.name;
-        if (ImGui::Selectable(label.c_str(), ctx.selected() == e)) ctx.select(e);
+        const std::string label = std::string(icon) + e.name();
+        if (ImGui::Selectable(label.c_str(), ctx.isSelected(e))) {
+            const ImGuiIO& io = ImGui::GetIO();
+            if (io.KeyShift && m_anchor) {
+                // Range from the anchor to this row (in display order).
+                auto anchorIt = std::find_if(rows.begin(), rows.end(), [&](Entity r) { return r.uuid() == m_anchor; });
+                if (anchorIt != rows.end()) {
+                    size_t a = static_cast<size_t>(anchorIt - rows.begin()), b = i;
+                    if (a > b) std::swap(a, b);
+                    std::vector<Entity> range(rows.begin() + static_cast<std::ptrdiff_t>(a),
+                                              rows.begin() + static_cast<std::ptrdiff_t>(b + 1));
+                    std::erase(range, e);
+                    range.push_back(e); // clicked row is primary
+                    ctx.setSelection(std::move(range));
+                }
+            } else if (io.KeyCtrl) {
+                ctx.toggleSelection(e);
+                m_anchor = e.uuid();
+            } else {
+                ctx.select(e);
+                m_anchor = e.uuid();
+            }
+        }
         if (ImGui::BeginPopupContextItem()) {
+            if (!ctx.isSelected(e)) ctx.select(e);
             if (ImGui::MenuItem("Focus")) ctx.camera().focus(e.transform().position);
-            if (ImGui::MenuItem("Delete")) toDelete = e;
+            if (ImGui::MenuItem("Duplicate")) ctx.registry().execute("edit.duplicate");
+            if (ImGui::MenuItem("Delete")) toDelete = ctx.selection();
             ImGui::EndPopup();
         }
         ImGui::PopID();
     }
-    if (toDelete.valid()) {
-        if (ctx.selected() == toDelete) ctx.clearSelection();
-        scene.destroyEntity(toDelete);
-    }
+    if (!toDelete.empty()) ctx.destroyEntities(toDelete.size() == 1 ? "Delete " + toDelete[0].name() : "Delete entities", toDelete);
 
     if (ImGui::BeginPopupContextWindow("hierarchy_ctx", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         createMenuItems(ctx);
@@ -164,6 +198,8 @@ void InspectorPanel::onImGui(EditorContext& ctx) {
         ImGui::TextDisabled("Select an entity.");
         return;
     }
+    if (ctx.selection().size() > 1)
+        ImGui::TextDisabled("%zu selected - editing the last one (gizmo moves all)", ctx.selection().size());
 
     auto& name = e.get<NameComponent>().name;
     char buf[256];
@@ -260,6 +296,34 @@ void ConsolePanel::onImGui(EditorContext&) {
     ImGui::EndChild();
 }
 
+// ----------------------------------------------------------------- history --
+HistoryPanel::HistoryPanel() : Panel("History", DockSlot::Left) {}
+
+void HistoryPanel::onImGui(EditorContext& ctx) {
+    UndoStack& undo = ctx.undoStack();
+    ImGui::BeginDisabled(ctx.isPlaying());
+    if (ImGui::Button("Undo") && undo.canUndo()) ctx.undo();
+    ImGui::SameLine();
+    if (ImGui::Button("Redo") && undo.canRedo()) ctx.redo();
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) undo.clear();
+    ImGui::EndDisabled();
+    ImGui::Separator();
+
+    // Position 0 = initial state; row i+1 = after action i.
+    if (ImGui::Selectable("(initial state)", undo.position() == 0) && !ctx.isPlaying()) undo.jumpTo(0);
+    const auto& actions = undo.actions();
+    for (size_t i = 0; i < actions.size(); ++i) {
+        ImGui::PushID(static_cast<int>(i));
+        const bool applied = i < undo.position();
+        if (!applied) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        if (ImGui::Selectable(actions[i].name.c_str(), undo.position() == i + 1) && !ctx.isPlaying()) undo.jumpTo(i + 1);
+        if (!applied) ImGui::PopStyleColor();
+        ImGui::PopID();
+    }
+    if (ctx.isPlaying()) ImGui::TextDisabled("History is frozen while playing.");
+}
+
 // ------------------------------------------------------------------ plugin --
 void CorePanelsPlugin::onRegister(Registry& r) {
     r.panel<ViewportPanel>();
@@ -267,44 +331,7 @@ void CorePanelsPlugin::onRegister(Registry& r) {
     r.panel<InspectorPanel>();
     r.panel<RendererPanel>();
     r.panel<ConsolePanel>();
-
-    auto setGizmo = [&r](GizmoMode mode) {
-        return [&r, mode](EditorContext&) {
-            if (auto* vp = r.findPanel<ViewportPanel>()) vp->gizmoMode = mode;
-        };
-    };
-    auto isGizmo = [&r](GizmoMode mode) {
-        return [&r, mode](EditorContext&) {
-            auto* vp = r.findPanel<ViewportPanel>();
-            return vp && vp->gizmoMode == mode;
-        };
-    };
-    const std::pair<const char*, GizmoMode> modes[] = {
-        {"Translate", GizmoMode::Translate}, {"Rotate", GizmoMode::Rotate}, {"Scale", GizmoMode::Scale}};
-    const char* keys[] = {"W", "E", "R"};
-    for (int i = 0; i < 3; ++i) {
-        Command c;
-        c.id = std::string("viewport.") + modes[i].first;
-        c.menuPath = std::string("View/Gizmo/") + modes[i].first;
-        c.shortcut = *KeyChord::parse(keys[i]);
-        c.order = i;
-        c.execute = setGizmo(modes[i].second);
-        c.isChecked = isGizmo(modes[i].second);
-        r.command(std::move(c));
-    }
-    Command local;
-    local.id = "viewport.localSpace";
-    local.menuPath = "View/Gizmo/Local Space";
-    local.separatorBefore = true;
-    local.order = 10;
-    local.execute = [&r](EditorContext&) {
-        if (auto* vp = r.findPanel<ViewportPanel>()) vp->gizmoLocal = !vp->gizmoLocal;
-    };
-    local.isChecked = [&r](EditorContext&) {
-        auto* vp = r.findPanel<ViewportPanel>();
-        return vp && vp->gizmoLocal;
-    };
-    r.command(std::move(local));
+    r.panel<HistoryPanel>();
 }
 
 } // namespace nova::editor::builtin

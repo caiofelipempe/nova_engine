@@ -2,31 +2,225 @@
 
 #include "nova/core/Application.h"
 #include "nova/core/Log.h"
+#include "nova/editor/Tool.h"
+
+#include <algorithm>
 
 namespace nova::editor {
+
+EditorContext::EditorContext(Scene& scene) : m_scene(&scene) {
+    // Any history movement (undo, redo, History panel jumps) changes entities behind the tracker's back.
+    m_undo.changed.connect([this] { m_trackValid = false; });
+}
 
 Application& EditorContext::app() { return Application::get(); }
 Renderer& EditorContext::renderer() { return Application::get().renderer(); }
 
-void EditorContext::select(Entity entity) {
-    if (!entity.valid()) entity = {};
-    if (entity == m_selected) return;
-    m_selected = entity;
-    selectionChanged.emit(m_selected);
+// --------------------------------------------------------------- selection --
+bool EditorContext::isSelected(Entity entity) const {
+    return std::find(m_selection.begin(), m_selection.end(), entity) != m_selection.end();
+}
+
+void EditorContext::setSelection(std::vector<Entity> entities) {
+    std::vector<Entity> clean;
+    for (Entity e : entities) {
+        if (!e.valid()) continue;
+        auto dup = std::find(clean.begin(), clean.end(), e);
+        if (dup != clean.end()) clean.erase(dup); // re-adding moves it to primary
+        clean.push_back(e);
+    }
+    if (clean == m_selection) return;
+    m_selection = std::move(clean);
+    selectionChanged.emit(selected());
+}
+
+void EditorContext::select(Entity entity) { setSelection(entity.valid() ? std::vector<Entity>{entity} : std::vector<Entity>{}); }
+
+void EditorContext::addToSelection(Entity entity) {
+    auto s = m_selection;
+    s.push_back(entity);
+    setSelection(std::move(s));
+}
+
+void EditorContext::removeFromSelection(Entity entity) {
+    auto s = m_selection;
+    std::erase(s, entity);
+    setSelection(std::move(s));
+}
+
+void EditorContext::toggleSelection(Entity entity) {
+    if (isSelected(entity)) removeFromSelection(entity);
+    else addToSelection(entity);
 }
 
 void EditorContext::validateSelection() {
-    if (m_selected.scene() && !m_selected.valid()) select({});
+    if (std::all_of(m_selection.begin(), m_selection.end(), [](Entity e) { return e.valid(); })) return;
+    auto s = m_selection;
+    std::erase_if(s, [](Entity e) { return !e.valid(); });
+    m_selection.clear(); // force a change notification even if the remainder looks equal
+    setSelection(std::move(s));
+    if (m_selection.empty()) selectionChanged.emit({});
 }
 
+// ---------------------------------------------------------------- snapshots --
+EditorContext::Snapshot EditorContext::snapshot(const std::vector<Entity>& entities) const {
+    Snapshot s;
+    s.reserve(entities.size());
+    for (Entity e : entities)
+        if (e.valid()) s.emplace_back(e.uuid(), serializeEntity(e)); // mesh ids: exact within the session
+    return s;
+}
+
+void EditorContext::restore(const Snapshot& s) {
+    for (const auto& [uuid, json] : s) restoreEntity(*m_scene, json);
+}
+
+void EditorContext::destroyByUuid(const std::vector<u64>& uuids) {
+    for (u64 id : uuids) {
+        Entity e = m_scene->findEntityByUuid(id);
+        if (!e.valid()) continue;
+        removeFromSelection(e);
+        m_scene->destroyEntity(e);
+    }
+}
+
+std::unordered_set<u64> EditorContext::allUuids() const {
+    std::unordered_set<u64> ids;
+    for (auto [e, id] : m_scene->registry().view<IdComponent>().each()) ids.insert(id.uuid);
+    return ids;
+}
+
+void EditorContext::pushRecorded(UndoAction action) {
+    m_trackValid = false; // the tracker must not record this change a second time
+    if (isPlaying() || m_undo.isApplying()) return;
+    m_undo.push(std::move(action));
+}
+
+// --------------------------------------------------------------- undo/redo --
+void EditorContext::undo() {
+    if (isPlaying()) return;
+    m_undo.undo();
+    m_trackValid = false;
+    validateSelection();
+}
+
+void EditorContext::redo() {
+    if (isPlaying()) return;
+    m_undo.redo();
+    m_trackValid = false;
+    validateSelection();
+}
+
+namespace {
+std::string nameFor(Scene& scene, const std::string& verb, const std::vector<std::pair<u64, std::string>>& snap) {
+    if (snap.size() == 1) {
+        Entity e = scene.findEntityByUuid(snap[0].first);
+        if (e.valid()) return verb + " " + e.name();
+    }
+    return verb + " " + std::to_string(snap.size()) + " entities";
+}
+} // namespace
+
+EditTransaction EditorContext::beginEdit(std::string name, const std::vector<Entity>& entities) {
+    EditTransaction tx;
+    tx.m_ctx = this;
+    tx.m_name = std::move(name);
+    tx.m_before = snapshot(entities);
+    return tx;
+}
+
+bool EditTransaction::commit() {
+    if (!m_ctx) return false;
+    EditorContext& ctx = *std::exchange(m_ctx, nullptr);
+    std::vector<Entity> entities;
+    for (auto& [uuid, json] : m_before) entities.push_back(ctx.m_scene->findEntityByUuid(uuid));
+    auto after = ctx.snapshot(entities);
+    ctx.m_trackValid = false;
+    if (after == m_before) return false;
+    auto before = std::move(m_before);
+    ctx.pushRecorded({m_name, [&ctx, before] { ctx.restore(before); }, [&ctx, after] { ctx.restore(after); }});
+    return true;
+}
+
+void EditorContext::edit(std::string name, const std::vector<Entity>& entities, const std::function<void()>& change) {
+    EditTransaction tx = beginEdit(std::move(name), entities);
+    change();
+    tx.commit();
+}
+
+CreationTransaction EditorContext::beginCreation(std::string name) {
+    CreationTransaction tx;
+    tx.m_ctx = this;
+    tx.m_name = std::move(name);
+    tx.m_before = allUuids();
+    return tx;
+}
+
+std::vector<Entity> CreationTransaction::commit() {
+    if (!m_ctx) return {};
+    EditorContext& ctx = *std::exchange(m_ctx, nullptr);
+    std::vector<Entity> created;
+    std::vector<u64> ids;
+    for (auto [e, id] : ctx.m_scene->registry().view<IdComponent>().each())
+        if (!m_before.contains(id.uuid)) {
+            created.push_back({e, ctx.m_scene});
+            ids.push_back(id.uuid);
+        }
+    ctx.m_trackValid = false;
+    if (created.empty()) return created;
+    std::reverse(created.begin(), created.end()); // creation order
+    auto snap = ctx.snapshot(created);
+    ctx.pushRecorded({m_name, [&ctx, ids] { ctx.destroyByUuid(ids); }, [&ctx, snap] { ctx.restore(snap); }});
+    return created;
+}
+
+std::vector<Entity> EditorContext::recordCreation(std::string name, const std::function<void()>& create) {
+    CreationTransaction tx = beginCreation(std::move(name));
+    create();
+    return tx.commit();
+}
+
+void EditorContext::destroyEntities(std::string name, const std::vector<Entity>& entities) {
+    auto snap = snapshot(entities);
+    if (snap.empty()) return;
+    std::vector<u64> ids;
+    for (auto& [uuid, json] : snap) ids.push_back(uuid);
+    destroyByUuid(ids);
+    pushRecorded({std::move(name), [this, snap] { restore(snap); }, [this, ids] { destroyByUuid(ids); }});
+}
+
+void EditorContext::updateEditTracking(bool interacting) {
+    if (isPlaying() || m_undo.isApplying()) {
+        m_trackValid = false;
+        return;
+    }
+    if (interacting) return; // wait: a drag or a held widget becomes a single step
+    Snapshot current = snapshot(m_selection);
+    const bool sameEntities =
+        current.size() == m_trackBaseline.size() &&
+        std::equal(current.begin(), current.end(), m_trackBaseline.begin(),
+                   [](const auto& a, const auto& b) { return a.first == b.first; });
+    if (!m_trackValid || !sameEntities) {
+        m_trackBaseline = std::move(current);
+        m_trackValid = true;
+        return;
+    }
+    if (current == m_trackBaseline) return;
+    Snapshot before = std::move(m_trackBaseline);
+    m_trackBaseline = current;
+    m_undo.push({nameFor(*m_scene, "Edit", current), [this, before] { restore(before); },
+                 [this, after = std::move(current)] { restore(after); }});
+}
+
+// ---------------------------------------------------------------- play mode --
 void EditorContext::play() {
     if (m_playState == PlayState::Play) return;
     if (m_playState == PlayState::Edit) {
-        // Default options = mesh ids: exact within this session, no name lookups needed.
-        m_snapshot = serializeScene(*m_scene);
+        m_snapshot = serializeScene(*m_scene); // mesh ids: exact within this session
         m_scene->startSimulation();
     }
     m_playState = PlayState::Play;
+    m_trackValid = false;
     playStateChanged.emit(m_playState);
 }
 
@@ -38,26 +232,36 @@ void EditorContext::pause() {
 
 void EditorContext::stop() {
     if (m_playState == PlayState::Edit) return;
-    const u64 selectedUuid = m_selected.valid() ? m_selected.uuid() : 0;
+    std::vector<u64> selectedIds;
+    for (Entity e : m_selection)
+        if (e.valid()) selectedIds.push_back(e.uuid());
     m_scene->stopSimulation();
     std::string error;
     if (!deserializeScene(*m_scene, m_snapshot, {}, &error)) NOVA_CORE_ERROR("Editor: failed to restore scene: {}", error);
     m_snapshot.clear();
     m_playState = PlayState::Edit;
+    m_trackValid = false;
 
-    m_selected = {}; // handles changed: re-select by UUID
-    select(m_scene->findEntityByUuid(selectedUuid));
-    if (!m_selected.valid() && selectedUuid) selectionChanged.emit(m_selected);
+    // Handles changed: re-select by UUID.
+    std::vector<Entity> reselect;
+    for (u64 id : selectedIds)
+        if (Entity e = m_scene->findEntityByUuid(id); e.valid()) reselect.push_back(e);
+    m_selection.clear();
+    setSelection(std::move(reselect));
+    if (m_selection.empty() && !selectedIds.empty()) selectionChanged.emit({});
     sceneReloaded.emit();
     playStateChanged.emit(m_playState);
 }
 
+// ------------------------------------------------------------------- files --
 void EditorContext::newScene() {
     stop();
+    clearSelection();
     m_scene->clear();
     m_scene->setName("Untitled");
     m_scenePath.clear();
-    clearSelection();
+    m_undo.clear();
+    m_trackValid = false;
     sceneReloaded.emit();
 }
 
@@ -66,6 +270,8 @@ bool EditorContext::openScene(const std::filesystem::path& path, std::string* er
     clearSelection();
     const bool ok = loadScene(*m_scene, path, fileOptions, error);
     if (ok) m_scenePath = path;
+    m_undo.clear();
+    m_trackValid = false;
     sceneReloaded.emit();
     return ok;
 }
@@ -77,6 +283,14 @@ bool EditorContext::saveScene(const std::filesystem::path& path, std::string* er
     m_scenePath = path;
     m_scene->setName(sceneNameFromPath(path));
     return true;
+}
+
+// ------------------------------------------------------------------- tools --
+void EditorContext::setActiveTool(Tool* tool) {
+    if (tool == m_activeTool) return;
+    if (m_activeTool) m_activeTool->onDeactivate(*this);
+    m_activeTool = tool;
+    if (m_activeTool) m_activeTool->onActivate(*this);
 }
 
 } // namespace nova::editor

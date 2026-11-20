@@ -3,6 +3,7 @@
 /// @file
 /// @brief High-level renderer: frame inputs, settings, render views and the Renderer itself.
 
+#include "nova/renderer/DebugDraw.h"
 #include "nova/renderer/Mesh.h"
 #include "nova/rhi/Device.h"
 
@@ -188,6 +189,10 @@ public:
     const std::string& meshName(MeshHandle mesh) const;
     /// @brief First live mesh with this name (e.g. "Cube"), or an invalid handle.
     MeshHandle findMesh(const std::string& name) const;
+    /// @brief CPU copy of a mesh's geometry (for picking/placement), or `nullptr`.
+    const MeshData* meshData(MeshHandle mesh) const;
+    /// @brief Object-space bounding box of a mesh (zero box for invalid handles).
+    Bounds meshBounds(MeshHandle mesh) const;
     /// @brief Every live mesh.
     std::vector<MeshHandle> meshes() const;
     /// @}
@@ -204,13 +209,17 @@ public:
 
     /// @name Frame
     /// @{
-    /// @brief Resets per-frame allocations and statistics. Called by Application each frame.
+    /// @brief Resets per-frame allocations, statistics and debug lines. Called by Application at the
+    ///        start of each frame, before layers update.
     void beginFrame();
     /// @brief Renders `scene` into `view`; RenderView::output() ends in ResourceState::ShaderRead.
     void render(rhi::CommandList& cmd, const RenderScene& scene, RenderView& view);
     /// @brief Renders `scene` straight into the swapchain image (games without an editor).
     void renderToBackbuffer(rhi::CommandList& cmd, const RenderScene& scene);
     /// @}
+
+    /// @brief Debug lines for this frame (drawn by every render call, cleared by beginFrame()).
+    DebugDraw& debugDraw() { return m_debugDraw; }
 
     /// @brief Mutable rendering options, read at render time.
     RenderSettings& settings() { return m_settings; }
@@ -233,6 +242,8 @@ private:
         u32 vertexCount = 0;
         u32 indexCount = 0;
         bool alive = false;
+        MeshData cpu;  // kept for picking
+        Bounds bounds;
     };
 
     struct FrameAllocation {
@@ -242,6 +253,8 @@ private:
 
     void createPipelines();
     rhi::PipelineHandle tonemapPipeline(rhi::Format format);
+    rhi::PipelineHandle linePipeline(rhi::Format format, bool onTop);
+    void drawDebugLines(rhi::CommandList& cmd, u64 frameAddress, rhi::TextureHandle depth, rhi::TextureHandle output);
     FrameAllocation allocate(u64 size, u64 alignment = 256);
     void renderInternal(rhi::CommandList& cmd, const RenderScene& scene, rhi::TextureHandle hdr,
                         rhi::TextureHandle depth, rhi::TextureHandle output);
@@ -263,6 +276,10 @@ private:
     std::unordered_map<rhi::Format, rhi::PipelineHandle> m_tonemapPipelines;
     rhi::ShaderDesc m_fullscreenVS;
     rhi::ShaderDesc m_tonemapFS;
+    rhi::ShaderDesc m_lineVS;
+    rhi::ShaderDesc m_lineFS;
+    std::unordered_map<u32, rhi::PipelineHandle> m_linePipelines; // key: format | onTop << 8
+    DebugDraw m_debugDraw;
 
     static constexpr u64 kFrameBufferSize = 16ull << 20;
     static constexpr u32 kMaxInstances = 16384;

@@ -349,6 +349,203 @@ void reflectedInspectors() {
     CHECK((*byField)(&r, delay, f.ctx));
 }
 
+// ------------------------------------------------------------------ phase 3 --
+void undoStack() {
+    UndoStack s;
+    int value = 0;
+    auto step = [&](int from, int to) { return UndoAction{"set " + std::to_string(to), [&, from] { value = from; }, [&, to] { value = to; }}; };
+    value = 1; s.push(step(0, 1));
+    value = 2; s.push(step(1, 2));
+    CHECK(s.canUndo() && !s.canRedo() && s.undoName() == "set 2");
+    CHECK(s.undo() && value == 1 && s.redoName() == "set 2");
+    CHECK(s.redo() && value == 2);
+    s.jumpTo(0);
+    CHECK(value == 0 && s.position() == 0 && !s.undo());
+    s.jumpTo(2);
+    CHECK(value == 2);
+    s.undo();
+    value = 5; s.push(step(1, 5)); // new branch drops "set 2"
+    CHECK(s.actions().size() == 2 && !s.canRedo() && s.undoName() == "set 5");
+    s.setCapacity(1);
+    CHECK(s.actions().size() == 1 && s.position() == 1);
+    int notified = 0;
+    s.changed.connect([&] { ++notified; });
+    s.undo();
+    s.clear();
+    CHECK(notified == 2 && s.actions().empty());
+}
+
+void transactions() {
+    Fixture f;
+    Entity e = f.scene.createEntity("Crate");
+    e.transform().position = {1, 0, 0};
+    const u64 id = e.uuid();
+
+    // Modification: one step, restored in place (same handle).
+    f.ctx.edit("Move Crate", {e}, [&] { e.transform().position = {5, 0, 0}; });
+    CHECK(f.ctx.undoStack().position() == 1 && f.ctx.undoStack().undoName() == "Move Crate");
+    f.ctx.undo();
+    CHECK(e.valid() && e.transform().position == glm::vec3(1, 0, 0));
+    f.ctx.redo();
+    CHECK(e.transform().position == glm::vec3(5, 0, 0));
+
+    // A no-op edit records nothing.
+    f.ctx.edit("Nothing", {e}, [] {});
+    CHECK(f.ctx.undoStack().position() == 1);
+
+    // Creation: undo deletes, redo brings back the same UUID with its components.
+    auto created = f.ctx.recordCreation("Spawn", [&] {
+        Entity a = f.scene.createEntity("A");
+        a.add<PointLightComponent>().radius = 3.0f;
+        f.scene.createEntity("B");
+    });
+    CHECK(created.size() == 2 && created[0].name() == "A" && created[1].name() == "B");
+    const u64 aId = created[0].uuid();
+    f.ctx.undo();
+    CHECK(!f.scene.findEntityByUuid(aId).valid() && !f.scene.findEntity("B").valid());
+    f.ctx.redo();
+    Entity a = f.scene.findEntityByUuid(aId);
+    CHECK(a.valid() && a.has<PointLightComponent>() && a.get<PointLightComponent>().radius == 3.0f);
+
+    // Destruction: undo restores everything, including scripts; selection is cleaned.
+    reflect::type<Spinner>("TestSpinner").field("speed", &Spinner::speed).script();
+    e.addScript<Spinner>().speed = 7.0f;
+    f.ctx.select(e);
+    f.ctx.destroyEntities("Delete Crate", {e});
+    CHECK(!f.scene.findEntityByUuid(id).valid() && f.ctx.selection().empty());
+    f.ctx.undo();
+    Entity back = f.scene.findEntityByUuid(id);
+    CHECK(back.valid() && back.transform().position == glm::vec3(5, 0, 0));
+    auto* sc = back.valid() ? back.tryGet<ScriptComponent>() : nullptr;
+    CHECK(sc && sc->scripts.size() == 1 && static_cast<Spinner&>(*sc->scripts[0]).speed == 7.0f);
+    f.ctx.redo();
+    CHECK(!f.scene.findEntityByUuid(id).valid());
+
+    // Interactive transaction (tools): begin, change over several frames, commit once.
+    Entity t = f.scene.createEntity("Tool target");
+    auto tx = f.ctx.beginEdit("Drag", {t});
+    for (int i = 0; i < 5; ++i) t.transform().position.x += 1.0f;
+    const size_t before = f.ctx.undoStack().position();
+    CHECK(tx.commit() && f.ctx.undoStack().position() == before + 1);
+    CHECK(!tx.active() && !tx.commit()); // committing twice does nothing
+}
+
+void automaticTracking() {
+    Fixture f;
+    Entity e = f.scene.createEntity("Lamp");
+    f.ctx.select(e);
+    f.ctx.updateEditTracking(false); // baseline
+
+    e.transform().position = {0, 3, 0};    // e.g. a slider being dragged...
+    f.ctx.updateEditTracking(true);        // ...still held: nothing yet
+    e.transform().position = {0, 4, 0};
+    f.ctx.updateEditTracking(true);
+    CHECK(f.ctx.undoStack().position() == 0);
+    f.ctx.updateEditTracking(false);       // released: one step for the whole drag
+    CHECK(f.ctx.undoStack().position() == 1 && f.ctx.undoStack().undoName() == "Edit Lamp");
+    f.ctx.updateEditTracking(false);       // no further change: nothing new
+    CHECK(f.ctx.undoStack().position() == 1);
+
+    f.ctx.undo();
+    CHECK(e.transform().position == glm::vec3(0, 0, 0));
+    f.ctx.updateEditTracking(false);       // the undo itself is not recorded as an edit
+    f.ctx.updateEditTracking(false);
+    CHECK(f.ctx.undoStack().position() == 0 && f.ctx.undoStack().canRedo());
+
+    // Changing the selection re-baselines (no step for the other entity's existing state).
+    Entity other = f.scene.createEntity("Other");
+    other.transform().scale = glm::vec3(3);
+    f.ctx.select(other);
+    f.ctx.updateEditTracking(false);
+    CHECK(f.ctx.undoStack().position() == 0);
+
+    // While playing nothing is recorded (Stop restores the scene anyway).
+    f.ctx.play();
+    other.transform().position = {7, 7, 7};
+    f.ctx.updateEditTracking(false);
+    f.ctx.stop();
+    f.ctx.updateEditTracking(false);
+    CHECK(f.ctx.undoStack().position() == 0);
+}
+
+void multiSelection() {
+    Fixture f;
+    Entity a = f.scene.createEntity("A"), b = f.scene.createEntity("B"), c = f.scene.createEntity("C");
+    int changes = 0;
+    f.ctx.selectionChanged.connect([&](Entity) { ++changes; });
+    f.ctx.select(a);
+    f.ctx.addToSelection(b);
+    CHECK(f.ctx.selection().size() == 2 && f.ctx.selected() == b && f.ctx.isSelected(a));
+    f.ctx.addToSelection(a); // re-adding makes it primary, no duplicate
+    CHECK(f.ctx.selection().size() == 2 && f.ctx.selected() == a);
+    f.ctx.toggleSelection(c);
+    f.ctx.toggleSelection(b);
+    CHECK(f.ctx.selection().size() == 2 && f.ctx.isSelected(c) && !f.ctx.isSelected(b));
+    f.ctx.setSelection({a, Entity{}, a, b});
+    CHECK(f.ctx.selection().size() == 2 && f.ctx.selected() == b); // invalid/duplicates dropped
+    f.scene.destroyEntity(b);
+    f.ctx.validateSelection();
+    CHECK(f.ctx.selection().size() == 1 && f.ctx.selected() == a);
+    CHECK(changes == 7); // select, add, re-add (new primary), toggle, toggle, setSelection, validate
+
+    // Stop restores the whole selection by UUID.
+    f.ctx.setSelection({a, c});
+    const u64 aId = a.uuid(), cId = c.uuid();
+    f.ctx.play();
+    f.ctx.stop();
+    CHECK(f.ctx.selection().size() == 2 && f.ctx.selection()[0].uuid() == aId && f.ctx.selected().uuid() == cId);
+}
+
+struct CountingTool : Tool {
+    int* activations;
+    CountingTool(std::string name, int* a) : Tool(std::move(name), "B"), activations(a) {}
+    void onActivate(EditorContext&) override { ++*activations; }
+};
+
+void tools() {
+    int activations = 0;
+    Fixture f;
+    f.registry.tool<CountingTool>("First", &activations);
+    f.registry.tool<CountingTool>("Second", &activations);
+    CHECK(f.ctx.activeTool() == nullptr);
+    f.registry.attachAll();
+    CHECK(f.ctx.activeTool() == f.registry.findTool("First") && activations == 1); // first tool active
+    Command* cmd = f.registry.findCommand("tool.Second");
+    CHECK(cmd && cmd->menuPath == "View/Tools/Second" && cmd->shortcut.key == Key::B);
+    CHECK(f.registry.execute("tool.Second") && f.ctx.activeTool() == f.registry.findTool("Second") && activations == 2);
+    CHECK(cmd->isChecked(f.ctx));
+    f.registry.detachAll();
+    CHECK(f.ctx.activeTool() == nullptr);
+}
+
+void picking() {
+    Fixture f;
+    const MeshData cube = MeshData::cube();
+    MeshLookup meshes = [&](MeshHandle h) { return h.id == 1 ? &cube : nullptr; };
+
+    Entity near = f.scene.createEntity("Near");
+    near.transform().position = {0, 0, -5};
+    near.add<MeshComponent>(MeshHandle{1});
+    Entity far = f.scene.createEntity("Far");
+    far.transform().position = {0, 0, -10};
+    far.add<MeshComponent>(MeshHandle{1});
+    Entity lamp = f.scene.createEntity("Lamp"); // no mesh: picked as a small sphere
+    lamp.transform().position = {3, 0, -5};
+
+    auto hit = pick(f.scene, meshes, {0, 0, 0}, {0, 0, -1});
+    CHECK(hit && hit->entity == near && std::abs(hit->distance - 4.5f) < 1e-4f && hit->normal.z > 0.99f);
+    PickOptions skipNear;
+    skipNear.ignore = [&](Entity e) { return e == near; };
+    hit = pick(f.scene, meshes, {0, 0, 0}, {0, 0, -1}, skipNear);
+    CHECK(hit && hit->entity == far);
+    hit = pick(f.scene, meshes, {3, 0, 0}, {0, 0, -1});
+    CHECK(hit && hit->entity == lamp && std::abs(hit->distance - 4.7f) < 1e-4f);
+    PickOptions noMarkers;
+    noMarkers.markerRadius = 0.0f;
+    CHECK(!pick(f.scene, meshes, {3, 0, 0}, {0, 0, -1}, noMarkers));
+    CHECK(!pick(f.scene, meshes, {0, 0, 0}, {0, 1, 0}));
+}
+
 void signals() {
     Signal<int> s;
     int sum = 0;
@@ -384,6 +581,12 @@ int main() {
         {"stop restores the whole scene", stopRestoresWholeScene},
         {"scene files (new / save / open)", sceneFiles},
         {"reflected inspectors and field drawers", reflectedInspectors},
+        {"undo stack", undoStack},
+        {"undo transactions (edit / create / destroy)", transactions},
+        {"automatic undo tracking", automaticTracking},
+        {"multi-selection", multiSelection},
+        {"tools", tools},
+        {"picking", picking},
         {"signals", signals},
     };
     for (auto& [name, fn] : tests) {

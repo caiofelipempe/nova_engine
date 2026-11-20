@@ -165,8 +165,15 @@ void readObject(const reflect::TypeInfo& type, void* object, const Json& j, cons
     }
 }
 
+void readEntityInto(Entity e, const Json& je, const SerializeOptions& opt, std::set<std::string>& warned);
+
 Entity readEntity(Scene& scene, const Json& je, const SerializeOptions& opt, std::set<std::string>& warned) {
     Entity e = scene.createEntity();
+    readEntityInto(e, je, opt, warned);
+    return e;
+}
+
+void readEntityInto(Entity e, const Json& je, const SerializeOptions& opt, std::set<std::string>& warned) {
     const Json& components = je.contains("components") ? je["components"] : Json::object();
     for (auto it = components.begin(); it != components.end(); ++it) {
         const reflect::TypeInfo* t = reflect::types().find(std::string_view(it.key()));
@@ -190,7 +197,6 @@ Entity readEntity(Scene& scene, const Json& je, const SerializeOptions& opt, std
             e.attachScript(std::move(script));
         }
     }
-    return e;
 }
 
 // Entities in creation order (EnTT views iterate newest first).
@@ -284,6 +290,32 @@ Entity duplicateEntity(Entity entity) {
     Entity copy = readEntity(scene, je, ids, warned);
     if (auto* name = copy.tryGet<NameComponent>()) name->name += " (copy)";
     return copy;
+}
+
+std::string serializeEntity(Entity entity, const SerializeOptions& options) {
+    std::set<std::string> warned;
+    return writeEntity(entity, options, warned).dump();
+}
+
+Entity restoreEntity(Scene& scene, std::string_view json, const SerializeOptions& options) {
+    Json je = Json::parse(json, nullptr, /*allow_exceptions=*/false);
+    if (je.is_discarded() || !je.is_object()) return {};
+    std::set<std::string> warned;
+
+    u64 uuid = 0;
+    if (je.contains("components") && je["components"].contains("Id"))
+        uuid = je["components"]["Id"].value("uuid", u64{0});
+    Entity e = scene.findEntityByUuid(uuid);
+    if (!e.valid()) return readEntity(scene, je, options, warned);
+
+    // In place: drop reflected state (and scripts), then apply the JSON.
+    for (const reflect::TypeInfo* t : reflect::types().components())
+        if (t->name != "Id" && t->has(e)) t->remove(e);
+    if (e.has<ScriptComponent>()) e.remove<ScriptComponent>();
+    readEntityInto(e, je, options, warned);
+    if (!e.has<NameComponent>()) e.add<NameComponent>();
+    if (!e.has<TransformComponent>()) e.add<TransformComponent>();
+    return e;
 }
 
 } // namespace nova

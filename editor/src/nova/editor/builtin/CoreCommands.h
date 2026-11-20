@@ -19,6 +19,9 @@ namespace nova::editor::builtin {
 /// | file.saveAs         | File/Save Scene As...      | Ctrl+Shift+S |
 /// | file.importGltf     | File/Import glTF...        | Ctrl+I       |
 /// | file.exit           | File/Exit                  |              |
+/// | edit.undo           | Edit/Undo                  | Ctrl+Z       |
+/// | edit.redo           | Edit/Redo                  | Ctrl+Y (also Ctrl+Shift+Z: edit.redoAlt) |
+/// | edit.selectAll      | Edit/Select All            | Ctrl+A       |
 /// | edit.duplicate      | Edit/Duplicate             | Ctrl+D       |
 /// | edit.delete         | Edit/Delete                | Delete       |
 /// | edit.focus          | Edit/Focus Selection       | F            |

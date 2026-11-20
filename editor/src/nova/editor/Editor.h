@@ -19,8 +19,11 @@
 #include "nova/editor/EditorCamera.h"
 #include "nova/editor/EditorContext.h"
 #include "nova/editor/Panel.h"
+#include "nova/editor/Picking.h"
 #include "nova/editor/Registry.h"
 #include "nova/editor/Signal.h"
+#include "nova/editor/Tool.h"
+#include "nova/editor/UndoStack.h"
 #include "nova/editor/Widgets.h"
 
 #include <imgui.h>

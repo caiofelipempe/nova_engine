@@ -17,6 +17,34 @@ void Registry::addPanel(Scope<Panel> panel) {
     if (m_attached) ref.onAttach(m_context);
 }
 
+void Registry::addTool(Scope<Tool> tool) {
+    const std::string name = tool->name();
+    for (auto it = m_tools.begin(); it != m_tools.end(); ++it)
+        if ((*it)->name() == name) {
+            if (m_context.activeTool() == it->get()) m_context.setActiveTool(nullptr);
+            m_tools.erase(it);
+            break;
+        }
+    Tool* raw = tool.get();
+    m_tools.push_back(std::move(tool));
+
+    Command c;
+    c.id = "tool." + name;
+    c.menuPath = "View/Tools/" + name;
+    c.order = static_cast<int>(m_tools.size());
+    if (auto chord = KeyChord::parse(raw->shortcut())) c.shortcut = *chord;
+    c.execute = [this, name](EditorContext& ctx) { ctx.setActiveTool(findTool(name)); };
+    c.isChecked = [this, name](EditorContext& ctx) { return ctx.activeTool() == findTool(name); };
+    command(std::move(c));
+    if (m_attached && !m_context.activeTool()) m_context.setActiveTool(raw);
+}
+
+Tool* Registry::findTool(const std::string& name) {
+    for (auto& t : m_tools)
+        if (t->name() == name) return t.get();
+    return nullptr;
+}
+
 bool Registry::removePanel(const std::string& title) {
     auto it = std::find_if(m_panels.begin(), m_panels.end(), [&](const Scope<Panel>& p) { return p->title() == title; });
     if (it == m_panels.end()) return false;
@@ -153,10 +181,12 @@ void Registry::attachAll() {
     if (m_attached) return;
     m_attached = true;
     for (size_t i = 0; i < m_panels.size(); ++i) m_panels[i]->onAttach(m_context); // panels may register panels
+    if (!m_context.activeTool() && !m_tools.empty()) m_context.setActiveTool(m_tools.front().get());
 }
 
 void Registry::detachAll() {
     if (!m_attached) return;
+    m_context.setActiveTool(nullptr);
     for (auto it = m_panels.rbegin(); it != m_panels.rend(); ++it) (*it)->onDetach(m_context);
     m_attached = false;
 }

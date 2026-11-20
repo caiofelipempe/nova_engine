@@ -7,9 +7,29 @@
 
 #include <glm/glm.hpp>
 
+#include <limits>
+#include <optional>
 #include <vector>
 
 namespace nova {
+
+/// @brief Axis-aligned bounding box.
+struct Bounds {
+    glm::vec3 min{0.0f}; ///< Minimum corner.
+    glm::vec3 max{0.0f}; ///< Maximum corner.
+    /// @brief Center point.
+    glm::vec3 center() const { return (min + max) * 0.5f; }
+    /// @brief Half size per axis.
+    glm::vec3 extents() const { return (max - min) * 0.5f; }
+};
+
+/// @brief Result of raycastMesh().
+struct MeshRayHit {
+    f32 distance = 0.0f;     ///< World-space distance from the ray origin.
+    glm::vec3 point{0.0f};   ///< World-space hit point.
+    glm::vec3 normal{0.0f};  ///< World-space geometric normal of the hit triangle (facing the ray).
+    u32 triangle = 0;        ///< Index of the hit triangle.
+};
 
 /// @brief 32-byte vertex, read in shaders through a buffer device address ("vertex pulling").
 /// @note Layout mirrors `Vertex` in shaders/common.glsl (std430).
@@ -38,7 +58,24 @@ struct MeshData {
     /// @param size Edge length.
     /// @param subdivisions Quads per side.
     static MeshData plane(f32 size = 1.0f, u32 subdivisions = 1);
+
+    /// @brief Bounding box of the vertices (zero box when empty).
+    Bounds bounds() const;
 };
+
+/// @brief Exact ray/mesh intersection (CPU): bounding-box early-out, then every triangle.
+///
+/// Used for editor picking and surface placement; not meant for per-frame gameplay queries
+/// (use the physics scene for those).
+/// @param mesh Geometry in object space.
+/// @param transform Object → world (may include non-uniform scale).
+/// @param origin Ray origin (world).
+/// @param direction Ray direction (world; need not be normalized).
+/// @param maxDistance Maximum world distance.
+/// @return Closest hit, or `std::nullopt`.
+std::optional<MeshRayHit> raycastMesh(const MeshData& mesh, const glm::mat4& transform, const glm::vec3& origin,
+                                      const glm::vec3& direction,
+                                      f32 maxDistance = std::numeric_limits<f32>::infinity());
 
 /// @brief Lightweight reference to a GPU mesh owned by the Renderer.
 struct MeshHandle {

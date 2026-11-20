@@ -25,6 +25,7 @@
 
 #include "nova/physics/PhysicsWorld.h"
 
+#include "nova/renderer/DebugDraw.h"
 #include "nova/renderer/Mesh.h"
 #include "nova/renderer/Renderer.h"
 

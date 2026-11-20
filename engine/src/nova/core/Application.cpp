@@ -98,10 +98,10 @@ void Application::run() {
         }
 
         Input::update();
+        m_renderer->beginFrame(); // before layers update: they may queue debug lines
         for (auto& layer : m_layers) layer->onUpdate(m_deltaTime);
 
         if (!m_device->beginFrame()) continue;
-        m_renderer->beginFrame();
 
         if (m_imguiRenderer) {
             m_imguiRenderer->newFrame();

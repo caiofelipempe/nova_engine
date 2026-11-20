@@ -55,6 +55,16 @@ bool saveScene(Scene& scene, const std::filesystem::path& path, const SerializeO
 bool loadScene(Scene& scene, const std::filesystem::path& path, const SerializeOptions& options = {},
                std::string* error = nullptr);
 
+/// @brief One entity (reflected components and scripts) as a JSON object string.
+std::string serializeEntity(Entity entity, const SerializeOptions& options = {});
+
+/// @brief Applies an entity produced by serializeEntity().
+///
+/// If an entity with the same UUID exists, its reflected components and scripts are replaced
+/// **in place** (its handle and position in the scene stay the same); otherwise it is created.
+/// @return The restored entity, or an invalid Entity if the JSON is malformed.
+Entity restoreEntity(Scene& scene, std::string_view json, const SerializeOptions& options = {});
+
 /// @brief Scene name for a file: `levels/forest.scene.json` → `forest`.
 std::string sceneNameFromPath(const std::filesystem::path& path);
 

@@ -73,7 +73,7 @@ engine/src/nova/
   core/       Application (loop), Layer, Log (spdlog)
   platform/   Window (interface) + Input        → glfw/  (backend GLFW)
   rhi/        Device, CommandList (interfaces)  → vulkan/ (backend Vulkan)
-  renderer/   Renderer, RenderView, Mesh — só fala com o RHI
+  renderer/   Renderer, RenderView, Mesh (+ raycast CPU), DebugDraw — só fala com o RHI
   scene/      Scene (EnTT), Entity, Components, Script, GameLayer, SceneSerializer (JSON)
   physics/    PhysicsWorld (interface)          → jolt/ (backend Jolt)
   reflect/    reflexão de tipos (componentes, scripts, structs, enums)
@@ -135,6 +135,8 @@ int main() { return nova::editor::run<MyGameEditor>(); }
 ```
 
 No CMake: `nova_add_editor(MyGameEditor editor/main.cpp ...)`. Guia com receitas: [docs/EDITOR.md](docs/EDITOR.md).
+
+Recursos do editor: undo/redo automático para qualquer edição (incluindo ferramentas do jogo) com painel *History*; seleção múltipla (clique na viewport, Ctrl/Shift, hierarquia); ferramentas de viewport registráveis (gizmos Move/Rotate/Scale, exemplo de pincel); visualização de seleção, colliders, luzes e câmeras via `DebugDraw`; cenas em JSON com Play/Stop restaurando tudo; paleta de comandos.
 
 ## Reflexão e cenas
 

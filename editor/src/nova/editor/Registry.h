@@ -6,6 +6,7 @@
 #include "nova/core/Log.h"
 #include "nova/editor/Command.h"
 #include "nova/editor/Panel.h"
+#include "nova/editor/Tool.h"
 #include "nova/reflect/Reflect.h"
 #include "nova/scene/Entity.h"
 
@@ -110,6 +111,27 @@ public:
     }
     /// @brief Panels in registration order.
     const std::vector<Scope<Panel>>& panels() const { return m_panels; }
+    /// @}
+
+    /// @name Viewport tools
+    /// @{
+    /// @brief Creates and registers a viewport tool (a tool with the same name is replaced).
+    ///
+    /// Also registers the command `View/Tools/<name>` (with the tool's shortcut) that activates it.
+    /// The first registered tool is active when the editor starts.
+    /// @return The tool, owned by the registry.
+    template <typename T, typename... Args>
+    T& tool(Args&&... args) {
+        static_assert(std::is_base_of_v<Tool, T>, "T must derive from nova::editor::Tool");
+        auto t = makeScope<T>(std::forward<Args>(args)...);
+        T& ref = *t;
+        addTool(std::move(t));
+        return ref;
+    }
+    /// @brief The tool with this name, or `nullptr`.
+    Tool* findTool(const std::string& name);
+    /// @brief Tools in registration order.
+    const std::vector<Scope<Tool>>& tools() const { return m_tools; }
     /// @}
 
     /// @name Commands
@@ -234,11 +256,13 @@ public:
 
 private:
     void addPanel(Scope<Panel> panel);
+    void addTool(Scope<Tool> tool);
 
     EditorContext& m_context;
     bool m_attached = false;
     std::vector<Scope<Plugin>> m_plugins;
     std::vector<Scope<Panel>> m_panels;
+    std::vector<Scope<Tool>> m_tools;
     std::deque<Command> m_commands;                 // deque: references stay valid on append
     std::deque<ComponentEditor> m_componentEditors;
     std::unordered_map<std::type_index, FieldDrawer> m_typeDrawers;

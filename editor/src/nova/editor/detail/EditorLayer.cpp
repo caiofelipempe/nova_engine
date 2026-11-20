@@ -5,6 +5,8 @@
 #include "nova/editor/builtin/CoreCommands.h"
 #include "nova/editor/builtin/CoreComponents.h"
 #include "nova/editor/builtin/CorePanels.h"
+#include "nova/editor/builtin/CoreTools.h"
+#include "nova/editor/builtin/CoreVisuals.h"
 #include "nova/platform/Input.h"
 
 #include <imgui.h> // must precede ImGuizmo.h
@@ -80,7 +82,11 @@ void EditorLayer::onAttach() {
         m_registry.plugin<builtin::CoreCommandsPlugin>();
         registerFrameworkCommands();
     }
-    if (m_desc.builtinPanels) m_registry.plugin<builtin::CorePanelsPlugin>();
+    if (m_desc.builtinPanels) {
+        m_registry.plugin<builtin::CorePanelsPlugin>();
+        m_registry.plugin<builtin::CoreToolsPlugin>();
+        m_registry.plugin<builtin::CoreVisualsPlugin>();
+    }
     if (m_desc.builtinComponents) m_registry.plugin<builtin::CoreComponentsPlugin>();
 
     m_app->onSetup(m_registry);
@@ -172,6 +178,13 @@ void EditorLayer::onImGui() {
     drawPanels();
     for (size_t i = 0; i < m_registry.uiHooks().size(); ++i) m_registry.uiHooks()[i](m_context);
     drawCommandPalette();
+
+    // Automatic undo for the selection: whatever changed it this frame (inspector, gizmo, custom
+    // panels, commands) becomes one step once the user lets go of the widget/gizmo.
+    Tool* tool = m_context.activeTool();
+    const bool interacting = ImGui::IsAnyItemActive() || ImGuizmo::IsUsing() || m_context.inputCaptured() ||
+                             (tool && tool->isInteracting());
+    m_context.updateEditTracking(interacting);
 }
 
 void EditorLayer::drawMainMenu() {

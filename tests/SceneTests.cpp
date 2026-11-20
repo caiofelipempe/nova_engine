@@ -266,6 +266,80 @@ void floatsShortAndExact() {
     CHECK(json.find("0.5500000") == std::string::npos);
 }
 
+void meshRaycast() {
+    const MeshData cube = MeshData::cube(); // unit cube centered at origin
+    // Scaled ×2 and moved to x = 10: faces at x = 9 and 11.
+    glm::mat4 m = glm::translate(glm::mat4(1.0f), {10, 0, 0}) * glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
+    auto hit = raycastMesh(cube, m, {0, 0, 0}, {1, 0, 0});
+    CHECK(hit && std::abs(hit->distance - 9.0f) < 1e-4f);
+    if (hit) CHECK(glm::length(hit->normal - glm::vec3(-1, 0, 0)) < 1e-4f && std::abs(hit->point.x - 9.0f) < 1e-4f);
+    CHECK(!raycastMesh(cube, m, {0, 0, 0}, {-1, 0, 0}));          // pointing away
+    CHECK(!raycastMesh(cube, m, {0, 5, 0}, {1, 0, 0}));           // passes above
+    CHECK(!raycastMesh(cube, m, {0, 0, 0}, {1, 0, 0}, 5.0f));     // too short
+
+    // Rotated 45° around Y: the nearest edge is at x = 10 - sqrt(2).
+    glm::mat4 r = glm::translate(glm::mat4(1.0f), {10, 0, 0}) * glm::rotate(glm::mat4(1.0f), glm::radians(45.0f), {0, 1, 0}) *
+                  glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
+    hit = raycastMesh(cube, r, {0, 0.5f, 0.01f}, {1, 0, 0});
+    CHECK(hit && std::abs(hit->distance - (10.0f - std::sqrt(2.0f))) < 0.02f);
+
+    const MeshData sphere = MeshData::sphere(0.5f, 64, 32);
+    hit = raycastMesh(sphere, glm::mat4(1.0f), {0, 5, 0}, {0, -1, 0});
+    // Straight through the pole vertex (shared by many triangles; the opposite pole has degenerate ones).
+    CHECK(hit && std::abs(hit->distance - 4.5f) < 0.01f && hit->normal.y > 0.99f);
+    hit = raycastMesh(sphere, glm::mat4(1.0f), {0, -5, 0}, {0, 1, 0});
+    CHECK(hit && std::abs(hit->distance - 4.5f) < 0.01f && hit->normal.y < -0.99f);
+
+    Bounds b = cube.bounds();
+    CHECK(b.min == glm::vec3(-0.5f) && b.max == glm::vec3(0.5f) && b.extents() == glm::vec3(0.5f));
+}
+
+void debugDraw() {
+    DebugDraw dd;
+    dd.line({0, 0, 0}, {1, 0, 0}, {1, 0, 0, 1});
+    CHECK(dd.lineCount() == 1 && dd.vertices(false).size() == 2 && dd.vertices(true).empty());
+    dd.box({0, 0, 0}, glm::vec3(1), glm::quat(1, 0, 0, 0), {1, 1, 1, 1}, true);
+    CHECK(dd.vertices(true).size() == 24); // 12 edges on top
+    dd.sphere({0, 0, 0}, 1.0f, {1, 1, 1, 1});
+    CHECK(dd.lineCount() == 1 + 12 + 96);
+    dd.arrow({0, 0, 0}, {0, 2, 0}, {1, 1, 1, 1});
+    CHECK(dd.lineCount() == 1 + 12 + 96 + 5);
+    CHECK(DebugDraw::pack({1, 0, 0, 1}) == 0xFF0000FFu); // RGBA8 little-endian, as unpackUnorm4x8 expects
+    // Box corners follow the rotation.
+    DebugDraw r;
+    r.box({0, 0, 0}, {1, 0.1f, 0.1f}, glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1)), {1, 1, 1, 1});
+    f32 maxY = 0;
+    for (const auto& v : r.vertices(false)) maxY = std::max(maxY, v.position.y);
+    CHECK(std::abs(maxY - 1.0f) < 1e-4f); // the long axis now points up
+    dd.clear();
+    CHECK(dd.lineCount() == 0);
+}
+
+void entityRestoreInPlace() {
+    Scene s;
+    Entity e = s.createEntity("Thing");
+    e.transform().position = {1, 1, 1};
+    e.add<PointLightComponent>().intensity = 5.0f;
+    const std::string before = serializeEntity(e);
+
+    e.transform().position = {9, 9, 9};
+    e.remove<PointLightComponent>();
+    e.add<Player>();
+    e.get<NameComponent>().name = "Renamed";
+
+    Entity restored = restoreEntity(s, before);
+    CHECK(restored == e); // same handle: restored in place
+    CHECK(e.name() == "Thing" && e.transform().position == glm::vec3(1, 1, 1));
+    CHECK(e.has<PointLightComponent>() && e.get<PointLightComponent>().intensity == 5.0f);
+    CHECK(!e.has<Player>()); // components added since the snapshot are removed
+
+    const u64 id = e.uuid();
+    s.destroyEntity(e);
+    Entity back = restoreEntity(s, before);
+    CHECK(back.valid() && back.uuid() == id && back.name() == "Thing"); // recreated with the same UUID
+    CHECK(!restoreEntity(s, "{ broken").valid());
+}
+
 void uuids() {
     Scene s;
     Entity a = s.createEntity("A"), b = s.createEntity("B");
@@ -288,6 +362,9 @@ int main() {
         {"files", files},
         {"duplication", duplication},
         {"floats are short and exact", floatsShortAndExact},
+        {"mesh raycast", meshRaycast},
+        {"debug draw", debugDraw},
+        {"entity restore in place", entityRestoreInPlace},
         {"uuids", uuids},
     };
     for (auto& [name, fn] : tests) {

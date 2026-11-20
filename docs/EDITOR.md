@@ -134,6 +134,58 @@ struct NavmeshPlugin : nova::editor::Plugin {
 // registro: r.plugin<NavmeshPlugin>();
 ```
 
+### Ferramenta da viewport (gizmo, pincel, posicionamento)
+
+```cpp
+class PaintTool : public nova::editor::Tool {
+public:
+    PaintTool() : Tool("Paint Targets", "B") {}                 // botão na toolbar + View/Tools + atalho
+    bool clickSelects() const override { return false; }        // o botão esquerdo pinta (não seleciona)
+    bool isInteracting() const override { return m_stroke.active(); }
+
+    void onViewport(EditorContext& ctx, const ViewportState& vp) override {
+        auto hit = nova::editor::pick(ctx.scene(), [&](auto m) { return ctx.renderer().meshData(m); },
+                                      vp.rayOrigin, vp.rayDirection);
+        if (vp.hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) m_stroke = ctx.beginCreation("Paint");
+        if (m_stroke.active() && hit) { /* criar entidades em hit->point, alinhadas a hit->normal */ }
+        if (m_stroke.active() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) m_stroke.commit(); // 1 passo de undo
+    }
+    void onDebugDraw(EditorContext&, nova::DebugDraw& dd) override { /* prévia do pincel */ }
+
+private:
+    nova::editor::CreationTransaction m_stroke;
+};
+// registro: r.tool<PaintTool>();
+```
+
+- `ViewportState`: retângulo da imagem, mouse, câmera e **raio do mouse no mundo** (`rayOrigin`, `rayDirection`).
+- `nova::editor::pick(...)`: entidade sob um raio (triângulos exatos das malhas; esfera pequena para luzes/câmeras), com `PickOptions::ignore`.
+- Ferramentas embutidas: **Move (W)**, **Rotate (E)**, **Scale (R)** — gizmo que move toda a seleção. Exemplo completo de pincel: `PaintTargetsTool` em [editor/app/ExamplePlugin.cpp](../editor/app/ExamplePlugin.cpp).
+
+### Undo / redo
+
+Quase sempre é **automático**: qualquer mudança nas entidades **selecionadas** (inspetor, gizmo, painel do jogo, comando) vira um passo quando o usuário solta o widget/gizmo. Para o resto, use transações:
+
+```cpp
+ctx.edit("Align to ground", entities, [&] { /* modificar */ });         // modificação
+ctx.recordCreation("Spawn wave", [&] { /* criar entidades */ });        // criação (undo apaga)
+ctx.destroyEntities("Delete enemies", entities);                         // remoção (undo restaura tudo)
+auto tx = ctx.beginEdit("Drag", entities); /* vários frames */ tx.commit(); // interações longas
+```
+
+Os passos guardam snapshots JSON por **UUID**, então continuam válidos mesmo quando entidades são apagadas e recriadas. Durante o Play nada é gravado (o Stop já restaura a cena). Estado fora da cena: `ctx.undoStack().push({nome, undo, redo})`.
+
+### Linhas de debug
+
+```cpp
+auto& dd = ctx.renderer().debugDraw();   // também disponível no jogo: app().renderer().debugDraw()
+dd.arrow(from, to, {1, 1, 0, 1});
+dd.box(transform, center, halfExtents, {0, 1, 0, 1});
+dd.sphere(p, r, color, /*onTop*/ true);   // também circle, capsule, grid, axes, line
+```
+
+Desenhadas em todo frame em que forem adicionadas (com teste de profundidade, ou por cima com `onTop`).
+
 ### Reagir a eventos do editor
 
 ```cpp
@@ -167,7 +219,9 @@ if (auto* vp = r.findPanel<nova::editor::builtin::ViewportPanel>()) vp->useScene
 | Serviço | API |
 |---|---|
 | Cena | `ctx.scene()` (entidades, componentes, física, consultas) |
-| Seleção | `ctx.selected()`, `ctx.select(e)`, `ctx.clearSelection()` |
+| Seleção (múltipla) | `ctx.selection()`, `ctx.selected()` (primária), `ctx.select(e)`, `addToSelection`, `toggleSelection`, `setSelection`, `isSelected`, `clearSelection()` |
+| Undo / redo | `ctx.undo()`, `ctx.redo()`, `ctx.edit(...)`, `ctx.recordCreation(...)`, `ctx.destroyEntities(...)`, `ctx.beginEdit(...)`, `ctx.beginCreation(...)`, `ctx.undoStack()` |
+| Ferramentas | `ctx.activeTool()`, `ctx.setActiveTool(tool)` |
 | Modo de jogo | `ctx.play()`, `ctx.pause()`, `ctx.stop()`, `ctx.playState()` — o Stop restaura a cena inteira (entidades criadas somem, destruídas voltam); handles mudam, **UUIDs** (`entity.uuid()`, `scene.findEntityByUuid`) não |
 | Arquivos de cena | `ctx.newScene()`, `ctx.openScene(path)`, `ctx.saveScene(path)`, `ctx.scenePath()` |
 | Câmera do editor | `ctx.camera()` (`focus(pos)`, `position`, `yaw`, `pitch`) |
@@ -182,10 +236,13 @@ Widgets prontos com o visual do editor: `nova::editor::widgets::vec3`, `widgets:
 |---|---|
 | File/New Scene · Open Scene... · Save Scene · Save Scene As... | Ctrl+N · Ctrl+O · Ctrl+S · Ctrl+Shift+S |
 | File/Import glTF... | Ctrl+I |
-| Edit/Duplicate · Delete · Focus Selection · Deselect | Ctrl+D · Delete · F · Escape |
+| Edit/Undo · Redo | Ctrl+Z · Ctrl+Y (ou Ctrl+Shift+Z) |
+| Edit/Select All · Duplicate · Delete · Focus Selection · Deselect | Ctrl+A · Ctrl+D · Delete · F · Escape |
 | Entity/Create Empty, Cube, Sphere, Plane, Point Light | — |
 | Play/Play · Pause · Stop | F5 · F6 · Shift+F5 |
-| View/Gizmo/Translate · Rotate · Scale · Local Space | W · E · R |
+| View/Tools/Move · Rotate · Scale · Local Space | W · E · R |
+| View/Show Selection Bounds · All Colliders · Light and Camera Gizmos · Grid | — |
+| Viewport: clique seleciona (Ctrl alterna, Shift adiciona); Hierarchy: Ctrl/Shift (intervalo) | — |
 | Window/Reset Layout · Command Palette... | — · Ctrl+Shift+P |
 
 ## 5. Convenções (para pessoas e IA)

@@ -106,15 +106,43 @@ void CoreCommandsPlugin::onRegister(Registry& r) {
     r.command(std::move(exit));
 
     // ---- Edit
+    Command undo = make("edit.undo", "Edit/Undo", [](EditorContext& ctx) { ctx.undo(); }, "Ctrl+Z", -20);
+    undo.isEnabled = [](EditorContext& ctx) { return !ctx.isPlaying() && ctx.undoStack().canUndo(); };
+    r.command(std::move(undo));
+    Command redo = make("edit.redo", "Edit/Redo", [](EditorContext& ctx) { ctx.redo(); }, "Ctrl+Y", -19);
+    redo.isEnabled = [](EditorContext& ctx) { return !ctx.isPlaying() && ctx.undoStack().canRedo(); };
+    Command redoAlt = redo; // second shortcut, not listed
+    r.command(std::move(redo));
+    redoAlt.id = "edit.redoAlt";
+    redoAlt.menuPath.clear();
+    redoAlt.showInPalette = false;
+    redoAlt.shortcut = *KeyChord::parse("Ctrl+Shift+Z");
+    r.command(std::move(redoAlt));
+
+    Command selectAll = make("edit.selectAll", "Edit/Select All", [](EditorContext& ctx) {
+        std::vector<Entity> all;
+        for (auto [h, n] : ctx.scene().registry().view<NameComponent>().each()) all.push_back({h, &ctx.scene()});
+        std::reverse(all.begin(), all.end());
+        ctx.setSelection(std::move(all));
+    }, "Ctrl+A", -10);
+    selectAll.separatorBefore = true;
+    r.command(std::move(selectAll));
+
     Command dup = make("edit.duplicate", "Edit/Duplicate", [](EditorContext& ctx) {
-        ctx.select(duplicateEntity(ctx.selected()));
+        const auto source = ctx.selection();
+        std::vector<Entity> copies;
+        ctx.recordCreation(source.size() == 1 ? "Duplicate " + source[0].name() : "Duplicate entities", [&] {
+            for (Entity e : source)
+                if (e.valid()) copies.push_back(duplicateEntity(e));
+        });
+        ctx.setSelection(copies);
     }, "Ctrl+D", 0);
     dup.isEnabled = hasSelection;
+    dup.separatorBefore = true;
     r.command(std::move(dup));
     Command del = make("edit.delete", "Edit/Delete", [](EditorContext& ctx) {
-        Entity e = ctx.selected();
-        ctx.clearSelection();
-        ctx.scene().destroyEntity(e);
+        const auto victims = ctx.selection();
+        ctx.destroyEntities(victims.size() == 1 ? "Delete " + victims[0].name() : "Delete entities", victims);
     }, "Delete", 1);
     del.isEnabled = hasSelection;
     r.command(std::move(del));
@@ -127,18 +155,19 @@ void CoreCommandsPlugin::onRegister(Registry& r) {
     deselect.isEnabled = hasSelection;
     r.command(std::move(deselect));
 
-    // ---- Entity (also listed in the Hierarchy's context menu)
-    r.command(make("entity.empty", "Entity/Create Empty",
-                   [](EditorContext& ctx) { createMeshEntity(ctx, "Entity", {}); }, nullptr, 0));
-    r.command(make("entity.cube", "Entity/Create Cube",
-                   [](EditorContext& ctx) { createMeshEntity(ctx, "Cube", ctx.renderer().cube()); }, nullptr, 1));
-    r.command(make("entity.sphere", "Entity/Create Sphere",
-                   [](EditorContext& ctx) { createMeshEntity(ctx, "Sphere", ctx.renderer().sphere()); }, nullptr, 2));
-    r.command(make("entity.plane", "Entity/Create Plane",
-                   [](EditorContext& ctx) { createMeshEntity(ctx, "Plane", ctx.renderer().plane()); }, nullptr, 3));
+    // ---- Entity (also listed in the Hierarchy's context menu); each creation is one undo step.
+    auto create = [](const char* name, std::function<MeshHandle(EditorContext&)> mesh) {
+        return [name, mesh](EditorContext& ctx) {
+            ctx.recordCreation(std::string("Create ") + name,
+                               [&] { createMeshEntity(ctx, name, mesh ? mesh(ctx) : MeshHandle{}); });
+        };
+    };
+    r.command(make("entity.empty", "Entity/Create Empty", create("Entity", nullptr), nullptr, 0));
+    r.command(make("entity.cube", "Entity/Create Cube", create("Cube", [](EditorContext& c) { return c.renderer().cube(); }), nullptr, 1));
+    r.command(make("entity.sphere", "Entity/Create Sphere", create("Sphere", [](EditorContext& c) { return c.renderer().sphere(); }), nullptr, 2));
+    r.command(make("entity.plane", "Entity/Create Plane", create("Plane", [](EditorContext& c) { return c.renderer().plane(); }), nullptr, 3));
     Command light = make("entity.pointLight", "Entity/Create Point Light", [](EditorContext& ctx) {
-        Entity e = createMeshEntity(ctx, "Point Light", {});
-        e.add<PointLightComponent>();
+        ctx.recordCreation("Create Point Light", [&] { createMeshEntity(ctx, "Point Light", {}).add<PointLightComponent>(); });
     }, nullptr, 10);
     light.separatorBefore = true;
     r.command(std::move(light));
@@ -198,12 +227,15 @@ void CoreCommandsPlugin::drawPrompt(EditorContext& ctx) {
         switch (m_prompt) {
             case Prompt::Open: ok = ctx.openScene(m_path, &error); break;
             case Prompt::SaveAs: ok = ctx.saveScene(m_path, &error); break;
-            case Prompt::ImportGltf:
-                if (auto root = loadGltf(ctx.scene(), ctx.renderer(), m_path)) {
+            case Prompt::ImportGltf: {
+                std::optional<Entity> root;
+                ctx.recordCreation("Import glTF", [&] { root = loadGltf(ctx.scene(), ctx.renderer(), m_path); });
+                if (root) {
                     ctx.select(*root);
                     ok = true;
                 } else error = "import failed (see console)";
                 break;
+            }
             case Prompt::None: break;
         }
         if (ok) {
