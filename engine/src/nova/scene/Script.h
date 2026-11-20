@@ -75,10 +75,14 @@ struct ScriptComponent {
 template <typename S, typename... Args>
 S& Entity::addScript(Args&&... args) {
     static_assert(std::is_base_of_v<Script, S>, "S must derive from nova::Script");
+    return static_cast<S&>(attachScript(makeScope<S>(std::forward<Args>(args)...)));
+}
+
+inline Script& Entity::attachScript(Scope<Script> script) {
     auto& sc = registry().get_or_emplace<ScriptComponent>(m_handle);
-    auto script = makeScope<S>(std::forward<Args>(args)...);
-    S& ref = *script;
+    Script& ref = *script;
     ref.m_entity = *this;
+    ref.m_created = false;
     sc.scripts.push_back(std::move(script));
     return ref;
 }

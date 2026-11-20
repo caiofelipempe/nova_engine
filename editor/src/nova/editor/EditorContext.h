@@ -6,9 +6,10 @@
 #include "nova/editor/EditorCamera.h"
 #include "nova/editor/Signal.h"
 #include "nova/scene/Scene.h"
+#include "nova/scene/SceneSerializer.h"
 
-#include <utility>
-#include <vector>
+#include <filesystem>
+#include <string>
 
 namespace nova {
 class Application;
@@ -66,15 +67,32 @@ public:
     PlayState playState() const { return m_playState; }
     /// @brief True in Play or Pause (the simulation exists).
     bool isPlaying() const { return m_playState != PlayState::Edit; }
-    /// @brief Edit → Play: snapshots transforms and starts physics. Pause → Play: resumes.
+    /// @brief Edit → Play: snapshots the whole scene and starts physics. Pause → Play: resumes.
     void play();
     /// @brief Play → Pause (no-op otherwise).
     void pause();
-    /// @brief Play/Pause → Edit: stops physics and restores the transforms captured by play().
-    /// @note Entities created or destroyed during play are not restored yet (needs scene serialization).
+    /// @brief Play/Pause → Edit: stops physics and restores the scene exactly as it was at play()
+    ///        (entities created during play disappear, destroyed ones come back). The selection
+    ///        is kept by UUID.
     void stop();
     /// @brief Emitted after the play state changes.
     Signal<PlayState> playStateChanged;
+    /// @}
+
+    /// @name Scene files
+    /// @{
+    /// @brief Clears the scene (stopping play first) and forgets the file path.
+    void newScene();
+    /// @brief Loads a scene file (stopping play first). @return False on error (`error` filled).
+    bool openScene(const std::filesystem::path& path, std::string* error = nullptr);
+    /// @brief Saves to `path` and remembers it. Creates missing directories. @return False on error.
+    bool saveScene(const std::filesystem::path& path, std::string* error = nullptr);
+    /// @brief File the scene was last opened from / saved to (empty for a new scene).
+    const std::filesystem::path& scenePath() const { return m_scenePath; }
+    /// @brief Emitted after the scene's entities were replaced (new, open, or stop restoring the snapshot).
+    Signal<> sceneReloaded;
+    /// @brief How meshes are referenced in files (the editor sets mesh names via the renderer).
+    SerializeOptions fileOptions;
     /// @}
 
     /// @name Viewport camera and input
@@ -95,7 +113,8 @@ private:
     Registry* m_registry = nullptr;
     Entity m_selected;
     PlayState m_playState = PlayState::Edit;
-    std::vector<std::pair<entt::entity, TransformComponent>> m_snapshot;
+    std::string m_snapshot; // scene JSON captured by play()
+    std::filesystem::path m_scenePath;
     EditorCamera m_camera;
     bool m_inputCaptured = false;
 };

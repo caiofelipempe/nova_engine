@@ -6,6 +6,7 @@ find_package(EnTT CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_path(CGLTF_INCLUDE_DIRS "cgltf.h" REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 set(SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/nova)
 
@@ -17,6 +18,7 @@ file(GLOB_RECURSE NOVA_CORE_SOURCES CONFIGURE_DEPENDS
     ${SRC}/renderer/*.cpp  ${SRC}/renderer/*.h
     ${SRC}/scene/*.cpp     ${SRC}/scene/*.h
     ${SRC}/physics/*.cpp   ${SRC}/physics/*.h
+    ${SRC}/reflect/*.cpp   ${SRC}/reflect/*.h
     ${SRC}/assets/*.cpp    ${SRC}/assets/*.h
     ${SRC}/ui/*.cpp        ${SRC}/ui/*.h
     ${SRC}/Nova.h)
@@ -26,7 +28,8 @@ add_library(Nova::Engine ALIAS NovaEngine)
 target_include_directories(NovaEngine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src PRIVATE ${CGLTF_INCLUDE_DIRS})
 
 target_link_libraries(NovaEngine
-    PUBLIC  glm::glm EnTT::EnTT spdlog::spdlog imgui::imgui)
+    PUBLIC  glm::glm EnTT::EnTT spdlog::spdlog imgui::imgui
+    PRIVATE nlohmann_json::nlohmann_json)
 
 target_compile_definitions(NovaEngine PUBLIC
     GLM_FORCE_DEPTH_ZERO_TO_ONE

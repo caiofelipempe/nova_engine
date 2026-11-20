@@ -3,14 +3,19 @@
 /// @file
 /// @brief The editor's extension registry: panels, commands, component editors, plugins and UI hooks.
 
+#include "nova/core/Log.h"
 #include "nova/editor/Command.h"
 #include "nova/editor/Panel.h"
+#include "nova/reflect/Reflect.h"
 #include "nova/scene/Entity.h"
 
 #include <deque>
 #include <functional>
+#include <map>
 #include <string>
 #include <type_traits>
+#include <typeindex>
+#include <unordered_map>
 #include <vector>
 
 namespace nova::editor {
@@ -25,11 +30,15 @@ struct ComponentEditor {
     std::string name;                                 ///< Section title and "Add Component" label.
     std::function<bool(Entity)> has;                  ///< Whether the entity has the component (required).
     std::function<void(Entity)> add;                  ///< Adds it ("Add Component"); null = not addable.
-    std::function<void(Entity)> remove;               ///< Removes it (the section's Ã— button); null = not removable.
+    std::function<void(Entity)> remove;               ///< Removes it (the section's × button); null = not removable.
     std::function<bool(Entity)> canAdd;               ///< Extra condition to offer it in "Add Component".
     std::function<void(Entity, EditorContext&)> draw; ///< Draws the section's widgets.
     bool defaultOpen = true;                          ///< Section starts expanded.
 };
+
+/// @brief Custom inspector widget for a reflected field.
+/// @return True if the value changed.
+using FieldDrawer = std::function<bool(void* field, const reflect::FieldInfo& info, EditorContext& ctx)>;
 
 /// @brief A bundle of registrations (panels, commands, component editors...) enabled as a unit.
 ///
@@ -149,12 +158,61 @@ public:
         };
         return addComponentEditor(std::move(ed));
     }
+    /// @brief Registers an inspector generated from `T`'s reflection (see reflect::type).
+    ///
+    /// Every reflected component is registered automatically at startup; call this to control
+    /// the order or to tweak the generated entry:
+    /// @code
+    /// r.component<Health>().canAdd = [](nova::Entity e) { return e.has<Enemy>(); };
+    /// @endcode
+    template <typename T>
+    ComponentEditor& component() {
+        const reflect::TypeInfo* type = reflect::types().find<T>();
+        NOVA_VERIFY(type && type->isComponent, "Registry::component<T>(): T is not a reflected component");
+        return addComponentEditor(reflectedComponentEditor(*type));
+    }
+
+    /// @brief Inspector entry generated from a reflected component type.
+    static ComponentEditor reflectedComponentEditor(const reflect::TypeInfo& type);
+    /// @brief Inspector entry for a reflected script type ("Script: Name"): add/remove/edit fields.
+    static ComponentEditor reflectedScriptEditor(const reflect::TypeInfo& type);
+    /// @brief Registers inspector entries for every reflected component/script not registered yet
+    ///        (by name). Called by the editor after EditorApp::onSetup.
+    void addReflectedEditors();
+
     /// @brief Registers a fully custom component editor (replacing one with the same name).
     ComponentEditor& addComponentEditor(ComponentEditor editor);
     /// @brief Removes a component editor by name. @return False if not found.
     bool removeComponentEditor(const std::string& name);
     /// @brief Component editors in inspector order.
     const std::deque<ComponentEditor>& componentEditors() const { return m_componentEditors; }
+    /// @}
+
+    /// @name Field drawers (custom widgets inside generated inspectors)
+    /// @{
+    /// @brief Custom widget for every reflected field of C++ type `F`.
+    ///
+    /// `draw` is `bool(F& value, const reflect::FieldInfo& info, EditorContext& ctx)` and returns true on change.
+    /// @code
+    /// r.fieldDrawer<Range>([](Range& v, const auto& f, auto&) {
+    ///     return ImGui::DragFloatRange2(f.label.c_str(), &v.min, &v.max);
+    /// });
+    /// @endcode
+    template <typename F, typename Draw>
+    void fieldDrawer(Draw draw) {
+        m_typeDrawers[std::type_index(typeid(F))] = [d = std::move(draw)](void* p, const reflect::FieldInfo& f,
+                                                                         EditorContext& ctx) -> bool {
+            return d(*static_cast<F*>(p), f, ctx);
+        };
+    }
+    /// @brief Custom widget for one field of one reflected type (wins over type drawers).
+    /// @param typeName Reflected type name (e.g. "Health").
+    /// @param fieldName Field name (e.g. "current").
+    void fieldDrawer(const std::string& typeName, const std::string& fieldName, FieldDrawer draw) {
+        m_fieldDrawers[typeName + "." + fieldName] = std::move(draw);
+    }
+    /// @brief The drawer for a field (field-specific first, then by C++ type), or `nullptr`.
+    const FieldDrawer* findFieldDrawer(const reflect::TypeInfo& owner, const reflect::FieldInfo& field) const;
     /// @}
 
     /// @name UI hooks
@@ -183,6 +241,8 @@ private:
     std::vector<Scope<Panel>> m_panels;
     std::deque<Command> m_commands;                 // deque: references stay valid on append
     std::deque<ComponentEditor> m_componentEditors;
+    std::unordered_map<std::type_index, FieldDrawer> m_typeDrawers;
+    std::map<std::string, FieldDrawer> m_fieldDrawers;
     std::vector<std::function<void(EditorContext&)>> m_uiHooks;
     std::vector<std::function<void(EditorContext&)>> m_menuBarWidgets;
 };

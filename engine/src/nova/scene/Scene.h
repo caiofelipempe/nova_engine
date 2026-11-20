@@ -48,12 +48,14 @@ public:
 
     /// @name Entities
     /// @{
-    /// @brief Creates an entity with a NameComponent and a TransformComponent.
+    /// @brief Creates an entity with an IdComponent (new random UUID), a NameComponent and a TransformComponent.
     Entity createEntity(const std::string& name = "Entity");
     /// @brief Destroys an entity: runs its scripts' onDestroy and removes its physics body. Invalid entities are ignored.
     void destroyEntity(Entity entity);
     /// @brief First entity with the given name, or an invalid Entity.
     Entity findEntity(const std::string& name);
+    /// @brief The entity with this IdComponent UUID, or an invalid Entity.
+    Entity findEntityByUuid(u64 uuid);
     /// @brief Destroys every entity (the physics world, if any, keeps running empty).
     void clear();
     /// @brief First entity whose CameraComponent is primary, or an invalid Entity.
@@ -142,6 +144,8 @@ public:
 
     /// @brief Display name.
     const std::string& name() const { return m_name; }
+    /// @brief Renames the scene.
+    void setName(std::string name) { m_name = std::move(name); }
     /// @brief Accumulated update time in seconds.
     f32 time() const { return m_time; }
 

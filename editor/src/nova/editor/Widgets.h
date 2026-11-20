@@ -7,7 +7,30 @@
 
 #include <glm/glm.hpp>
 
+namespace nova::reflect {
+struct TypeInfo;
+struct FieldInfo;
+} // namespace nova::reflect
+
+namespace nova::editor {
+class EditorContext;
+}
+
 namespace nova::editor::widgets {
+
+/// @brief Draws widgets for every visible reflected field of `object` (the generated inspector).
+///
+/// Uses the Registry's field drawers when one matches (field-specific first, then by C++ type),
+/// otherwise a widget chosen by reflect::FieldKind and FieldAttrs (sliders for bounded numbers,
+/// color pickers, degrees, enum combos, mesh picker, nested structs as tree nodes).
+/// @param type Reflected type of `object`.
+/// @param object Pointer to the instance (component, script or struct).
+/// @param ctx Editor context (field drawers, renderer for mesh lists).
+/// @return True if any field changed.
+bool reflected(const reflect::TypeInfo& type, void* object, EditorContext& ctx);
+
+/// @brief Draws one reflected field (same rules as reflected()). @return True if it changed.
+bool reflectedField(const reflect::TypeInfo& owner, const reflect::FieldInfo& field, void* value, EditorContext& ctx);
 
 /// @brief Three colored X/Y/Z drag fields on one row with a label column.
 /// @param label Row label (also the ImGui id).

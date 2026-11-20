@@ -2,11 +2,15 @@
 
 #include "nova/assets/GltfLoader.h"
 #include "nova/core/Application.h"
+#include "nova/core/Log.h"
 #include "nova/editor/EditorContext.h"
+#include "nova/renderer/Renderer.h"
+#include "nova/scene/SceneSerializer.h"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <cstdio>
 
 namespace nova::editor::builtin {
 
@@ -30,6 +34,12 @@ Command make(const char* id, const char* menuPath, std::function<void(EditorCont
 }
 
 bool hasSelection(EditorContext& ctx) { return ctx.selected().valid(); }
+bool editing(EditorContext& ctx) { return !ctx.isPlaying(); }
+
+std::string defaultScenePath(EditorContext& ctx) {
+    if (!ctx.scenePath().empty()) return ctx.scenePath().string();
+    return "scenes/" + ctx.scene().name() + ".scene.json";
+}
 } // namespace
 
 Entity createMeshEntity(EditorContext& ctx, const std::string& name, MeshHandle mesh) {
@@ -40,26 +50,80 @@ Entity createMeshEntity(EditorContext& ctx, const std::string& name, MeshHandle 
     return e;
 }
 
+void CoreCommandsPlugin::requestPrompt(Prompt prompt, const std::string& initialPath) {
+    m_prompt = prompt;
+    m_openPrompt = true;
+    m_error.clear();
+    std::snprintf(m_path, sizeof(m_path), "%s", initialPath.c_str());
+}
+
 void CoreCommandsPlugin::onRegister(Registry& r) {
     // ---- File
-    r.command(make("file.importGltf", "File/Import glTF...", [this](EditorContext&) { m_openImport = true; }, "Ctrl+I"));
+    Command newScene = make("file.new", "File/New Scene", [](EditorContext& ctx) {
+        ctx.newScene();
+        Entity cam = ctx.scene().createEntity("Main Camera");
+        cam.add<CameraComponent>();
+        cam.transform().position = {0.0f, 2.0f, 8.0f};
+        cam.transform().lookAt({0.0f, 0.5f, 0.0f});
+        Entity sun = ctx.scene().createEntity("Sun");
+        sun.add<DirectionalLightComponent>();
+        sun.transform().rotation = {glm::radians(-45.0f), glm::radians(30.0f), 0.0f};
+    }, "Ctrl+N", 0);
+    newScene.isEnabled = editing;
+    r.command(std::move(newScene));
+
+    Command open = make("file.open", "File/Open Scene...",
+                        [this](EditorContext& ctx) { requestPrompt(Prompt::Open, defaultScenePath(ctx)); }, "Ctrl+O", 1);
+    open.isEnabled = editing;
+    r.command(std::move(open));
+
+    Command save = make("file.save", "File/Save Scene", [this](EditorContext& ctx) {
+        if (ctx.scenePath().empty()) {
+            requestPrompt(Prompt::SaveAs, defaultScenePath(ctx));
+            return;
+        }
+        std::string error;
+        if (ctx.saveScene(ctx.scenePath(), &error)) NOVA_CORE_INFO("Saved {}", ctx.scenePath().string());
+        else NOVA_CORE_ERROR("Save failed: {}", error);
+    }, "Ctrl+S", 2);
+    save.separatorBefore = true;
+    save.isEnabled = editing;
+    r.command(std::move(save));
+
+    Command saveAs = make("file.saveAs", "File/Save Scene As...",
+                          [this](EditorContext& ctx) { requestPrompt(Prompt::SaveAs, defaultScenePath(ctx)); },
+                          "Ctrl+Shift+S", 3);
+    saveAs.isEnabled = editing;
+    r.command(std::move(saveAs));
+
+    Command import = make("file.importGltf", "File/Import glTF...",
+                          [this](EditorContext&) { requestPrompt(Prompt::ImportGltf, ""); }, "Ctrl+I", 10);
+    import.separatorBefore = true;
+    r.command(std::move(import));
+
     Command exit = make("file.exit", "File/Exit", [](EditorContext& ctx) { ctx.app().quit(); }, nullptr, 100);
     exit.separatorBefore = true;
     r.command(std::move(exit));
 
     // ---- Edit
+    Command dup = make("edit.duplicate", "Edit/Duplicate", [](EditorContext& ctx) {
+        ctx.select(duplicateEntity(ctx.selected()));
+    }, "Ctrl+D", 0);
+    dup.isEnabled = hasSelection;
+    r.command(std::move(dup));
     Command del = make("edit.delete", "Edit/Delete", [](EditorContext& ctx) {
         Entity e = ctx.selected();
         ctx.clearSelection();
         ctx.scene().destroyEntity(e);
-    }, "Delete");
+    }, "Delete", 1);
     del.isEnabled = hasSelection;
     r.command(std::move(del));
     Command focus = make("edit.focus", "Edit/Focus Selection",
-                         [](EditorContext& ctx) { ctx.camera().focus(ctx.selected().transform().position); }, "F", 1);
+                         [](EditorContext& ctx) { ctx.camera().focus(ctx.selected().transform().position); }, "F", 2);
     focus.isEnabled = hasSelection;
+    focus.separatorBefore = true;
     r.command(std::move(focus));
-    Command deselect = make("edit.deselect", "Edit/Deselect", [](EditorContext& ctx) { ctx.clearSelection(); }, "Escape", 2);
+    Command deselect = make("edit.deselect", "Edit/Deselect", [](EditorContext& ctx) { ctx.clearSelection(); }, "Escape", 3);
     deselect.isEnabled = hasSelection;
     r.command(std::move(deselect));
 
@@ -102,28 +166,60 @@ void CoreCommandsPlugin::onRegister(Registry& r) {
         const ImVec4 color = s == PlayState::Edit ? ImVec4(0.6f, 0.6f, 0.65f, 1) : ImVec4(0.4f, 0.9f, 0.5f, 1);
         ImGui::TextColored(color, "%s", s == PlayState::Edit ? "EDIT" : s == PlayState::Play ? "PLAYING" : "PAUSED");
         ImGui::Separator();
+        ImGui::TextDisabled("%s", ctx.scenePath().empty() ? (ctx.scene().name() + " (unsaved)").c_str()
+                                                          : ctx.scenePath().string().c_str());
+        ImGui::Separator();
         ImGui::TextDisabled("%.0f FPS  %.2f ms", ctx.app().fps(), ctx.app().deltaTime() * 1000.0f);
     });
 
-    // ---- glTF import dialog
-    r.uiHook([this](EditorContext& ctx) {
-        if (m_openImport) {
-            ImGui::OpenPopup("Import glTF");
-            m_openImport = false;
+    r.uiHook([this](EditorContext& ctx) { drawPrompt(ctx); });
+}
+
+void CoreCommandsPlugin::drawPrompt(EditorContext& ctx) {
+    static constexpr const char* kTitles[] = {"", "Open Scene", "Save Scene As", "Import glTF"};
+    const char* title = kTitles[static_cast<int>(m_prompt)];
+    if (m_openPrompt) {
+        ImGui::OpenPopup(title);
+        m_openPrompt = false;
+    }
+    if (m_prompt == Prompt::None || !ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+
+    ImGui::TextUnformatted(m_prompt == Prompt::ImportGltf ? "Path to a .gltf or .glb file:"
+                                                          : "Scene file (.scene.json), relative to the editor folder:");
+    ImGui::SetNextItemWidth(520.0f);
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    const bool enter = ImGui::InputText("##path", m_path, sizeof(m_path), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (!m_error.empty()) ImGui::TextColored({1.0f, 0.4f, 0.4f, 1.0f}, "%s", m_error.c_str());
+
+    const char* action = m_prompt == Prompt::Open ? "Open" : m_prompt == Prompt::SaveAs ? "Save" : "Import";
+    if (ImGui::Button(action, {120, 0}) || enter) {
+        bool ok = false;
+        std::string error;
+        switch (m_prompt) {
+            case Prompt::Open: ok = ctx.openScene(m_path, &error); break;
+            case Prompt::SaveAs: ok = ctx.saveScene(m_path, &error); break;
+            case Prompt::ImportGltf:
+                if (auto root = loadGltf(ctx.scene(), ctx.renderer(), m_path)) {
+                    ctx.select(*root);
+                    ok = true;
+                } else error = "import failed (see console)";
+                break;
+            case Prompt::None: break;
         }
-        if (!ImGui::BeginPopupModal("Import glTF", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-        ImGui::TextUnformatted("Path to a .gltf or .glb file:");
-        ImGui::SetNextItemWidth(500.0f);
-        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-        ImGui::InputText("##path", m_importPath, sizeof(m_importPath));
-        if (ImGui::Button("Import", {120, 0})) {
-            if (auto root = loadGltf(ctx.scene(), ctx.renderer(), m_importPath)) ctx.select(*root);
+        if (ok) {
+            NOVA_CORE_INFO("{}: {}", action, m_path);
+            m_prompt = Prompt::None;
             ImGui::CloseCurrentPopup();
+        } else {
+            m_error = error;
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", {120, 0})) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    });
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", {120, 0})) {
+        m_prompt = Prompt::None;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 } // namespace nova::editor::builtin

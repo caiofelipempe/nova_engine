@@ -32,7 +32,10 @@
 #include "nova/scene/Entity.h"
 #include "nova/scene/GameLayer.h"
 #include "nova/scene/Scene.h"
+#include "nova/scene/SceneSerializer.h"
 #include "nova/scene/Script.h"
+
+#include "nova/reflect/Reflect.h"
 
 #include "nova/assets/GltfLoader.h"
 

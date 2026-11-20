@@ -1,6 +1,7 @@
 #include "nova/scene/Scene.h"
 
 #include <algorithm>
+#include <random>
 
 namespace nova {
 
@@ -19,11 +20,28 @@ Scene::~Scene() {
     m_physics.reset();
 }
 
+namespace {
+u64 newUuid() {
+    static std::mt19937_64 rng{std::random_device{}() ^ (u64(std::random_device{}()) << 32)};
+    u64 id = 0;
+    while (id == 0) id = rng(); // 0 means "no id"
+    return id;
+}
+} // namespace
+
 Entity Scene::createEntity(const std::string& name) {
     Entity e{m_registry.create(), this};
+    e.add<IdComponent>(newUuid());
     e.add<NameComponent>(name);
     e.add<TransformComponent>();
     return e;
+}
+
+Entity Scene::findEntityByUuid(u64 uuid) {
+    if (uuid == 0) return {};
+    for (auto [e, id] : m_registry.view<IdComponent>().each())
+        if (id.uuid == uuid) return {e, this};
+    return {};
 }
 
 void Scene::destroyEntity(Entity entity) {

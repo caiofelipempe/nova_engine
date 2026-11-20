@@ -186,6 +186,8 @@ public:
     MeshHandle plane() const { return m_plane; }
     /// @brief Name given at creation, or "<none>" for invalid handles.
     const std::string& meshName(MeshHandle mesh) const;
+    /// @brief First live mesh with this name (e.g. "Cube"), or an invalid handle.
+    MeshHandle findMesh(const std::string& name) const;
     /// @brief Every live mesh.
     std::vector<MeshHandle> meshes() const;
     /// @}

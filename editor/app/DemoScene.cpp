@@ -1,5 +1,7 @@
 #include "DemoScene.h"
 
+#include "ExamplePlugin.h"
+
 using namespace nova;
 
 namespace {
@@ -12,6 +14,7 @@ Entity primitive(Scene& scene, const std::string& name, MeshHandle mesh) {
 
 void buildDemoScene(editor::EditorContext& ctx) {
     Scene& scene = ctx.scene();
+    scene.setName("Demo");
     Renderer& r = ctx.renderer();
 
     Entity cam = scene.createEntity("Main Camera");
@@ -99,6 +102,7 @@ void buildDemoScene(editor::EditorContext& ctx) {
         lm.emissiveStrength = 12.0f;
         lamp.get<MeshComponent>().castShadows = false;
         lamp.add<PointLightComponent>(lamps[i].second, 25.0f, 9.0f);
+        lamp.addScript<Bob>().speed = 1.5f + i; // reflected script: editable, saved, restored on Stop
     }
 
     ctx.camera().position = {0.0f, 4.5f, 13.0f};

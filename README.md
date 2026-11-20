@@ -63,7 +63,7 @@ doxygen docs/Doxyfile             # referência da API em build/docs/html (reque
 
 A API pública é documentada no estilo Doxygen nos headers de `engine/src/nova/`. Com o Doxygen instalado, o CMake também cria o target `NovaDocs`.
 
-As dependências (manifest [vcpkg.json](vcpkg.json)) são instaladas automaticamente no configure: GLFW, Vulkan Memory Allocator, glm, EnTT, spdlog, Dear ImGui (docking), ImGuizmo, cgltf, Jolt Physics.
+As dependências (manifest [vcpkg.json](vcpkg.json)) são instaladas automaticamente no configure: GLFW, Vulkan Memory Allocator, glm, EnTT, spdlog, Dear ImGui (docking), ImGuizmo, cgltf, Jolt Physics, nlohmann-json.
 Em Debug, as validation layers do Vulkan ficam ligadas e as mensagens vão para o console e para `nova.log`.
 
 ## Arquitetura
@@ -74,8 +74,9 @@ engine/src/nova/
   platform/   Window (interface) + Input        → glfw/  (backend GLFW)
   rhi/        Device, CommandList (interfaces)  → vulkan/ (backend Vulkan)
   renderer/   Renderer, RenderView, Mesh — só fala com o RHI
-  scene/      Scene (EnTT), Entity, Components, Script, GameLayer
+  scene/      Scene (EnTT), Entity, Components, Script, GameLayer, SceneSerializer (JSON)
   physics/    PhysicsWorld (interface)          → jolt/ (backend Jolt)
+  reflect/    reflexão de tipos (componentes, scripts, structs, enums)
   assets/     glTF (cgltf)
   ui/         tema/fontes do ImGui
 engine/shaders/  GLSL → SPIR-V em build-time (glslc)
@@ -134,6 +135,25 @@ int main() { return nova::editor::run<MyGameEditor>(); }
 ```
 
 No CMake: `nova_add_editor(MyGameEditor editor/main.cpp ...)`. Guia com receitas: [docs/EDITOR.md](docs/EDITOR.md).
+
+## Reflexão e cenas
+
+Componentes e scripts são descritos **uma vez** com reflexão (API fluente, sem macros); a partir disso a engine e o editor derivam o inspetor, o *Add Component*, a serialização de cenas, o Play/Stop e o *Duplicate*:
+
+```cpp
+nova::reflect::type<Health>("Health")
+    .field("current", &Health::current, {.min = 0, .max = 1000})
+    .field("invulnerable", &Health::invulnerable, {.tooltip = "Ignores all damage"})
+    .component();
+
+nova::saveScene(scene, "levels/forest.scene.json", nova::SerializeOptions::fromRenderer(renderer));
+nova::loadScene(scene, "levels/forest.scene.json", nova::SerializeOptions::fromRenderer(renderer));
+```
+
+- Cenas em JSON legível e estável para diff (`"format": "nova.scene"`): enums e malhas por nome, floats curtos e exatos, ordem de campos preservada.
+- Toda entidade tem um UUID (`IdComponent`) que sobrevive a salvar/abrir e ao Play/Stop.
+- Arquivos antigos continuam abrindo: campos novos usam o padrão, componentes/scripts desconhecidos são ignorados com aviso.
+- Os componentes da engine são refletidos em [engine/src/nova/reflect/EngineTypes.cpp](engine/src/nova/reflect/EngineTypes.cpp).
 
 ## Física (Jolt Physics)
 

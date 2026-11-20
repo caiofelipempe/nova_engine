@@ -55,6 +55,17 @@ public:
     template <typename S, typename... Args>
     S& addScript(Args&&... args); // defined in Script.h
 
+    /// @brief Attaches an already created script (type-erased version of addScript; used by
+    ///        serialization and tools). Defined in Script.h.
+    /// @return Reference to the script, owned by the entity.
+    Script& attachScript(Scope<Script> script);
+
+    /// @brief The entity's stable UUID (IdComponent), 0 if it has none.
+    u64 uuid() const {
+        const auto* id = registry().try_get<IdComponent>(m_handle);
+        return id ? id->uuid : 0;
+    }
+
     /// @brief Shortcut for `get<TransformComponent>()`.
     TransformComponent& transform() { return get<TransformComponent>(); }
     /// @brief The entity's NameComponent value.

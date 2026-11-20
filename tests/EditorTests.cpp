@@ -226,14 +226,127 @@ void playPauseStop() {
     for (int i = 0; i < 30; ++i) f.scene.update(1.0f / 60.0f);
     CHECK(box.transform().position.y < fallen);
 
+    const u64 boxId = box.uuid();
+    f.ctx.select(box);
     f.ctx.stop();
     CHECK(f.ctx.playState() == PlayState::Edit && !f.scene.isSimulating());
-    CHECK(std::abs(box.transform().position.y - 5.0f) < 1e-4f); // restored from the snapshot at play()
+    // Stop rebuilds the scene from the snapshot: handles change, UUIDs don't.
+    Entity restored = f.scene.findEntityByUuid(boxId);
+    CHECK(restored.valid());
+    if (restored.valid()) CHECK(std::abs(restored.transform().position.y - 5.0f) < 1e-4f);
+    CHECK(f.ctx.selected() == restored); // selection follows the UUID
     CHECK((states == std::vector<PlayState>{PlayState::Play, PlayState::Pause, PlayState::Play, PlayState::Edit}));
 
     f.ctx.stop(); // no-op in Edit
     f.ctx.pause();
     CHECK(states.size() == 4);
+}
+
+struct Spinner : Script {
+    float speed = 1.0f;
+    void onUpdate(float dt) override { transform().rotation.y += speed * dt; }
+};
+
+void stopRestoresWholeScene() {
+    Fixture f;
+    reflect::type<Spinner>("TestSpinner").field("speed", &Spinner::speed).script();
+    Entity keep = f.scene.createEntity("Keep");
+    keep.addScript<Spinner>().speed = 3.0f;
+    Entity doomed = f.scene.createEntity("Doomed");
+    doomed.add<PointLightComponent>().intensity = 42.0f;
+    const u64 keepId = keep.uuid(), doomedId = doomed.uuid();
+    int reloads = 0;
+    f.ctx.sceneReloaded.connect([&] { ++reloads; });
+
+    f.ctx.play();
+    for (int i = 0; i < 10; ++i) f.scene.update(0.1f);
+    CHECK(keep.transform().rotation.y > 2.0f); // the script ran
+    f.scene.destroyEntity(doomed);             // gameplay destroys an entity
+    f.scene.createEntity("Spawned");            // ... and spawns another
+    f.ctx.stop();
+
+    CHECK(reloads == 1);
+    CHECK(!f.scene.findEntity("Spawned").valid());
+    Entity back = f.scene.findEntityByUuid(doomedId);
+    CHECK(back.valid() && back.has<PointLightComponent>() && back.get<PointLightComponent>().intensity == 42.0f);
+    Entity k = f.scene.findEntityByUuid(keepId);
+    CHECK(k.valid() && k.transform().rotation.y == 0.0f); // script effect undone
+    auto* sc = k.valid() ? k.tryGet<ScriptComponent>() : nullptr;
+    CHECK(sc && sc->scripts.size() == 1 && static_cast<Spinner&>(*sc->scripts[0]).speed == 3.0f); // script + field restored
+}
+
+void sceneFiles() {
+    Fixture f;
+    Entity e = f.scene.createEntity("Saved");
+    e.transform().position = {1, 2, 3};
+    const u64 savedId = e.uuid();
+    const auto path = std::filesystem::temp_directory_path() / "nova_editor_test" / "level.scene.json";
+    std::error_code ec;
+    std::filesystem::remove_all(path.parent_path(), ec);
+
+    std::string error;
+    CHECK(f.ctx.saveScene(path, &error)); // creates the directory
+    CHECK(f.ctx.scenePath() == path && f.scene.name() == "level");
+
+    f.ctx.newScene();
+    CHECK(f.scene.registry().view<IdComponent>().empty() && f.ctx.scenePath().empty());
+
+    CHECK(f.ctx.openScene(path, &error));
+    Entity loaded = f.scene.findEntity("Saved");
+    CHECK(loaded.valid() && loaded.uuid() == savedId);
+    if (loaded.valid()) CHECK(loaded.transform().position == glm::vec3(1, 2, 3));
+    CHECK(!f.ctx.openScene(path.parent_path() / "missing.scene.json", &error) && !error.empty());
+    std::filesystem::remove_all(path.parent_path(), ec);
+}
+
+struct Range {
+    float lo = 0, hi = 1;
+};
+struct Spawner {
+    Range delay;
+    int count = 3;
+};
+
+void reflectedInspectors() {
+    reflect::type<Range>("TestRange").field("lo", &Range::lo).field("hi", &Range::hi);
+    reflect::type<Spawner>("TestSpawner").field("delay", &Spawner::delay).field("count", &Spawner::count).component();
+    Fixture f;
+
+    // component<T>() builds the inspector entry from reflection.
+    ComponentEditor& ed = f.registry.component<Spawner>();
+    CHECK(ed.name == "Test Spawner");
+    Entity e = f.scene.createEntity("E");
+    CHECK(!ed.has(e));
+    ed.add(e);
+    CHECK(ed.has(e) && e.get<Spawner>().count == 3);
+    ed.remove(e);
+    CHECK(!e.has<Spawner>());
+
+    // addReflectedEditors registers the rest once, skips hidden ones (Id, Name) and keeps existing entries.
+    f.registry.addReflectedEditors();
+    const size_t n = f.registry.componentEditors().size();
+    f.registry.addReflectedEditors();
+    CHECK(f.registry.componentEditors().size() == n);
+    bool hasTransform = false, hasId = false, hasScript = false;
+    for (auto& c : f.registry.componentEditors()) {
+        hasTransform |= c.name == "Transform";
+        hasId |= c.name == "Id";
+        hasScript |= c.name.rfind("Script: ", 0) == 0;
+    }
+    CHECK(hasTransform && !hasId && hasScript);
+
+    // Field drawers: field-specific wins over type-based.
+    const reflect::TypeInfo& spawner = *reflect::types().find<Spawner>();
+    const reflect::FieldInfo& delay = *spawner.field("delay");
+    CHECK(f.registry.findFieldDrawer(spawner, delay) == nullptr);
+    f.registry.fieldDrawer<Range>([](Range&, const reflect::FieldInfo&, EditorContext&) { return false; });
+    const FieldDrawer* byType = f.registry.findFieldDrawer(spawner, delay);
+    CHECK(byType != nullptr);
+    f.registry.fieldDrawer("TestSpawner", "delay", [](void*, const reflect::FieldInfo&, EditorContext&) { return true; });
+    const FieldDrawer* byField = f.registry.findFieldDrawer(spawner, delay);
+    CHECK(byField != nullptr && byField != byType);
+    Range r;
+    CHECK((*byField)(&r, delay, f.ctx));
 }
 
 void signals() {
@@ -268,6 +381,9 @@ int main() {
         {"plugins", plugins},
         {"selection", selection},
         {"play / pause / stop", playPauseStop},
+        {"stop restores the whole scene", stopRestoresWholeScene},
+        {"scene files (new / save / open)", sceneFiles},
+        {"reflected inspectors and field drawers", reflectedInspectors},
         {"signals", signals},
     };
     for (auto& [name, fn] : tests) {

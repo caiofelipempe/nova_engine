@@ -236,6 +236,12 @@ const std::string& Renderer::meshName(MeshHandle h) const {
     return (h.id < m_meshes.size() && m_meshes[h.id].alive) ? m_meshes[h.id].name : none;
 }
 
+MeshHandle Renderer::findMesh(const std::string& name) const {
+    for (u32 i = 0; i < m_meshes.size(); ++i)
+        if (m_meshes[i].alive && m_meshes[i].name == name) return {i};
+    return {};
+}
+
 std::vector<MeshHandle> Renderer::meshes() const {
     std::vector<MeshHandle> out;
     for (u32 i = 0; i < m_meshes.size(); ++i)

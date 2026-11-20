@@ -66,20 +66,60 @@ Atalhos aceitam `Ctrl`, `Shift`, `Alt` + `A`–`Z`, `0`–`9`, `F1`–`F12`, `Sp
 
 Comandos em `Entity/...` também aparecem no menu de contexto da *Hierarchy*.
 
-### Componente do jogo no inspetor
+### Componente do jogo (reflexão — o caminho recomendado)
+
+Descreva o componente **uma vez**; inspetor, *Add Component*, salvar/abrir cena, Play/Stop e *Duplicate* funcionam sozinhos:
 
 ```cpp
-struct Health { float current = 100, max = 100; };
+struct Health { float current = 100, max = 100; bool invulnerable = false; };
 
-r.component<Health>("Health", [](Health& h) {
-    ImGui::DragFloat("Current", &h.current, 1.0f, 0.0f, h.max);
-    ImGui::DragFloat("Max", &h.max, 1.0f, 1.0f, 10000.0f);
+// uma vez, no início do main (antes de carregar cenas)
+nova::reflect::type<Health>("Health")
+    .field("current", &Health::current, {.min = 0, .max = 1000})
+    .field("max", &Health::max, {.min = 1, .max = 1000})
+    .field("invulnerable", &Health::invulnerable, {.tooltip = "Ignores all damage"})
+    .component();
+```
+
+- Tipos de campo: `bool`, `int`, `u32`, `u64`, `float`, `glm::vec2/3/4`, `std::string`, enums (`reflect::enumeration<E>("E").value("A", E::A)...`), `MeshHandle` e structs refletidas (aninhadas).
+- `FieldAttrs`: `min`/`max` (slider), `speed`, `degrees` (guarda radianos, edita graus), `color`, `readOnly`, `hidden` (salva, não mostra), `transient` (estado de runtime: nem salva nem mostra), `tooltip`, `label`.
+- O **nome do campo** é o que vai no arquivo: renomeá-lo quebra cenas salvas. Campos novos/removidos são tolerados (valores padrão / ignorados).
+- Para controlar a ordem no inspetor ou ajustar a entrada gerada: `r.component<Health>().canAdd = ...;`.
+
+### Script do jogo refletido
+
+```cpp
+struct Bob : nova::Script {
+    float amplitude = 0.3f, speed = 2.0f;
+    void onUpdate(float dt) override { /* ... */ }
+};
+nova::reflect::type<Bob>("Bob").field("amplitude", &Bob::amplitude).field("speed", &Bob::speed).script();
+```
+
+Aparece no inspetor como **Script: Bob** (adicionar, remover, editar campos), é salvo na cena e restaurado no Stop. Scripts não refletidos continuam funcionando, mas não são editáveis nem salvos.
+
+### Widget customizado (por tipo ou por campo)
+
+```cpp
+r.fieldDrawer<Range>([](Range& v, const nova::reflect::FieldInfo& f, auto&) {   // todo campo do tipo Range
+    return ImGui::DragFloatRange2(f.label.c_str(), &v.min, &v.max);
+});
+r.fieldDrawer("Health", "current", [](void* p, const auto& f, auto&) {          // só Health.current
+    return ImGui::SliderFloat(f.label.c_str(), static_cast<float*>(p), 0, 100);
 });
 ```
 
-- A função de desenho pode receber `(T&)`, `(T&, Entity)` ou `(T&, Entity, EditorContext&)`.
-- Ganha automaticamente: seção no *Inspector*, entrada em *Add Component* e botão de remover.
-- Personalize pelo retorno: `.add` (como criar), `.remove = nullptr` (não removível), `.canAdd` (condição), `.defaultOpen`.
+### Inspetor totalmente manual (quando a UI não é "um widget por campo")
+
+```cpp
+r.component<Health>("Health", [](Health& h) {
+    ImGui::ProgressBar(h.current / h.max);
+    ImGui::DragFloat("Current", &h.current, 1.0f, 0.0f, h.max);
+});
+```
+
+- A função pode receber `(T&)`, `(T&, Entity)` ou `(T&, Entity, EditorContext&)`; um editor manual com o mesmo nome substitui o gerado.
+- Personalize pelo retorno: `.add`, `.remove = nullptr`, `.canAdd`, `.defaultOpen`.
 
 ### Plugin (agrupar ferramentas)
 
@@ -103,7 +143,7 @@ void onAttach(EditorContext& ctx) override {
 void onDetach(EditorContext& ctx) override { ctx.selectionChanged.disconnect(m_id); }
 ```
 
-Sinais disponíveis: `selectionChanged(Entity)`, `playStateChanged(PlayState)`.
+Sinais disponíveis: `selectionChanged(Entity)`, `playStateChanged(PlayState)`, `sceneReloaded()` (novo, abrir, Stop — refaça caches de entidades aqui).
 
 ### Popups, sobreposições e barra de menus
 
@@ -128,7 +168,8 @@ if (auto* vp = r.findPanel<nova::editor::builtin::ViewportPanel>()) vp->useScene
 |---|---|
 | Cena | `ctx.scene()` (entidades, componentes, física, consultas) |
 | Seleção | `ctx.selected()`, `ctx.select(e)`, `ctx.clearSelection()` |
-| Modo de jogo | `ctx.play()`, `ctx.pause()`, `ctx.stop()`, `ctx.playState()` |
+| Modo de jogo | `ctx.play()`, `ctx.pause()`, `ctx.stop()`, `ctx.playState()` — o Stop restaura a cena inteira (entidades criadas somem, destruídas voltam); handles mudam, **UUIDs** (`entity.uuid()`, `scene.findEntityByUuid`) não |
+| Arquivos de cena | `ctx.newScene()`, `ctx.openScene(path)`, `ctx.saveScene(path)`, `ctx.scenePath()` |
 | Câmera do editor | `ctx.camera()` (`focus(pos)`, `position`, `yaw`, `pitch`) |
 | Engine | `ctx.app()`, `ctx.renderer()` |
 | Extensões | `ctx.registry()` (`execute("id")`, `findPanel<T>()`...) |
@@ -139,8 +180,9 @@ Widgets prontos com o visual do editor: `nova::editor::widgets::vec3`, `widgets:
 
 | Menu | Atalho |
 |---|---|
+| File/New Scene · Open Scene... · Save Scene · Save Scene As... | Ctrl+N · Ctrl+O · Ctrl+S · Ctrl+Shift+S |
 | File/Import glTF... | Ctrl+I |
-| Edit/Delete · Focus Selection · Deselect | Delete · F · Escape |
+| Edit/Duplicate · Delete · Focus Selection · Deselect | Ctrl+D · Delete · F · Escape |
 | Entity/Create Empty, Cube, Sphere, Plane, Point Light | — |
 | Play/Play · Pause · Stop | F5 · F6 · Shift+F5 |
 | View/Gizmo/Translate · Rotate · Scale · Local Space | W · E · R |

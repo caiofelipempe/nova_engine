@@ -20,6 +20,14 @@ namespace nova {
 
 class Script;
 
+/// @brief Stable identity of an entity (every entity has one).
+///
+/// Unlike the EnTT handle, the UUID survives saving/loading and editor Play/Stop, so it is what
+/// tools and files use to refer to an entity.
+struct IdComponent {
+    u64 uuid = 0; ///< Random 64-bit id assigned by Scene::createEntity (preserved by serialization).
+};
+
 /// @brief Display name of an entity (every entity has one).
 struct NameComponent {
     std::string name; ///< Name shown in the editor; also used by Scene::findEntity.

@@ -2,6 +2,7 @@
 
 #include "nova/core/Log.h"
 #include "nova/editor/EditorContext.h"
+#include "nova/editor/Widgets.h"
 
 #include <algorithm>
 
@@ -72,6 +73,65 @@ bool Registry::execute(const std::string& id) {
     if (!c || !c->enabled(m_context)) return false;
     c->execute(m_context);
     return true;
+}
+
+namespace {
+Script* findScript(Entity e, std::type_index type) {
+    auto* sc = e.tryGet<ScriptComponent>();
+    if (!sc) return nullptr;
+    for (auto& s : sc->scripts)
+        if (std::type_index(typeid(*s)) == type) return s.get();
+    return nullptr;
+}
+} // namespace
+
+ComponentEditor Registry::reflectedComponentEditor(const reflect::TypeInfo& type) {
+    ComponentEditor ed;
+    ed.name = type.displayName;
+    ed.has = type.has;
+    ed.add = type.add;
+    ed.remove = type.remove;
+    ed.draw = [&type](Entity e, EditorContext& ctx) { widgets::reflected(type, type.get(e), ctx); };
+    return ed;
+}
+
+ComponentEditor Registry::reflectedScriptEditor(const reflect::TypeInfo& type) {
+    ComponentEditor ed;
+    ed.name = "Script: " + type.displayName;
+    ed.has = [&type](Entity e) { return findScript(e, type.type) != nullptr; };
+    ed.add = [&type](Entity e) { e.attachScript(type.createScript()); };
+    ed.remove = [&type](Entity e) {
+        auto& scripts = e.get<ScriptComponent>().scripts;
+        auto it = std::find_if(scripts.begin(), scripts.end(),
+                               [&](const Scope<Script>& s) { return std::type_index(typeid(*s)) == type.type; });
+        if (it == scripts.end()) return;
+        scripts.erase(it);
+        if (scripts.empty()) e.remove<ScriptComponent>();
+    };
+    ed.draw = [&type](Entity e, EditorContext& ctx) {
+        if (Script* s = findScript(e, type.type)) widgets::reflected(type, s, ctx);
+    };
+    return ed;
+}
+
+void Registry::addReflectedEditors() {
+    auto registered = [this](const std::string& name) {
+        return std::any_of(m_componentEditors.begin(), m_componentEditors.end(),
+                           [&](const ComponentEditor& e) { return e.name == name; });
+    };
+    for (const reflect::TypeInfo* t : reflect::types().components())
+        if (!t->hideInInspector && !registered(t->displayName)) addComponentEditor(reflectedComponentEditor(*t));
+    for (const reflect::TypeInfo* t : reflect::types().scripts())
+        if (!registered("Script: " + t->displayName)) addComponentEditor(reflectedScriptEditor(*t));
+}
+
+const FieldDrawer* Registry::findFieldDrawer(const reflect::TypeInfo& owner, const reflect::FieldInfo& field) const {
+    if (!m_fieldDrawers.empty()) {
+        auto it = m_fieldDrawers.find(owner.name + "." + field.name);
+        if (it != m_fieldDrawers.end()) return &it->second;
+    }
+    auto it = m_typeDrawers.find(field.type);
+    return it != m_typeDrawers.end() ? &it->second : nullptr;
 }
 
 ComponentEditor& Registry::addComponentEditor(ComponentEditor editor) {

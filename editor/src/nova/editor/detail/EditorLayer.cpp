@@ -1,6 +1,7 @@
 #include "nova/editor/detail/EditorLayer.h"
 
 #include "nova/core/Log.h"
+#include "nova/renderer/Renderer.h"
 #include "nova/editor/builtin/CoreCommands.h"
 #include "nova/editor/builtin/CoreComponents.h"
 #include "nova/editor/builtin/CorePanels.h"
@@ -83,6 +84,9 @@ void EditorLayer::onAttach() {
     if (m_desc.builtinComponents) m_registry.plugin<builtin::CoreComponentsPlugin>();
 
     m_app->onSetup(m_registry);
+    // Every reflected component/script gets an inspector, unless one with that name was registered.
+    m_registry.addReflectedEditors();
+    m_context.fileOptions = SerializeOptions::fromRenderer(Application::get().renderer());
     m_registry.attachAll();
     m_app->onNewScene(m_context);
     NOVA_CORE_INFO("Editor ready: {} panels, {} commands, {} component editors", m_registry.panels().size(),

@@ -5,6 +5,20 @@
 using namespace nova;
 using namespace nova::editor;
 
+void reflectGameTypes() {
+    // Describing the types is all it takes: the inspector, "Add Component", scene files and
+    // editor Play/Stop all work from this.
+    reflect::type<ScoreTarget>("ScoreTarget")
+        .field("points", &ScoreTarget::points, {.min = 0, .max = 1000})
+        .field("active", &ScoreTarget::active)
+        .component();
+
+    reflect::type<Bob>("Bob")
+        .field("amplitude", &Bob::amplitude, {.min = 0.0f, .max = 3.0f})
+        .field("speed", &Bob::speed, {.speed = 0.05f, .tooltip = "Radians per second"})
+        .script();
+}
+
 namespace {
 
 // Panel: lists every ScoreTarget and lets you jump to it.
@@ -46,12 +60,6 @@ private:
 } // namespace
 
 void ExamplePlugin::onRegister(Registry& r) {
-    // Inspector support for a game component (also adds it to "Add Component").
-    r.component<ScoreTarget>("Score Target", [](ScoreTarget& t) {
-        ImGui::DragInt("Points", &t.points, 1.0f, 0, 1000);
-        ImGui::Checkbox("Active", &t.active);
-    });
-
     r.panel<ScoreTargetsPanel>();
 
     // Command: menu entry + shortcut + command palette, in one line.
@@ -59,5 +67,6 @@ void ExamplePlugin::onRegister(Registry& r) {
         Entity e = builtin::createMeshEntity(ctx, "Target", ctx.renderer().sphere());
         e.get<MeshComponent>().material.baseColor = {1.0f, 0.85f, 0.1f, 1.0f};
         e.add<ScoreTarget>();
+        e.addScript<Bob>();
     }, "Ctrl+T");
 }
