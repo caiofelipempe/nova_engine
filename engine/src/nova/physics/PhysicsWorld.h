@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <span>
 #include <vector>
 
 // Backend-agnostic 3D rigid body physics. The Jolt implementation lives in physics/jolt/;
@@ -52,12 +53,21 @@ struct BodyId {
     bool operator==(const BodyId&) const = default;
 };
 
-struct RaycastHit {
+// Result of a raycast or a sweep (a shape moved along a direction, a.k.a. shape cast).
+struct QueryHit {
     BodyId body;
     u64 userData = 0;
-    glm::vec3 point{0.0f};
-    glm::vec3 normal{0.0f};
-    f32 distance = 0.0f;
+    glm::vec3 point{0.0f};  // contact point on the hit body (world space)
+    glm::vec3 normal{0.0f}; // surface normal of the hit body, pointing back towards the query
+    f32 distance = 0.0f;    // distance travelled along the direction until contact
+    f32 fraction = 0.0f;    // distance / maxDistance; 0 = already overlapping at the start
+};
+using RaycastHit = QueryHit;
+using SweepHit = QueryHit;
+
+struct QueryFilter {
+    BodyId ignoreBody;        // e.g. the caster itself
+    bool includeSensors = false;
 };
 
 // A pair of bodies that started touching during the last step.
@@ -102,8 +112,32 @@ public:
     // Advances the simulation by exactly `dt` (callers use a fixed timestep).
     virtual void step(f32 dt) = 0;
 
-    virtual bool raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance,
-                         RaycastHit& hit) const = 0;
+    // ---- queries
+    virtual bool raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance, RaycastHit& hit,
+                         const QueryFilter& filter = {}) const = 0;
+
+    // Sweep test: moves `shape` (posed at position/rotation) along `direction` up to `maxDistance`
+    // against the whole world and returns the closest hit.
+    virtual bool sweep(const ShapeDesc& shape, const glm::vec3& position, const glm::quat& rotation,
+                       const glm::vec3& direction, f32 maxDistance, SweepHit& hit,
+                       const QueryFilter& filter = {}) const = 0;
+    // Same sweep, every body hit along the way (one hit per body), closest first.
+    virtual std::vector<SweepHit> sweepAll(const ShapeDesc& shape, const glm::vec3& position,
+                                           const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                           const QueryFilter& filter = {}) const = 0;
+    // Sweeps an existing body's own shape from its current pose, ignoring itself
+    // ("will this body hit something if it moves there?").
+    virtual bool sweepBody(BodyId body, const glm::vec3& direction, f32 maxDistance, SweepHit& hit,
+                           const QueryFilter& filter = {}) const = 0;
+
+    // Sweep tested only against the listed bodies (no broadphase over the rest of the world).
+    // Every listed body is tested, sensors included; invalid/removed ids are skipped.
+    virtual bool sweepAgainst(const ShapeDesc& shape, const glm::vec3& position, const glm::quat& rotation,
+                              const glm::vec3& direction, f32 maxDistance, std::span<const BodyId> bodies,
+                              SweepHit& hit) const = 0;
+    virtual std::vector<SweepHit> sweepAllAgainst(const ShapeDesc& shape, const glm::vec3& position,
+                                                  const glm::quat& rotation, const glm::vec3& direction,
+                                                  f32 maxDistance, std::span<const BodyId> bodies) const = 0;
 
     // Contacts that began during the steps since the last call.
     virtual std::vector<ContactEvent> drainContactEvents() = 0;

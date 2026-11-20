@@ -5,16 +5,19 @@
 #include "nova/scene/Script.h"
 
 #include <optional>
+#include <span>
 #include <string>
 
 namespace nova {
 
-struct SceneRaycastHit {
+// Result of a scene raycast / sweep.
+struct SceneHit {
     Entity entity;
-    glm::vec3 point{0.0f};
-    glm::vec3 normal{0.0f};
-    f32 distance = 0.0f;
+    glm::vec3 point{0.0f};  // contact point on the hit entity
+    glm::vec3 normal{0.0f}; // surface normal, pointing back towards the query
+    f32 distance = 0.0f;    // distance travelled until contact (0 = overlapping at start)
 };
+using SceneRaycastHit = SceneHit;
 
 class Scene : NonCopyable {
 public:
@@ -44,8 +47,35 @@ public:
     glm::vec3 linearVelocity(Entity e);
     // Pushes the ECS transform into the body (teleport), e.g. after editing it in a gizmo.
     void syncTransformToPhysics(Entity e);
-    std::optional<SceneRaycastHit> raycast(const glm::vec3& origin, const glm::vec3& direction,
-                                           f32 maxDistance = 1000.0f);
+
+    // ---- queries (require isSimulating()); `ignore` skips one entity, e.g. the caller
+    std::optional<SceneHit> raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance = 1000.0f,
+                                    Entity ignore = {});
+    // Sweep tests: move a shape along `direction` and report what it would hit first.
+    std::optional<SceneHit> sweepSphere(const glm::vec3& origin, f32 radius, const glm::vec3& direction,
+                                        f32 maxDistance = 1000.0f, Entity ignore = {});
+    std::optional<SceneHit> sweepBox(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation,
+                                     const glm::vec3& direction, f32 maxDistance = 1000.0f, Entity ignore = {});
+    std::optional<SceneHit> sweepCapsule(const glm::vec3& center, f32 radius, f32 halfHeight,
+                                         const glm::quat& rotation, const glm::vec3& direction,
+                                         f32 maxDistance = 1000.0f, Entity ignore = {});
+    std::optional<SceneHit> sweep(const physics::ShapeDesc& shape, const glm::vec3& position,
+                                  const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance = 1000.0f,
+                                  Entity ignore = {});
+    // Every entity along the sweep, closest first.
+    std::vector<SceneHit> sweepAll(const physics::ShapeDesc& shape, const glm::vec3& position,
+                                   const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance = 1000.0f,
+                                   Entity ignore = {});
+    // Sweeps the entity's own collider from where it is now ("if I move this way, what do I hit?").
+    std::optional<SceneHit> sweepEntity(Entity entity, const glm::vec3& direction, f32 maxDistance = 1000.0f);
+
+    // Sweeps tested only against the given entities (those without a rigid body are skipped).
+    std::optional<SceneHit> sweepAgainst(const physics::ShapeDesc& shape, const glm::vec3& position,
+                                         const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                         std::span<const Entity> targets);
+    std::vector<SceneHit> sweepAllAgainst(const physics::ShapeDesc& shape, const glm::vec3& position,
+                                          const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                          std::span<const Entity> targets);
 
     // Fills `out` from the ECS. Uses the primary CameraComponent unless `cameraOverride` is set
     // (e.g. an editor camera). Returns false if there is no camera.
@@ -65,6 +95,9 @@ private:
     void createBody(entt::entity e);
     void onRigidBodyDestroyed(entt::registry& registry, entt::entity e);
     physics::BodyId bodyOf(Entity e);
+    physics::QueryFilter filterIgnoring(Entity e);
+    SceneHit toSceneHit(const physics::QueryHit& hit);
+    std::vector<physics::BodyId> bodiesOf(std::span<const Entity> entities);
 
     std::string m_name;
     entt::registry m_registry;

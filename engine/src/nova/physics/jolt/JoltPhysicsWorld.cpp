@@ -1,4 +1,4 @@
-#include "nova/physics/jolt/JoltPhysicsWorld.h"
+﻿#include "nova/physics/jolt/JoltPhysicsWorld.h"
 
 #include "nova/core/Log.h"
 
@@ -11,7 +11,10 @@
 #include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
+#include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -23,6 +26,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 namespace nova::physics {
@@ -176,6 +180,21 @@ JPH::ShapeRefC buildShape(const ShapeDesc& s) {
     return shape;
 }
 
+// Applies QueryFilter (ignored body, sensors). Runs with the body already locked by Jolt.
+class QueryBodyFilter final : public JPH::BodyFilter {
+public:
+    explicit QueryBodyFilter(const QueryFilter& f) : m_filter(f) {}
+    bool ShouldCollide(const JPH::BodyID& id) const override {
+        return !m_filter.ignoreBody || id.GetIndexAndSequenceNumber() != m_filter.ignoreBody.value;
+    }
+    bool ShouldCollideLocked(const JPH::Body& body) const override {
+        return m_filter.includeSensors || !body.IsSensor();
+    }
+
+private:
+    QueryFilter m_filter;
+};
+
 } // namespace
 
 // ------------------------------------------------------------------ Impl --
@@ -309,15 +328,19 @@ void JoltPhysicsWorld::step(f32 dt) {
 }
 
 bool JoltPhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance,
-                               RaycastHit& hit) const {
+                               RaycastHit& hit, const QueryFilter& filter) const {
+    if (glm::dot(direction, direction) < 1e-12f || maxDistance <= 0.0f) return false;
     glm::vec3 dir = glm::normalize(direction);
     JPH::RRayCast ray{toJR(origin), toJ(dir * maxDistance)};
     JPH::RayCastResult result;
-    if (!m_impl->system.GetNarrowPhaseQuery().CastRay(ray, result)) return false;
+    QueryBodyFilter bodyFilter(filter);
+    if (!m_impl->system.GetNarrowPhaseQuery().CastRay(ray, result, {}, {}, bodyFilter)) return false;
 
     JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
+    hit = {};
     hit.body = {result.mBodyID.GetIndexAndSequenceNumber()};
     hit.point = toG(point);
+    hit.fraction = result.mFraction;
     hit.distance = result.mFraction * maxDistance;
     JPH::BodyLockRead lock(m_impl->system.GetBodyLockInterface(), result.mBodyID);
     if (lock.Succeeded()) {
@@ -326,6 +349,157 @@ bool JoltPhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& directi
         hit.normal = toG(body.GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point));
     }
     return true;
+}
+
+namespace {
+
+// A sweep ready to run: the moving shape, its path and settings. It can be tested against the
+// whole world (broadphase + narrowphase) or against an explicit list of bodies.
+struct PreparedSweep {
+    JPH::RShapeCast cast;
+    JPH::ShapeCastSettings settings;
+    JPH::RVec3 baseOffset; // hit positions are reported relative to this (large-world precision)
+    f32 maxDistance;
+};
+
+std::optional<PreparedSweep> prepareSweep(const JPH::Shape* shape, const JPH::RMat44& transform,
+                                          const glm::vec3& direction, f32 maxDistance) {
+    if (!shape || glm::dot(direction, direction) < 1e-12f || maxDistance <= 0.0f) return std::nullopt;
+    JPH::RShapeCast cast = JPH::RShapeCast::sFromWorldTransform(shape, JPH::Vec3::sOne(), transform,
+                                                                toJ(glm::normalize(direction) * maxDistance));
+    JPH::ShapeCastSettings settings;
+    settings.mBackFaceModeTriangles = JPH::EBackFaceMode::IgnoreBackFaces;
+    settings.mBackFaceModeConvex = JPH::EBackFaceMode::IgnoreBackFaces;
+    settings.mReturnDeepestPoint = true; // meaningful point/normal when starting in contact
+    JPH::RVec3 base = cast.mCenterOfMassStart.GetTranslation();
+    return PreparedSweep{cast, settings, base, maxDistance};
+}
+
+template <typename Collector>
+void sweepWorld(const JPH::PhysicsSystem& system, const PreparedSweep& s, const QueryFilter& filter,
+                Collector& collector) {
+    QueryBodyFilter bodyFilter(filter);
+    system.GetNarrowPhaseQuery().CastShape(s.cast, s.settings, s.baseOffset, collector, {}, {}, bodyFilter);
+}
+
+template <typename Collector>
+void sweepBodies(const JPH::PhysicsSystem& system, const PreparedSweep& s, std::span<const BodyId> bodies,
+                 Collector& collector) {
+    const JPH::BodyInterface& bi = system.GetBodyInterface();
+    for (BodyId id : bodies) {
+        if (!id) continue;
+        // Snapshot of the body's shape + pose (empty for removed/invalid ids). Hits carry its BodyID.
+        JPH::TransformedShape ts = bi.GetTransformedShape(toJ(id));
+        if (ts.mShape == nullptr) continue;
+        ts.CastShape(s.cast, s.settings, s.baseOffset, collector);
+        if (collector.ShouldEarlyOut()) break;
+    }
+}
+
+QueryHit toQueryHit(const JPH::PhysicsSystem& system, const JPH::ShapeCastResult& r, const PreparedSweep& s) {
+    QueryHit hit;
+    hit.body = {r.mBodyID2.GetIndexAndSequenceNumber()};
+    hit.fraction = r.mFraction;
+    hit.distance = r.mFraction * s.maxDistance;
+    hit.point = toG(s.baseOffset + r.mContactPointOn2);
+    // Penetration axis points from the swept shape into the hit body; the surface normal is its opposite.
+    JPH::Vec3 axis = r.mPenetrationAxis;
+    hit.normal = axis.LengthSq() > 1e-12f ? -toG(axis.Normalized()) : glm::vec3(0.0f);
+    JPH::BodyLockRead lock(system.GetBodyLockInterface(), r.mBodyID2);
+    if (lock.Succeeded()) hit.userData = lock.GetBody().GetUserData();
+    return hit;
+}
+
+// Sorted, one hit per body (compound/mesh bodies can report several sub-shape hits).
+std::vector<SweepHit> collectAll(const JPH::PhysicsSystem& system,
+                                 JPH::AllHitCollisionCollector<JPH::CastShapeCollector>& collector,
+                                 const PreparedSweep& s) {
+    collector.Sort();
+    std::vector<SweepHit> hits;
+    for (const JPH::ShapeCastResult& r : collector.mHits) {
+        BodyId id{r.mBodyID2.GetIndexAndSequenceNumber()};
+        if (std::any_of(hits.begin(), hits.end(), [&](const SweepHit& h) { return h.body == id; })) continue;
+        hits.push_back(toQueryHit(system, r, s));
+    }
+    return hits;
+}
+
+JPH::RMat44 poseMatrix(const glm::vec3& position, const glm::quat& rotation) {
+    return JPH::RMat44::sRotationTranslation(toJ(rotation), toJR(position));
+}
+
+} // namespace
+
+bool JoltPhysicsWorld::sweep(const ShapeDesc& shapeDesc, const glm::vec3& position, const glm::quat& rotation,
+                             const glm::vec3& direction, f32 maxDistance, SweepHit& hit,
+                             const QueryFilter& filter) const {
+    JPH::ShapeRefC shape = buildShape(shapeDesc);
+    auto s = prepareSweep(shape, poseMatrix(position, rotation), direction, maxDistance);
+    if (!s) return false;
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+    sweepWorld(m_impl->system, *s, filter, collector);
+    if (!collector.HadHit()) return false;
+    hit = toQueryHit(m_impl->system, collector.mHit, *s);
+    return true;
+}
+
+std::vector<SweepHit> JoltPhysicsWorld::sweepAll(const ShapeDesc& shapeDesc, const glm::vec3& position,
+                                                 const glm::quat& rotation, const glm::vec3& direction,
+                                                 f32 maxDistance, const QueryFilter& filter) const {
+    JPH::ShapeRefC shape = buildShape(shapeDesc);
+    auto s = prepareSweep(shape, poseMatrix(position, rotation), direction, maxDistance);
+    if (!s) return {};
+    JPH::AllHitCollisionCollector<JPH::CastShapeCollector> collector;
+    sweepWorld(m_impl->system, *s, filter, collector);
+    return collectAll(m_impl->system, collector, *s);
+}
+
+bool JoltPhysicsWorld::sweepBody(BodyId body, const glm::vec3& direction, f32 maxDistance, SweepHit& hit,
+                                 const QueryFilter& filter) const {
+    if (!body) return false;
+    // Copy shape + pose under the lock, then query unlocked (the query takes its own body locks).
+    JPH::ShapeRefC shape;
+    JPH::RMat44 transform;
+    {
+        JPH::BodyLockRead lock(m_impl->system.GetBodyLockInterface(), toJ(body));
+        if (!lock.Succeeded()) return false;
+        shape = lock.GetBody().GetShape();
+        transform = lock.GetBody().GetWorldTransform();
+    }
+    auto s = prepareSweep(shape, transform, direction, maxDistance);
+    if (!s) return false;
+
+    QueryFilter f = filter;
+    f.ignoreBody = body;
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+    sweepWorld(m_impl->system, *s, f, collector);
+    if (!collector.HadHit()) return false;
+    hit = toQueryHit(m_impl->system, collector.mHit, *s);
+    return true;
+}
+
+bool JoltPhysicsWorld::sweepAgainst(const ShapeDesc& shapeDesc, const glm::vec3& position,
+                                    const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                    std::span<const BodyId> bodies, SweepHit& hit) const {
+    JPH::ShapeRefC shape = buildShape(shapeDesc);
+    auto s = prepareSweep(shape, poseMatrix(position, rotation), direction, maxDistance);
+    if (!s) return false;
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+    sweepBodies(m_impl->system, *s, bodies, collector);
+    if (!collector.HadHit()) return false;
+    hit = toQueryHit(m_impl->system, collector.mHit, *s);
+    return true;
+}
+
+std::vector<SweepHit> JoltPhysicsWorld::sweepAllAgainst(const ShapeDesc& shapeDesc, const glm::vec3& position,
+                                                        const glm::quat& rotation, const glm::vec3& direction,
+                                                        f32 maxDistance, std::span<const BodyId> bodies) const {
+    JPH::ShapeRefC shape = buildShape(shapeDesc);
+    auto s = prepareSweep(shape, poseMatrix(position, rotation), direction, maxDistance);
+    if (!s) return {};
+    JPH::AllHitCollisionCollector<JPH::CastShapeCollector> collector;
+    sweepBodies(m_impl->system, *s, bodies, collector);
+    return collectAll(m_impl->system, collector, *s);
 }
 
 std::vector<ContactEvent> JoltPhysicsWorld::drainContactEvents() {

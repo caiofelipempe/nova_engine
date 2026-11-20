@@ -30,8 +30,21 @@ public:
     glm::vec3 gravity() const override;
 
     void step(f32 dt) override;
-    bool raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance,
-                 RaycastHit& hit) const override;
+    bool raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance, RaycastHit& hit,
+                 const QueryFilter& filter) const override;
+    bool sweep(const ShapeDesc& shape, const glm::vec3& position, const glm::quat& rotation,
+               const glm::vec3& direction, f32 maxDistance, SweepHit& hit, const QueryFilter& filter) const override;
+    std::vector<SweepHit> sweepAll(const ShapeDesc& shape, const glm::vec3& position, const glm::quat& rotation,
+                                   const glm::vec3& direction, f32 maxDistance,
+                                   const QueryFilter& filter) const override;
+    bool sweepBody(BodyId body, const glm::vec3& direction, f32 maxDistance, SweepHit& hit,
+                   const QueryFilter& filter) const override;
+    bool sweepAgainst(const ShapeDesc& shape, const glm::vec3& position, const glm::quat& rotation,
+                      const glm::vec3& direction, f32 maxDistance, std::span<const BodyId> bodies,
+                      SweepHit& hit) const override;
+    std::vector<SweepHit> sweepAllAgainst(const ShapeDesc& shape, const glm::vec3& position,
+                                          const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                          std::span<const BodyId> bodies) const override;
     std::vector<ContactEvent> drainContactEvents() override;
 
 private:

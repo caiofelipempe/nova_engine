@@ -213,11 +213,108 @@ void Scene::syncTransformToPhysics(Entity e) {
     }
 }
 
-std::optional<SceneRaycastHit> Scene::raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance) {
+// ----------------------------------------------------------------- queries --
+physics::QueryFilter Scene::filterIgnoring(Entity e) {
+    physics::QueryFilter f;
+    if (e.valid())
+        if (auto* rb = e.tryGet<RigidBodyComponent>()) f.ignoreBody = rb->body;
+    return f;
+}
+
+SceneHit Scene::toSceneHit(const physics::QueryHit& hit) {
+    return {{fromUserData(hit.userData), this}, hit.point, hit.normal, hit.distance};
+}
+
+std::optional<SceneHit> Scene::raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance,
+                                       Entity ignore) {
     if (!m_physics) return std::nullopt;
     physics::RaycastHit hit;
-    if (!m_physics->raycast(origin, direction, maxDistance, hit)) return std::nullopt;
-    return SceneRaycastHit{{fromUserData(hit.userData), this}, hit.point, hit.normal, hit.distance};
+    if (!m_physics->raycast(origin, direction, maxDistance, hit, filterIgnoring(ignore))) return std::nullopt;
+    return toSceneHit(hit);
+}
+
+std::optional<SceneHit> Scene::sweep(const physics::ShapeDesc& shape, const glm::vec3& position,
+                                     const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                     Entity ignore) {
+    if (!m_physics) return std::nullopt;
+    physics::SweepHit hit;
+    if (!m_physics->sweep(shape, position, rotation, direction, maxDistance, hit, filterIgnoring(ignore)))
+        return std::nullopt;
+    return toSceneHit(hit);
+}
+
+std::vector<SceneHit> Scene::sweepAll(const physics::ShapeDesc& shape, const glm::vec3& position,
+                                      const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                      Entity ignore) {
+    std::vector<SceneHit> out;
+    if (!m_physics) return out;
+    for (const auto& h : m_physics->sweepAll(shape, position, rotation, direction, maxDistance, filterIgnoring(ignore)))
+        out.push_back(toSceneHit(h));
+    return out;
+}
+
+std::optional<SceneHit> Scene::sweepSphere(const glm::vec3& origin, f32 radius, const glm::vec3& direction,
+                                           f32 maxDistance, Entity ignore) {
+    physics::ShapeDesc s;
+    s.type = physics::ShapeType::Sphere;
+    s.radius = radius;
+    return sweep(s, origin, glm::quat(1, 0, 0, 0), direction, maxDistance, ignore);
+}
+
+std::optional<SceneHit> Scene::sweepBox(const glm::vec3& center, const glm::vec3& halfExtents,
+                                        const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                        Entity ignore) {
+    physics::ShapeDesc s;
+    s.type = physics::ShapeType::Box;
+    s.halfExtents = halfExtents;
+    return sweep(s, center, rotation, direction, maxDistance, ignore);
+}
+
+std::optional<SceneHit> Scene::sweepCapsule(const glm::vec3& center, f32 radius, f32 halfHeight,
+                                            const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                            Entity ignore) {
+    physics::ShapeDesc s;
+    s.type = physics::ShapeType::Capsule;
+    s.radius = radius;
+    s.halfHeight = halfHeight;
+    return sweep(s, center, rotation, direction, maxDistance, ignore);
+}
+
+std::optional<SceneHit> Scene::sweepEntity(Entity entity, const glm::vec3& direction, f32 maxDistance) {
+    physics::BodyId body = bodyOf(entity);
+    if (!body) return std::nullopt;
+    physics::SweepHit hit;
+    if (!m_physics->sweepBody(body, direction, maxDistance, hit)) return std::nullopt;
+    return toSceneHit(hit);
+}
+
+std::vector<physics::BodyId> Scene::bodiesOf(std::span<const Entity> entities) {
+    std::vector<physics::BodyId> ids;
+    ids.reserve(entities.size());
+    for (Entity e : entities)
+        if (physics::BodyId b = bodyOf(e)) ids.push_back(b);
+    return ids;
+}
+
+std::optional<SceneHit> Scene::sweepAgainst(const physics::ShapeDesc& shape, const glm::vec3& position,
+                                            const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                            std::span<const Entity> targets) {
+    if (!m_physics) return std::nullopt;
+    std::vector<physics::BodyId> bodies = bodiesOf(targets);
+    physics::SweepHit hit;
+    if (!m_physics->sweepAgainst(shape, position, rotation, direction, maxDistance, bodies, hit)) return std::nullopt;
+    return toSceneHit(hit);
+}
+
+std::vector<SceneHit> Scene::sweepAllAgainst(const physics::ShapeDesc& shape, const glm::vec3& position,
+                                             const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                             std::span<const Entity> targets) {
+    std::vector<SceneHit> out;
+    if (!m_physics) return out;
+    std::vector<physics::BodyId> bodies = bodiesOf(targets);
+    for (const auto& h : m_physics->sweepAllAgainst(shape, position, rotation, direction, maxDistance, bodies))
+        out.push_back(toSceneHit(h));
+    return out;
 }
 
 Entity Scene::primaryCamera() {

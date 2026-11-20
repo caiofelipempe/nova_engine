@@ -29,6 +29,14 @@
             "problemMatcher": "$msCompile"
         },
         {
+            "label": "test",
+            "type": "shell",
+            "command": "ctest --preset debug",
+            "dependsOn": "build debug",
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
             "label": "clean",
             "type": "shell",
             "command": "cmake --build --preset debug --target clean; cmake --build --preset release --target clean",

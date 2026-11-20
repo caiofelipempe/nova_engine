@@ -57,6 +57,7 @@ cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
 build\bin\Debug\Sandbox.exe
+ctest --preset debug              # testes headless (física)
 ```
 
 As dependências (manifest [vcpkg.json](vcpkg.json)) são instaladas automaticamente no configure: GLFW, Vulkan Memory Allocator, glm, EnTT, spdlog, Dear ImGui (docking), ImGuizmo, cgltf, Jolt Physics.
@@ -111,6 +112,23 @@ struct Bomb : nova::Script {                            // eventos de colisão n
     void onCollision(nova::Entity other, const glm::vec3& point) override { /* ... */ }
 };
 ```
+
+**Consultas (queries):**
+
+```cpp
+scene().raycast(origin, dir, maxDist, ignoreEntity);
+// Sweep tests (shape casts): movem uma forma ao longo de uma direção e reportam o primeiro contato
+scene().sweepSphere(origin, radius, dir);
+scene().sweepBox(center, halfExtents, rotation, dir);
+scene().sweepCapsule(center, radius, halfHeight, rotation, dir);
+scene().sweepAll(shapeDesc, pos, rot, dir);                    // todos ao longo do caminho, mais próximo primeiro
+scene().sweepEntity(player, velocity, dist);                   // varre o collider da própria entidade, ignorando-a
+// Contra uma lista específica (sem broadphase no resto do mundo)
+scene().sweepAgainst(shapeDesc, pos, rot, dir, dist, targets);     // std::span<const Entity>
+scene().sweepAllAgainst(shapeDesc, pos, rot, dir, dist, targets);
+```
+
+Cada hit traz `entity`, `point`, `normal` (voltada para quem consultou) e `distance` (0 = já encostado no início). No backend, `PhysicsWorld::sweep/sweepAll/sweepBody` aceitam um `QueryFilter` (ignorar um corpo, incluir sensores) e `sweepAgainst/sweepAllAgainst` recebem `std::span<const BodyId>` — todos os corpos listados são testados, sensores inclusive.
 
 - Corpos **Static**, **Kinematic** (seguem o transform do ECS e empurram os dinâmicos) e **Dynamic**; colliders Box, Sphere e Capsule com offset; tamanhos multiplicados pelo scale.
 - Passo fixo de 60 Hz com acumulador; transforms dos dinâmicos são escritos de volta no ECS.
