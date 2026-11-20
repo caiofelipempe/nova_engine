@@ -1,0 +1,44 @@
+#pragma once
+
+#include "nova/renderer/Renderer.h"
+#include "nova/scene/Entity.h"
+#include "nova/scene/Script.h"
+
+#include <string>
+
+namespace nova {
+
+class Scene : NonCopyable {
+public:
+    explicit Scene(std::string name = "Scene");
+    ~Scene();
+
+    // Every entity gets a NameComponent and a TransformComponent.
+    Entity createEntity(const std::string& name = "Entity");
+    void destroyEntity(Entity entity);
+    Entity findEntity(const std::string& name);
+    void clear();
+
+    // Runs scripts and built-in systems.
+    void update(f32 dt);
+
+    // Fills `out` from the ECS. Uses the primary CameraComponent unless `cameraOverride` is set
+    // (e.g. an editor camera). Returns false if there is no camera.
+    bool buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cameraOverride = nullptr);
+
+    Entity primaryCamera();
+
+    entt::registry& registry() { return m_registry; }
+    template <typename... C>
+    auto view() { return m_registry.view<C...>(); }
+
+    const std::string& name() const { return m_name; }
+    f32 time() const { return m_time; }
+
+private:
+    std::string m_name;
+    entt::registry m_registry;
+    f32 m_time = 0.0f;
+};
+
+} // namespace nova

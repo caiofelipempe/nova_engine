@@ -1,0 +1,177 @@
+#include "nova/rhi/vulkan/VulkanDevice.h"
+
+namespace nova::rhi::vk {
+
+void VulkanCommandList::reset(VkCommandBuffer cmd) { m_cmd = cmd; }
+
+void VulkanCommandList::beginRendering(const RenderingDesc& desc) {
+    std::vector<VkRenderingAttachmentInfo> colors;
+    colors.reserve(desc.colors.size());
+    Extent2D extent = desc.extent;
+
+    for (const ColorAttachment& c : desc.colors) {
+        VulkanTexture* t = m_device.texture(c.texture);
+        NOVA_ASSERT(t, "beginRendering: invalid color attachment");
+        recordTransition(m_cmd, *t, ResourceState::RenderTarget);
+        if (extent.isZero()) extent = {t->extent.width, t->extent.height};
+        VkRenderingAttachmentInfo a{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        a.imageView = t->view;
+        a.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        a.loadOp = toVk(c.load);
+        a.storeOp = toVk(c.store);
+        a.clearValue.color = {{c.clear[0], c.clear[1], c.clear[2], c.clear[3]}};
+        colors.push_back(a);
+    }
+
+    VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    if (desc.depth) {
+        VulkanTexture* t = m_device.texture(desc.depth->texture);
+        NOVA_ASSERT(t, "beginRendering: invalid depth attachment");
+        recordTransition(m_cmd, *t, ResourceState::DepthWrite);
+        if (extent.isZero()) extent = {t->extent.width, t->extent.height};
+        depth.imageView = t->view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = toVk(desc.depth->load);
+        depth.storeOp = toVk(desc.depth->store);
+        depth.clearValue.depthStencil = {desc.depth->clearDepth, 0};
+    }
+
+    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+    ri.renderArea = {{0, 0}, {extent.width, extent.height}};
+    ri.layerCount = 1;
+    ri.colorAttachmentCount = static_cast<u32>(colors.size());
+    ri.pColorAttachments = colors.data();
+    ri.pDepthAttachment = desc.depth ? &depth : nullptr;
+    vkCmdBeginRendering(m_cmd, &ri);
+
+    setViewport(0, 0, static_cast<f32>(extent.width), static_cast<f32>(extent.height));
+    setScissor(0, 0, extent.width, extent.height);
+}
+
+void VulkanCommandList::endRendering() { vkCmdEndRendering(m_cmd); }
+
+void VulkanCommandList::bindPipeline(PipelineHandle h) {
+    VulkanPipeline* p = m_device.pipeline(h);
+    NOVA_ASSERT(p, "bindPipeline: invalid pipeline");
+    vkCmdBindPipeline(m_cmd, p->bindPoint, p->pipeline);
+    VkDescriptorSet set = m_device.bindlessSet();
+    vkCmdBindDescriptorSets(m_cmd, p->bindPoint, m_device.pipelineLayout(), 0, 1, &set, 0, nullptr);
+}
+
+void VulkanCommandList::pushConstants(const void* data, u32 size) {
+    NOVA_ASSERT(size <= kPushConstantSize, "push constants too large");
+    vkCmdPushConstants(m_cmd, m_device.pipelineLayout(), VK_SHADER_STAGE_ALL, 0, size, data);
+}
+
+void VulkanCommandList::setViewport(f32 x, f32 y, f32 width, f32 height) {
+    VkViewport vp{x, y, width, height, 0.0f, 1.0f};
+    vkCmdSetViewport(m_cmd, 0, 1, &vp);
+}
+
+void VulkanCommandList::setScissor(i32 x, i32 y, u32 width, u32 height) {
+    VkRect2D r{{x, y}, {width, height}};
+    vkCmdSetScissor(m_cmd, 0, 1, &r);
+}
+
+void VulkanCommandList::bindIndexBuffer(BufferHandle h, u64 offset) {
+    VulkanBuffer* b = m_device.buffer(h);
+    NOVA_ASSERT(b, "bindIndexBuffer: invalid buffer");
+    vkCmdBindIndexBuffer(m_cmd, b->buffer, offset, VK_INDEX_TYPE_UINT32);
+}
+
+void VulkanCommandList::draw(u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance) {
+    vkCmdDraw(m_cmd, vertexCount, instanceCount, firstVertex, firstInstance);
+}
+
+void VulkanCommandList::drawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset,
+                                    u32 firstInstance) {
+    vkCmdDrawIndexed(m_cmd, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+}
+
+void VulkanCommandList::dispatch(u32 x, u32 y, u32 z) { vkCmdDispatch(m_cmd, x, y, z); }
+
+void VulkanCommandList::transition(TextureHandle h, ResourceState state) {
+    VulkanTexture* t = m_device.texture(h);
+    NOVA_ASSERT(t, "transition: invalid texture");
+    recordTransition(m_cmd, *t, state);
+}
+
+void VulkanCommandList::globalBarrier() {
+    VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+    b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(m_cmd, &dep);
+}
+
+void VulkanCommandList::copyBuffer(BufferHandle src, BufferHandle dst, u64 size, u64 srcOffset, u64 dstOffset) {
+    VulkanBuffer* s = m_device.buffer(src);
+    VulkanBuffer* d = m_device.buffer(dst);
+    NOVA_ASSERT(s && d, "copyBuffer: invalid buffer");
+    VkBufferCopy region{srcOffset, dstOffset, size};
+    vkCmdCopyBuffer(m_cmd, s->buffer, d->buffer, 1, &region);
+}
+
+void VulkanCommandList::buildTLAS(AccelStructHandle h, u64 instanceAddress, u32 instanceCount) {
+    VulkanAccelStruct* as = m_device.accelStruct(h);
+    NOVA_ASSERT(as && as->topLevel, "buildTLAS: invalid TLAS");
+    NOVA_ASSERT(instanceCount <= as->maxInstances, "buildTLAS: too many instances");
+
+    constexpr VkPipelineStageFlags2 kTraceStages =
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+
+    // WAR: earlier traces against this TLAS in the same command buffer must finish first.
+    VkMemoryBarrier2 pre{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    pre.srcStageMask = kTraceStages | VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    pre.srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    pre.dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    pre.dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &pre;
+    vkCmdPipelineBarrier2(m_cmd, &dep);
+
+    VkAccelerationStructureGeometryKHR geom{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+    geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geom.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geom.geometry.instances.arrayOfPointers = VK_FALSE;
+    geom.geometry.instances.data.deviceAddress = instanceAddress;
+
+    VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+    build.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    build.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    build.dstAccelerationStructure = as->handle;
+    build.geometryCount = 1;
+    build.pGeometries = &geom;
+    build.scratchData.deviceAddress = as->scratchAddress;
+
+    VkAccelerationStructureBuildRangeInfoKHR range{instanceCount, 0, 0, 0};
+    const VkAccelerationStructureBuildRangeInfoKHR* ranges = &range;
+    m_device.ext().vkCmdBuildAccelerationStructuresKHR(m_cmd, 1, &build, &ranges);
+
+    VkMemoryBarrier2 post{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    post.srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    post.srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    post.dstStageMask = kTraceStages;
+    post.dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    dep.pMemoryBarriers = &post;
+    vkCmdPipelineBarrier2(m_cmd, &dep);
+}
+
+void VulkanCommandList::beginDebugLabel(const char* name) {
+    if (!m_device.ext().vkCmdBeginDebugUtilsLabelEXT) return;
+    VkDebugUtilsLabelEXT label{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT};
+    label.pLabelName = name;
+    m_device.ext().vkCmdBeginDebugUtilsLabelEXT(m_cmd, &label);
+}
+
+void VulkanCommandList::endDebugLabel() {
+    if (m_device.ext().vkCmdEndDebugUtilsLabelEXT) m_device.ext().vkCmdEndDebugUtilsLabelEXT(m_cmd);
+}
+
+} // namespace nova::rhi::vk

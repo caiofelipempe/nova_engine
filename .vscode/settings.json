@@ -1,0 +1,26 @@
+{
+    // CMake Tools: use CMakePresets.json (windows-vs2022 + debug/release build presets)
+    "cmake.useCMakePresets": "always",
+    "cmake.configureOnOpen": true,
+    "cmake.buildBeforeRun": true,
+    "cmake.debugConfig": {
+        "cwd": "${command:cmake.launchTargetDirectory}",
+        "console": "integratedTerminal"
+    },
+
+    // IntelliSense comes from CMake Tools (works with the Visual Studio generator).
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "C_Cpp.default.cppStandard": "c++20",
+    // clangd would need compile_commands.json (not produced by the VS generator) and duplicates diagnostics.
+    "clangd.enable": false,
+
+    "files.associations": {
+        "*.vert": "glsl",
+        "*.frag": "glsl",
+        "*.comp": "glsl",
+        "*.glsl": "glsl"
+    },
+    "search.exclude": {
+        "build/**": true
+    }
+}

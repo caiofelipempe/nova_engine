@@ -1,0 +1,11 @@
+build/
+out/
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.user
+imgui.ini
+nova.log
