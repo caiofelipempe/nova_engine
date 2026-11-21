@@ -216,6 +216,7 @@ Em superfícies lisas (esfera numa face) as três coincidem; em arestas e vérti
 
 - Corpos **Static**, **Kinematic** (seguem o transform do ECS e empurram os dinâmicos) e **Dynamic**; colliders Box, Sphere e Capsule com offset; tamanhos multiplicados pelo scale.
 - Passo fixo exato (`Duration`, 60 Hz) com acumulador; transforms dos dinâmicos são escritos de volta no ECS.
+- **Contrato global:** a engine fala com a física só em `GlobalPosition` (`physics::PhysicsWorld`); o Jolt implementa um contrato `float` local e é envolvido pelo `FloatingOriginWorld`, o único lugar onde posições viram `float`. Um motor que trabalhe em inteiros implementa `PhysicsWorld` direto: `scene().startSimulation(makeScope<MeuMundo>())`.
 - **Origem flutuante:** o Jolt simula em `float` em torno da câmera (ou de `scene().setPhysicsFocus(p)`), com rebase automático; consultas e colisões usam `GlobalPosition`, e bordas `Barrier` do mundo viram paredes (`Script::onWorldBoundary`). Veja [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md).
 - `GameLayer` liga a simulação sozinho. No editor: **Play / Pause / Stop** (Stop restaura os transforms), gizmo arrasta corpos durante o Play.
 - Próximos passos: mesh/convex colliders (para cenas glTF), character controller, joints, debug draw dos colliders, interpolação de transforms.

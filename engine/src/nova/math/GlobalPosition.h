@@ -21,18 +21,16 @@ namespace nova {
 /// nova::GlobalOffset step = nova::GlobalOffset::fromMeters(velocity * dt);
 /// glm::vec3 local = (enemy - player).toVec3();   // small offsets are exact enough in float
 /// @endcode
-struct GlobalOffset {
-    i64 x = 0; ///< X steps.
-    i64 y = 0; ///< Y steps.
-    i64 z = 0; ///< Z steps.
-
-    constexpr GlobalOffset() = default;
+struct GlobalOffset : glm::i64vec3 {
+    // A glm::i64vec3 of steps: x/y/z, [] and glm interop come from glm. The operators below
+    // (exact type match, so they win over glm's) saturate instead of overflowing.
+    constexpr GlobalOffset() : glm::i64vec3(0) {}
     /// @brief From raw integer steps.
-    constexpr GlobalOffset(i64 x_, i64 y_, i64 z_) : x(x_), y(y_), z(z_) {}
+    constexpr GlobalOffset(i64 x_, i64 y_, i64 z_) : glm::i64vec3(x_, y_, z_) {}
     /// @brief From raw integer steps in a glm vector.
-    explicit constexpr GlobalOffset(const glm::i64vec3& steps) : x(steps.x), y(steps.y), z(steps.z) {}
-    /// @brief Raw integer steps as a glm vector (for custom integer math with glm).
-    constexpr glm::i64vec3 raw() const { return {x, y, z}; }
+    explicit constexpr GlobalOffset(const glm::i64vec3& steps) : glm::i64vec3(steps) {}
+    /// @brief Raw integer steps as a glm vector.
+    constexpr glm::i64vec3 raw() const { return *this; }
 
     /// @brief From meters (rounded to the nearest step, saturating).
     static GlobalOffset fromMeters(const glm::dvec3& meters);
@@ -47,10 +45,6 @@ struct GlobalOffset {
     /// @brief Expressed in a metric unit, as double.
     glm::dvec3 toUnits(LengthUnit u) const;
 
-    /// @brief Component by index (0 = x).
-    i64& operator[](int i) { return i == 0 ? x : (i == 1 ? y : z); }
-    /// @brief Component by index (0 = x).
-    i64 operator[](int i) const { return i == 0 ? x : (i == 1 ? y : z); }
 
     /// @brief Exact squared length, in steps².
     UInt128 lengthSquared() const;
@@ -61,7 +55,7 @@ struct GlobalOffset {
     /// @brief Exact: is the length below `meters`?
     bool isShorterThan(f64 meters) const;
     /// @brief This offset times `t`, rounded to the nearest step (near-exact even for huge offsets).
-    GlobalOffset scaled(f64 t) const;
+    GlobalOffset scaled(f64 factor) const;
 
     friend bool operator==(const GlobalOffset&, const GlobalOffset&) = default;
     friend GlobalOffset operator+(const GlobalOffset& a, const GlobalOffset& b) {
@@ -122,10 +116,10 @@ public:
     glm::dvec3 toUnits(LengthUnit u) const;
 
     /// @brief Raw steps on axis `i` (0 = x).
-    i64 raw(int i) const { return m_v[i]; }
+    i64 raw(int i) const { return m_steps[i]; }
     /// @brief Raw steps as a glm vector. Plain glm arithmetic on them ignores the world's
     ///        boundaries: use GlobalOffset / the operators here for positions.
-    glm::i64vec3 raw() const { return {m_v[0], m_v[1], m_v[2]}; }
+    const glm::i64vec3& raw() const { return m_steps; }
 
     /// @brief Moves by `offset` (exact). @return Bit mask of the axes stopped by a barrier (bit i = axis i).
     u8 move(const GlobalOffset& offset);
@@ -169,7 +163,7 @@ public:
     }
 
 private:
-    i64 m_v[3] = {0, 0, 0};
+    glm::i64vec3 m_steps{0}; // integer steps of the world unit
 };
 
 /// @brief Distance in meters (double precision).

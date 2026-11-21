@@ -1,19 +1,19 @@
 #pragma once
 
 /// @file
-/// @brief Jolt Physics implementation of physics::PhysicsWorld.
+/// @brief Jolt Physics implementation of physics::local::World (float, origin-relative).
 
-#include "nova/physics/PhysicsWorld.h"
+#include "nova/physics/LocalPhysicsWorld.h"
 
-namespace nova::physics {
+namespace nova::physics::local {
 
-/// @brief PhysicsWorld backed by Jolt Physics.
+/// @brief local::World backed by Jolt Physics (wrapped in a FloatingOriginWorld by PhysicsWorld::create).
 ///
-/// Created through `PhysicsWorld::create(Backend::Jolt)`. Jolt headers are confined to the .cpp
+/// Created through `local::World::create(Backend::Jolt)`. Jolt headers are confined to the .cpp
 /// (pimpl), so they never leak into engine or game code. Uses two object layers (static /
 /// moving), a job-system thread pool and a 16 MB temp allocator. Jolt's global state (factory,
-/// type registry) is reference-counted across worlds. See PhysicsWorld for member documentation.
-class JoltPhysicsWorld final : public PhysicsWorld {
+/// type registry) is reference-counted across worlds. See local::World for member documentation.
+class JoltPhysicsWorld final : public World {
 public:
     /// @param desc World parameters.
     explicit JoltPhysicsWorld(const WorldDesc& desc);
@@ -58,4 +58,4 @@ private:
     Scope<Impl> m_impl;
 };
 
-} // namespace nova::physics
+} // namespace nova::physics::local

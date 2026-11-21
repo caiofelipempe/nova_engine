@@ -28,7 +28,7 @@
 #include <optional>
 #include <thread>
 
-namespace nova::physics {
+namespace nova::physics::local {
 
 namespace {
 
@@ -552,4 +552,4 @@ std::vector<ContactEvent> JoltPhysicsWorld::drainContactEvents() {
     return out;
 }
 
-} // namespace nova::physics
+} // namespace nova::physics::local

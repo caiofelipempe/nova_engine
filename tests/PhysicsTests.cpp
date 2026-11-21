@@ -1,5 +1,6 @@
 // Headless physics tests (no window / GPU). Run: ctest --preset ... or NovaTests.exe
 #include <nova/Nova.h>
+#include <nova/physics/LocalPhysicsWorld.h> // backend-level float contract (Jolt)
 
 #include <cmath>
 #include <cstdio>
@@ -36,8 +37,8 @@ const glm::quat kIdentity{1, 0, 0, 0};
 const glm::vec3 kDown{0, -1, 0};
 
 // Static ground: a 100x1x100 box whose top face is at y = 0.
-BodyId addGround(PhysicsWorld& w) {
-    BodyDesc d;
+BodyId addGround(local::World& w) {
+    local::BodyDesc d;
     d.type = BodyType::Static;
     d.shape.halfExtents = {50.0f, 0.5f, 50.0f};
     d.position = {0.0f, -0.5f, 0.0f};
@@ -45,8 +46,8 @@ BodyId addGround(PhysicsWorld& w) {
     return w.createBody(d);
 }
 
-BodyId addBox(PhysicsWorld& w, glm::vec3 pos, BodyType type = BodyType::Static, u64 userData = 0, bool sensor = false) {
-    BodyDesc d;
+BodyId addBox(local::World& w, glm::vec3 pos, BodyType type = BodyType::Static, u64 userData = 0, bool sensor = false) {
+    local::BodyDesc d;
     d.type = type;
     d.shape.halfExtents = glm::vec3(0.5f);
     d.position = pos;
@@ -63,9 +64,9 @@ ShapeDesc sphere(f32 r) {
 }
 
 void sphereSweepHitsGround() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w);
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweep(sphere(0.5f), {0, 5, 0}, kIdentity, kDown, 100.0f, hit));
     CHECK_NEAR(hit.distance, 4.5f, kEps); // centre stops 0.5 above the floor
     CHECK_NEAR(hit.point.y, 0.0f, kEps);
@@ -74,21 +75,21 @@ void sphereSweepHitsGround() {
 }
 
 void sweepMissesAndRespectsMaxDistance() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w);
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(!w->sweep(sphere(0.5f), {0, 5, 0}, kIdentity, {0, 1, 0}, 100.0f, hit)); // away from the floor
     CHECK(!w->sweep(sphere(0.5f), {0, 5, 0}, kIdentity, kDown, 4.0f, hit));       // too short
     CHECK(!w->sweep(sphere(0.5f), {0, 5, 0}, kIdentity, glm::vec3(0.0f), 10.0f, hit)); // zero direction
 }
 
 void boxAndCapsuleSweeps() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w);
     ShapeDesc box;
     box.type = ShapeType::Box;
     box.halfExtents = {1.0f, 0.25f, 1.0f};
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweep(box, {0, 3, 0}, kIdentity, kDown, 10.0f, hit));
     CHECK_NEAR(hit.distance, 2.75f, kEps);
 
@@ -106,9 +107,9 @@ void boxAndCapsuleSweeps() {
 }
 
 void sideHitNormal() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addBox(*w, {5, 0, 0}, BodyType::Static, 7);
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweep(sphere(0.5f), {0, 0, 0}, kIdentity, {1, 0, 0}, 20.0f, hit));
     CHECK_NEAR(hit.distance, 4.0f, kEps); // box face at x=4.5, sphere radius 0.5
     CHECK_NEAR(hit.normal.x, -1.0f, kEps);
@@ -117,7 +118,7 @@ void sideHitNormal() {
 }
 
 void sweepAllSortedAndFiltered() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     BodyId a = addBox(*w, {3, 0, 0}, BodyType::Static, 1);
     addBox(*w, {6, 0, 0}, BodyType::Static, 2);
     addBox(*w, {9, 0, 0}, BodyType::Static, 3);
@@ -132,21 +133,21 @@ void sweepAllSortedAndFiltered() {
 
     QueryFilter ignoreFirst;
     ignoreFirst.ignoreBody = a;
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweep(sphere(0.25f), {0, 0, 0}, kIdentity, {1, 0, 0}, 20.0f, hit, ignoreFirst));
     CHECK(hit.userData == 2);
 
-    RaycastHit ray;
+    local::RaycastHit ray;
     CHECK(w->raycast({0, 0, 0}, {1, 0, 0}, 20.0f, ray, ignoreFirst));
     CHECK(ray.userData == 2);
     CHECK_NEAR(ray.distance, 5.5f, kEps);
 }
 
 void sensorsAreOptIn() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addBox(*w, {3, 0, 0}, BodyType::Static, 1, /*sensor*/ true);
     addBox(*w, {6, 0, 0}, BodyType::Static, 2);
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweep(sphere(0.25f), {0, 0, 0}, kIdentity, {1, 0, 0}, 20.0f, hit));
     CHECK(hit.userData == 2);
     QueryFilter withSensors;
@@ -156,10 +157,10 @@ void sensorsAreOptIn() {
 }
 
 void sweepBodyIgnoresItself() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w);
     BodyId box = addBox(*w, {0, 3, 0}, BodyType::Dynamic, 5);
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweepBody(box, kDown, 10.0f, hit));
     CHECK_NEAR(hit.distance, 2.5f, kEps);
     CHECK(hit.userData == 1000);
@@ -167,9 +168,9 @@ void sweepBodyIgnoresItself() {
 }
 
 void overlappingAtStart() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w);
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweep(sphere(0.5f), {0, 0.2f, 0}, kIdentity, kDown, 5.0f, hit));
     CHECK_NEAR(hit.fraction, 0.0f, 1e-4f);
 }
@@ -184,9 +185,9 @@ bool isAxisAligned(const glm::vec3& n) {
 
 void sweepNormalsOnFace() {
     // Sphere onto a flat face: every normal agrees.
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w);
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweep(sphere(0.5f), {0, 5, 0}, kIdentity, kDown, 100.0f, hit));
     CHECK_VEC(hit.normal, kUp, kEps);
     CHECK_VEC(hit.hitSurfaceNormal, kUp, kEps);
@@ -197,9 +198,9 @@ void sweepNormalsOnFace() {
 
 void sweepNormalsOnEdge() {
     // Sphere grazing the top edge of a box: the contact normal is diagonal, the box face is not.
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addBox(*w, {0, 0, 0});
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweep(sphere(0.25f), {-3, 0.6f, 0}, kIdentity, {1, 0, 0}, 10.0f, hit));
     CHECK(hit.normal.x < -0.3f && hit.normal.y > 0.2f);           // diagonal, back towards the sphere
     CHECK(isAxisAligned(hit.hitSurfaceNormal));                     // a face normal of the box
@@ -211,13 +212,13 @@ void sweepNormalsOnEdge() {
 void sweepNormalsTiltedBoxCorner() {
     // Box rotated 45deg around Z swept down: it lands on an edge. The ground normal is up, but the
     // box face that touched is tilted 45deg — only sweptSurfaceNormal reveals that.
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w);
     ShapeDesc box;
     box.type = ShapeType::Box;
     box.halfExtents = glm::vec3(0.5f);
     glm::quat tilt = glm::angleAxis(glm::radians(45.0f), glm::vec3(0, 0, 1));
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweep(box, {0, 3, 0}, tilt, kDown, 10.0f, hit));
     CHECK_VEC(hit.normal, kUp, kEps);
     CHECK_VEC(hit.hitSurfaceNormal, kUp, kEps);
@@ -230,13 +231,13 @@ void sweepNormalsTiltedBoxCorner() {
 void sweepNormalsCubeOnVertex() {
     // Cube with its body diagonal pointing straight down lands on a single vertex where three faces
     // meet. Each of them is tilted equally (normal.y = -1/sqrt(3)); any is a valid answer, a side face is not.
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w);
     ShapeDesc box;
     box.type = ShapeType::Box;
     box.halfExtents = glm::vec3(0.5f);
     glm::quat onVertex = glm::rotation(glm::normalize(glm::vec3(1, 1, 1)), glm::vec3(0, -1, 0));
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweep(box, {0, 3, 0}, onVertex, kDown, 10.0f, hit));
     CHECK_VEC(hit.hitSurfaceNormal, kUp, kEps);
     CHECK_NEAR(hit.sweptSurfaceNormal.y, -0.57735f, 0.05f);
@@ -245,24 +246,24 @@ void sweepNormalsCubeOnVertex() {
 
 void sweepBodyNormals() {
     // sweepBody uses the body's real shape and pose: same tilted-box case through a body.
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w);
-    BodyDesc d;
+    local::BodyDesc d;
     d.type = BodyType::Dynamic;
     d.shape.halfExtents = glm::vec3(0.5f);
     d.position = {0, 3, 0};
     d.rotation = glm::angleAxis(glm::radians(45.0f), glm::vec3(0, 0, 1));
     BodyId box = w->createBody(d);
-    SweepHit hit;
+    local::SweepHit hit;
     CHECK(w->sweepBody(box, kDown, 10.0f, hit));
     CHECK_VEC(hit.hitSurfaceNormal, kUp, kEps);
     CHECK_NEAR(hit.sweptSurfaceNormal.y, -kInvSqrt2, 0.05f);
 }
 
 void raycastNormals() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w);
-    RaycastHit hit;
+    local::RaycastHit hit;
     CHECK(w->raycast({0, 5, 0}, kDown, 10.0f, hit));
     CHECK_VEC(hit.normal, kUp, kEps);
     CHECK_VEC(hit.hitSurfaceNormal, kUp, kEps);
@@ -270,7 +271,7 @@ void raycastNormals() {
     CHECK_VEC(hit.sweptPoint, glm::vec3(0.0f), 1e-6f);
 }
 
-std::optional<ContactEvent> stepUntilContact(PhysicsWorld& w, int maxSteps = 180) {
+std::optional<local::ContactEvent> stepUntilContact(local::World& w, int maxSteps = 180) {
     for (int i = 0; i < maxSteps; ++i) {
         w.step(1.0f / 60.0f);
         auto events = w.drainContactEvents();
@@ -280,7 +281,7 @@ std::optional<ContactEvent> stepUntilContact(PhysicsWorld& w, int maxSteps = 180
 }
 
 // Returns the event with body A being the one with `userDataA` (swapping sides flips the normal).
-ContactEvent orient(ContactEvent e, u64 userDataA) {
+local::ContactEvent orient(local::ContactEvent e, u64 userDataA) {
     if (e.userDataA == userDataA) return e;
     std::swap(e.bodyA, e.bodyB);
     std::swap(e.userDataA, e.userDataB);
@@ -291,9 +292,9 @@ ContactEvent orient(ContactEvent e, u64 userDataA) {
 }
 
 void contactNormalsSphere() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w); // userData 1000
-    BodyDesc d;
+    local::BodyDesc d;
     d.shape.type = ShapeType::Sphere;
     d.shape.radius = 0.5f;
     d.position = {0, 2, 0};
@@ -303,7 +304,7 @@ void contactNormalsSphere() {
     auto ev = stepUntilContact(*w);
     CHECK(ev.has_value());
     if (!ev) return;
-    ContactEvent e = orient(*ev, 1000); // A = ground, B = sphere
+    local::ContactEvent e = orient(*ev, 1000); // A = ground, B = sphere
     CHECK(e.userDataB == 9);
     CHECK_VEC(e.normal, kUp, kEps); // from A (ground) towards B (sphere)
     CHECK_VEC(e.surfaceNormalA, kUp, kEps);
@@ -313,9 +314,9 @@ void contactNormalsSphere() {
 }
 
 void contactNormalsTiltedBox() {
-    auto w = PhysicsWorld::create(Backend::Jolt);
+    auto w = local::World::create(Backend::Jolt);
     addGround(*w);
-    BodyDesc d;
+    local::BodyDesc d;
     d.shape.halfExtents = glm::vec3(0.5f);
     d.position = {0, 2, 0};
     d.rotation = glm::angleAxis(glm::radians(45.0f), glm::vec3(0, 0, 1));
@@ -325,7 +326,7 @@ void contactNormalsTiltedBox() {
     auto ev = stepUntilContact(*w);
     CHECK(ev.has_value());
     if (!ev) return;
-    ContactEvent e = orient(*ev, 9); // A = box, B = ground
+    local::ContactEvent e = orient(*ev, 9); // A = box, B = ground
     // The reported point sits at an end of the landing edge (a vertex of the box): a point-based
     // normal there is ambiguous (it used to return the +Z side face). The face towards the ground must win.
     CHECK_VEC(e.normal, -kUp, 0.05f);                     // from the box down into the ground
@@ -641,7 +642,7 @@ void dormancy() {
     // The focus leaves: the ball freezes where it is, keeping its velocity...
     scene.setPhysicsFocus(base + glm::vec3(20'000.0f, 0.0f, 0.0f));
     scene.update(Duration::perSecond(60));
-    CHECK(scene.isPhysicsDormant(ball) && !ball.get<RigidBodyComponent>().body.valid());
+    CHECK(scene.isPhysicsDormant(ball) && ball.get<RigidBodyComponent>().body.valid()); // same id, just not simulated
     const GlobalPosition frozen = ball.transform().position;
     for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
     CHECK(ball.transform().position == frozen);
@@ -694,6 +695,92 @@ void determinism() {
     CHECK(a.stateHash() != b.stateHash());
 }
 
+// A backend that works in global positions natively (like a custom integer engine would):
+// implements PhysicsWorld directly — no floating origin, no float positions anywhere.
+// Bodies fall under gravity, integrated as exact integer offsets; no collisions.
+class IntegerTestWorld final : public PhysicsWorld {
+public:
+    struct Body {
+        BodyDesc desc;
+        glm::vec3 velocity{0.0f};
+        bool alive = true;
+    };
+    std::vector<Body> bodies;
+    SimulationFocus lastFocus;
+    glm::vec3 g{0.0f, -10.0f, 0.0f};
+
+    BodyId createBody(const BodyDesc& d) override {
+        bodies.push_back({d, d.linearVelocity});
+        return {static_cast<u32>(bodies.size() - 1)};
+    }
+    void destroyBody(BodyId b) override { bodies[b.value].alive = false; }
+    u32 bodyCount() const override { return static_cast<u32>(bodies.size()); }
+    void setTransform(BodyId b, const GlobalPosition& p, const glm::quat& q) override {
+        bodies[b.value].desc.position = p;
+        bodies[b.value].desc.rotation = q;
+    }
+    void getTransform(BodyId b, GlobalPosition& p, glm::quat& q) const override {
+        p = bodies[b.value].desc.position;
+        q = bodies[b.value].desc.rotation;
+    }
+    void moveKinematic(BodyId b, const GlobalPosition& p, const glm::quat& q, Duration) override { setTransform(b, p, q); }
+    glm::vec3 linearVelocity(BodyId b) const override { return bodies[b.value].velocity; }
+    void setLinearVelocity(BodyId b, const glm::vec3& v) override { bodies[b.value].velocity = v; }
+    glm::vec3 angularVelocity(BodyId) const override { return {}; }
+    void setAngularVelocity(BodyId, const glm::vec3&) override {}
+    void addForce(BodyId, const glm::vec3&) override {}
+    void addImpulse(BodyId, const glm::vec3&) override {}
+    void addTorque(BodyId, const glm::vec3&) override {}
+    bool isActive(BodyId b) const override { return bodies[b.value].desc.type == BodyType::Dynamic; }
+    void setGravity(const glm::vec3& gravity) override { g = gravity; }
+    glm::vec3 gravity() const override { return g; }
+    void step(Duration dt) override {
+        // Semi-implicit Euler with the step taken in exact integer offsets.
+        for (Body& b : bodies) {
+            if (!b.alive || b.desc.type != BodyType::Dynamic) continue;
+            b.velocity += g * b.desc.gravityFactor * dt.secondsF();
+            b.desc.position += GlobalOffset::fromMeters(glm::dvec3(b.velocity) * dt.seconds());
+        }
+    }
+    void setFocus(const SimulationFocus& f) override { lastFocus = f; }
+    bool raycast(const GlobalPosition&, const glm::vec3&, f32, RaycastHit&, const QueryFilter&) const override { return false; }
+    bool sweep(const ShapeDesc&, const GlobalPosition&, const glm::quat&, const glm::vec3&, f32, SweepHit&,
+               const QueryFilter&) const override { return false; }
+    std::vector<SweepHit> sweepAll(const ShapeDesc&, const GlobalPosition&, const glm::quat&, const glm::vec3&, f32,
+                                   const QueryFilter&) const override { return {}; }
+    bool sweepBody(BodyId, const glm::vec3&, f32, SweepHit&, const QueryFilter&) const override { return false; }
+    std::vector<ContactEvent> drainContactEvents() override { return {}; }
+};
+
+void nativeIntegerBackend() {
+    // The scene feeds a custom backend global positions only — 10,000 km out, exactly.
+    const GlobalPosition base = GlobalPosition::fromUnits({10'000, 1, -10'000}, LengthUnit::Kilometer);
+    Scene scene("native");
+    Entity cam = scene.createEntity("Camera");
+    cam.add<CameraComponent>();
+    cam.transform().position = base + glm::vec3(0, 2, 10);
+    Entity ball = scene.createEntity("Ball");
+    ball.transform().position = base;
+    ball.add<RigidBodyComponent>();
+    ball.add<SphereColliderComponent>();
+
+    auto world = makeScope<IntegerTestWorld>();
+    IntegerTestWorld* raw = world.get();
+    scene.startSimulation(std::move(world));
+    CHECK(scene.physics() == raw && raw->bodies.size() == 1);
+    CHECK(raw->bodies[0].desc.position == base); // exact, no float on the way in
+    CHECK(raw->bodies[0].desc.shape.type == ShapeType::Sphere && raw->bodies[0].desc.shape.radius == 0.5f); // local shape
+    CHECK(raw->lastFocus.foci.size() == 1 && raw->lastFocus.foci[0] == cam.transform().position);
+
+    for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
+    // Fell ~5 m (semi-implicit Euler: g/2 · t² · (1 + 1/60)), written back exactly from the backend.
+    const f64 fallen = (ball.transform().position - base).toMeters().y;
+    CHECK_NEAR(fallen, -5.0 * (61.0 / 60.0), 1e-3);
+    CHECK(ball.transform().position == raw->bodies[0].desc.position);
+    CHECK((ball.transform().position - base).x == 0 && (ball.transform().position - base).z == 0); // no drift sideways
+    CHECK(scene.physicsRegionCount() == 1 && scene.physicsOrigin() == GlobalPosition()); // no floating origin
+}
+
 } // namespace
 
 int main() {
@@ -726,6 +813,7 @@ int main() {
         {"physics regions: far-apart foci, merging", twoRegions},
         {"physics regions: dormant bodies keep their velocity", dormancy},
         {"determinism: two runs agree bit for bit", determinism},
+        {"global contract: a native integer backend plugs in directly", nativeIntegerBackend},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

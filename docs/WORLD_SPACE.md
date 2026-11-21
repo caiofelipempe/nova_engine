@@ -218,14 +218,33 @@ Status: **Fases 1 a 6 concluídas.** (`engine/src/nova/math/`, testes em `tests/
      `int64` dobram memória e banda e tornam a rotação (produtos de 128 bits, metade da largura
      SIMD) várias vezes mais lenta.
 
+   **Contrato global (feito):** a engine fala com a física só em posições globais.
+   - `physics::PhysicsWorld` é o contrato da engine: `BodyDesc::position` é `GlobalPosition`,
+     a forma (`ShapeDesc`) é local ao corpo, consultas e contatos devolvem `GlobalPosition`,
+     `moveKinematic`/`step` recebem `Duration`; `setFocus(SimulationFocus)` passa focos, alcance,
+     distância de rebase e alcance das paredes como dicas; barreiras chegam como
+     `kWorldBoundaryUserData`.
+   - `physics::local::World` é o contrato `float` relativo a uma origem — o que o Jolt
+     (`JoltPhysicsWorld`) implementa. Só o backend o vê (não está em `Nova.h`).
+   - `physics::FloatingOriginWorld` implementa o contrato global sobre mundos `local`: regiões,
+     rebase, corpos dormentes, troca de região e paredes saíram da `Scene` e vivem aqui. É o único
+     lugar onde posições globais viram `float`. `PhysicsWorld::create(Backend::Jolt)` devolve o Jolt
+     envolvido nele.
+   - Um motor que trabalhe em inteiros implementa `PhysicsWorld` direto e entra com
+     `scene.startSimulation(makeScope<MeuMundo>())` — testado com um backend inteiro mínimo a
+     10.000 km da origem (posições exatas na ida e na volta, sem origem flutuante).
+   - Tipos glm: `GlobalPosition` guarda `glm::i64vec3`; `GlobalOffset` *é* um `glm::i64vec3`
+     (operadores exatos/saturados próprios); formas e vértices locais são `glm::vec3`; um motor
+     inteiro usaria `glm::i32vec3` em 16.16 para o local.
+
    **Estado atual da estrutura em relação a essa diretriz:**
    - Já segue: posição da entidade é `GlobalPosition`; colliders (`halfExtents`, `radius`,
      `offset`) são locais em `float`; vértices de malha (renderização) são locais ao objeto.
-   - Ainda não segue: o contrato do `PhysicsWorld` recebe a posição do corpo em `float` relativo à
-     origem da região (não em `GlobalPosition`), então a fase ampla e a colisão do Jolt rodam em
-     `float` no espaço da região (preciso até alguns km, mas não exato nem determinístico entre
-     plataformas); não há formas poliédricas/malha (`ShapeType` só tem Box, Sphere e Capsule);
-     não há fatiamento de corpos grandes nem tipo local em ponto fixo.
-   - O que fecha a lacuna: o contrato inteiro desta fase (corpo em `GlobalPosition`, forma local
-     de 32 bits), as formas convexas/malha com vértices locais, e o motor próprio fazendo a colisão
-     por par em referencial local.
+   - Já segue também: o contrato da engine é global (acima); a conversão para `float` ficou
+     confinada ao adaptador do Jolt.
+   - Ainda não segue: dentro do Jolt, fase ampla e colisão rodam em `float` no espaço da região
+     (preciso até alguns km, não determinístico entre plataformas) — é a natureza do Jolt; não há
+     formas poliédricas/malha (`ShapeType` só tem Box, Sphere e Capsule); não há fatiamento de
+     corpos grandes nem tipo local em ponto fixo.
+   - O que falta para o motor próprio: as formas convexas/malha com vértices locais e o próprio
+     motor (colisão por par em referencial local, solver em ponto fixo).

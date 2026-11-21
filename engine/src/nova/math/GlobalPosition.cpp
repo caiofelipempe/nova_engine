@@ -79,18 +79,20 @@ bool GlobalOffset::isShorterThan(f64 meters) const {
     if (!(meters > 0.0)) return false;
     const f64 steps = meters / WorldSpace::active().unit();
     if (steps >= kTwoPow64) return true; // longer than any offset can be... on one axis; check exactly below
-    // length < r  ⇔  length² < r²  with r = ceil(steps) when steps is fractional: compare against
-    // floor and fall back to double for the fractional part (only matters within one step).
-    const u64 r = static_cast<u64>(steps);
+    // length < n  ⇔  length² < n²  with n = floor(steps): compare exactly, and fall back to double
+    // for the fractional part (only matters within one step).
+    const u64 n = static_cast<u64>(steps);
     const UInt128 l2 = lengthSquared();
-    const UInt128 r2 = UInt128::mul(r, r);
-    if (l2 < r2) return true;
-    const UInt128 r2next = UInt128::mul(r + 1, r + 1);
+    const UInt128 n2 = UInt128::mul(n, n);
+    if (l2 < n2) return true;
+    const UInt128 r2next = UInt128::mul(n + 1, n + 1);
     if (l2 >= r2next) return false;
     return std::sqrt(l2.toDouble()) < steps; // within the last step: double is exact enough
 }
 
-GlobalOffset GlobalOffset::scaled(f64 t) const { return {scaleSteps(x, t), scaleSteps(y, t), scaleSteps(z, t)}; }
+GlobalOffset GlobalOffset::scaled(f64 factor) const {
+    return {scaleSteps(x, factor), scaleSteps(y, factor), scaleSteps(z, factor)};
+}
 
 GlobalOffset operator*(const GlobalOffset& a, i64 n) {
     return {detail::saturatingMul(a.x, n), detail::saturatingMul(a.y, n), detail::saturatingMul(a.z, n)};
@@ -105,9 +107,9 @@ int compareLength(const GlobalOffset& a, const GlobalOffset& b) {
 GlobalPosition GlobalPosition::fromRaw(i64 x, i64 y, i64 z) {
     const WorldSpace& w = WorldSpace::active();
     GlobalPosition p;
-    p.m_v[0] = w.normalize(0, x);
-    p.m_v[1] = w.normalize(1, y);
-    p.m_v[2] = w.normalize(2, z);
+    p.m_steps[0] = w.normalize(0, x);
+    p.m_steps[1] = w.normalize(1, y);
+    p.m_steps[2] = w.normalize(2, z);
     return p;
 }
 
@@ -126,19 +128,19 @@ GlobalPosition GlobalPosition::fromMeters(const glm::dvec3& m) {
             if (reduced >= kTwoPow63) reduced -= kTwoPow64;
             else if (reduced < -kTwoPow63) reduced += kTwoPow64;
         }
-        p.m_v[i] = w.normalize(i, toSteps(reduced));
+        p.m_steps[i] = w.normalize(i, toSteps(reduced));
     }
     return p;
 }
 
 glm::dvec3 GlobalPosition::toMeters() const {
     const f64 unit = WorldSpace::active().unit();
-    return {static_cast<f64>(m_v[0]) * unit, static_cast<f64>(m_v[1]) * unit, static_cast<f64>(m_v[2]) * unit};
+    return {static_cast<f64>(m_steps[0]) * unit, static_cast<f64>(m_steps[1]) * unit, static_cast<f64>(m_steps[2]) * unit};
 }
 
 glm::dvec3 GlobalPosition::toUnits(LengthUnit u) const {
     const f64 k = WorldSpace::active().unit() / metersPer(u);
-    return {static_cast<f64>(m_v[0]) * k, static_cast<f64>(m_v[1]) * k, static_cast<f64>(m_v[2]) * k};
+    return {static_cast<f64>(m_steps[0]) * k, static_cast<f64>(m_steps[1]) * k, static_cast<f64>(m_steps[2]) * k};
 }
 
 u8 GlobalPosition::move(const GlobalOffset& offset) {
@@ -146,7 +148,7 @@ u8 GlobalPosition::move(const GlobalOffset& offset) {
     u8 hit = 0;
     for (int i = 0; i < 3; ++i) {
         bool stopped = false;
-        m_v[i] = w.add(i, m_v[i], offset[i], stopped);
+        m_steps[i] = w.add(i, m_steps[i], offset[i], stopped);
         if (stopped) hit |= static_cast<u8>(1u << i);
     }
     return hit;
@@ -154,8 +156,8 @@ u8 GlobalPosition::move(const GlobalOffset& offset) {
 
 GlobalOffset operator-(const GlobalPosition& a, const GlobalPosition& b) {
     const WorldSpace& w = WorldSpace::active();
-    return {w.difference(0, a.m_v[0], b.m_v[0]), w.difference(1, a.m_v[1], b.m_v[1]),
-            w.difference(2, a.m_v[2], b.m_v[2])};
+    return {w.difference(0, a.m_steps[0], b.m_steps[0]), w.difference(1, a.m_steps[1], b.m_steps[1]),
+            w.difference(2, a.m_steps[2], b.m_steps[2])};
 }
 
 // ------------------------------------------------------------------ helpers --
