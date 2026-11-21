@@ -136,7 +136,7 @@ void CoreCommandsPlugin::onRegister(Registry& r) {
     del.isEnabled = hasSelection;
     r.command(std::move(del));
     Command focus = make("edit.focus", "Edit/Focus Selection",
-                         [](EditorContext& ctx) { ctx.camera().focus(ctx.selected().transform().position); }, "F", 2);
+                         [](EditorContext& ctx) { ctx.camera().focus(ctx.selected().transform().position.toVec3()); }, "F", 2);
     focus.isEnabled = hasSelection;
     focus.separatorBefore = true;
     r.command(std::move(focus));

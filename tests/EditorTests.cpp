@@ -223,13 +223,13 @@ void playPauseStop() {
     f.ctx.play();
     CHECK(f.ctx.playState() == PlayState::Play && f.scene.isSimulating());
     for (int i = 0; i < 30; ++i) f.scene.update(1.0f / 60.0f);
-    const float fallen = box.transform().position.y;
+    const double fallen = box.transform().position.toMeters().y;
     CHECK(fallen < 4.9f);
 
     f.ctx.pause();
     f.ctx.play(); // resume: must not take a new snapshot
     for (int i = 0; i < 30; ++i) f.scene.update(1.0f / 60.0f);
-    CHECK(box.transform().position.y < fallen);
+    CHECK(box.transform().position.toMeters().y < fallen);
 
     const u64 boxId = box.uuid();
     f.ctx.select(box);
@@ -238,7 +238,7 @@ void playPauseStop() {
     // Stop rebuilds the scene from the snapshot: handles change, UUIDs don't.
     Entity restored = f.scene.findEntityByUuid(boxId);
     CHECK(restored.valid());
-    if (restored.valid()) CHECK(std::abs(restored.transform().position.y - 5.0f) < 1e-4f);
+    if (restored.valid()) CHECK(std::abs(restored.transform().position.toMeters().y - 5.0f) < 1e-4f);
     CHECK(f.ctx.selected() == restored); // selection follows the UUID
     CHECK((states == std::vector<PlayState>{PlayState::Play, PlayState::Pause, PlayState::Play, PlayState::Edit}));
 
@@ -429,7 +429,7 @@ void transactions() {
     // Interactive transaction (tools): begin, change over several frames, commit once.
     Entity t = f.scene.createEntity("Tool target");
     auto tx = f.ctx.beginEdit("Drag", {t});
-    for (int i = 0; i < 5; ++i) t.transform().position.x += 1.0f;
+    for (int i = 0; i < 5; ++i) t.transform().position += glm::vec3(1.0f, 0.0f, 0.0f);
     const size_t before = f.ctx.undoStack().position();
     CHECK(tx.commit() && f.ctx.undoStack().position() == before + 1);
     CHECK(!tx.active() && !tx.commit()); // committing twice does nothing
@@ -598,9 +598,9 @@ void assets() {
 
     // The adjust callback runs inside the same undo step.
     auto lifted = f.ctx.instantiateAsset(*guid, {}, [](std::vector<Entity>& es) {
-        for (Entity e : es) e.transform().position.y += 10.0f;
+        for (Entity e : es) e.transform().position += glm::vec3(0.0f, 10.0f, 0.0f);
     });
-    CHECK(lifted.size() == 2 && lifted[0].transform().position.y == 10.0f);
+    CHECK(lifted.size() == 2 && lifted[0].transform().position.toMeters().y == 10.0f);
     CHECK(f.ctx.undoStack().actions().size() == before + 2);
     CHECK(f.ctx.instantiateAsset(12345, {}).empty());
 
@@ -705,7 +705,7 @@ void hotReload() {
     CHECK(assetPayload() == "v2"); // the new importer loaded it again
     // The restored script runs the new code (v2 moves to height * 2).
     f.scene.update(0.016f);
-    CHECK(std::abs(back.transform().position.y - 4.0f) < 1e-5f);
+    CHECK(std::abs(back.transform().position.toMeters().y - 4.0f) < 1e-5f);
 
     // A broken build keeps the previous code and the scene.
     std::ofstream(game, std::ios::binary | std::ios::trunc) << "not a dll";

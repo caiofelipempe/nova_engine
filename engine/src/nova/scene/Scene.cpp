@@ -10,7 +10,7 @@ bool Entity::valid() const { return m_scene && m_scene->registry().valid(m_handl
 entt::registry& Entity::registry() const { return m_scene->registry(); }
 
 // ------------------------------------------------------------------- Scene --
-Scene::Scene(std::string name) : m_name(std::move(name)) { connectSignals(); }
+Scene::Scene(std::string name) : m_name(std::move(name)), m_worldSpace(WorldSpace().desc()) { connectSignals(); }
 
 void Scene::connectSignals() {
     // Removing the component (or destroying the entity) removes the body from the world.
@@ -73,7 +73,26 @@ void Scene::resetStorage() {
     connectSignals();
 }
 
+void Scene::setWorldSpace(const WorldSpaceDesc& desc) {
+    // Carry positions over in meters: the integer steps mean something else under the new unit.
+    std::vector<std::pair<entt::entity, glm::dvec3>> meters;
+    for (auto [e, t] : m_registry.view<TransformComponent>().each()) meters.emplace_back(e, t.position.toMeters());
+    WorldSpace::setActive(WorldSpace(desc));
+    m_worldSpace = WorldSpace::active().desc(); // as resolved (clamped sizes)
+    for (auto& [e, m] : meters) m_registry.get<TransformComponent>(e).position = GlobalPosition::fromMeters(m);
+}
+
+void Scene::activateWorldSpace() const {
+    const WorldSpace& active = WorldSpace::active();
+    const WorldSpaceDesc& d = active.desc();
+    bool same = d.unit == m_worldSpace.unit;
+    for (int i = 0; same && i < 3; ++i)
+        same = d.axes[i].size == m_worldSpace.axes[i].size && d.axes[i].boundary == m_worldSpace.axes[i].boundary;
+    if (!same) WorldSpace::setActive(WorldSpace(m_worldSpace));
+}
+
 void Scene::update(f32 dt) {
+    activateWorldSpace();
     m_time += dt;
 
     // Native scripts. Iterate over a snapshot: scripts may create/destroy entities.
@@ -147,7 +166,7 @@ void Scene::createBody(entt::entity e) {
     }
 
     desc.type = rb.type;
-    desc.position = t.position;
+    desc.position = t.position.toVec3(); // physics: float from the world origin until the floating origin (phase 4)
     desc.rotation = t.orientation();
     desc.mass = rb.mass;
     desc.friction = rb.friction;
@@ -178,7 +197,7 @@ void Scene::stepPhysics(f32 dt) {
     while (m_physicsAccumulator >= fixedTimeStep && steps < kMaxSteps) {
         for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each())
             if (rb.type == physics::BodyType::Kinematic && rb.body)
-                m_physics->moveKinematic(rb.body, t.position, t.orientation(), fixedTimeStep);
+                m_physics->moveKinematic(rb.body, t.position.toVec3(), t.orientation(), fixedTimeStep);
         m_physics->step(fixedTimeStep);
         m_physicsAccumulator -= fixedTimeStep;
         ++steps;
@@ -190,7 +209,9 @@ void Scene::stepPhysics(f32 dt) {
     for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each()) {
         if (rb.type != physics::BodyType::Dynamic || !rb.body || !m_physics->isActive(rb.body)) continue;
         glm::quat q;
-        m_physics->getTransform(rb.body, t.position, q);
+        glm::vec3 p;
+        m_physics->getTransform(rb.body, p, q);
+        t.position = p;
         t.rotation = glm::eulerAngles(q);
     }
 
@@ -234,7 +255,7 @@ glm::vec3 Scene::linearVelocity(Entity e) {
 void Scene::syncTransformToPhysics(Entity e) {
     if (auto b = bodyOf(e)) {
         auto& t = e.transform();
-        m_physics->setTransform(b, t.position, t.orientation());
+        m_physics->setTransform(b, t.position.toVec3(), t.orientation());
         m_physics->setLinearVelocity(b, glm::vec3(0.0f));
         m_physics->setAngularVelocity(b, glm::vec3(0.0f));
     }
@@ -340,7 +361,7 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
     } else if (Entity cam = primaryCamera()) {
         auto& t = cam.transform();
         auto& c = cam.get<CameraComponent>();
-        glm::mat4 m = glm::translate(glm::mat4(1.0f), t.position) * glm::toMat4(t.orientation());
+        glm::mat4 m = glm::translate(glm::mat4(1.0f), t.position.toVec3()) * glm::toMat4(t.orientation());
         out.camera = CameraData::fromTransform(m, c.fovY, aspect, c.nearClip, c.farClip);
         hasCamera = true;
     }
@@ -354,7 +375,7 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
     }
 
     for (auto [e, t, l] : m_registry.view<TransformComponent, PointLightComponent>().each())
-        out.pointLights.push_back({t.position, l.radius, l.color, l.intensity});
+        out.pointLights.push_back({t.position.toVec3(), l.radius, l.color, l.intensity});
 
     for (auto [e, t, m] : m_registry.view<TransformComponent, MeshComponent>().each()) {
         if (!m.mesh) continue;

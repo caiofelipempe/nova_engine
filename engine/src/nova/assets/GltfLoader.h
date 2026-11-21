@@ -46,7 +46,7 @@ std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::pa
 
 /// @brief Creates one entity per model node, offset by `position`.
 /// @return The created entities (first = first node).
-std::vector<Entity> instantiateModel(Scene& scene, const ModelData& model, const glm::vec3& position = glm::vec3(0.0f));
+std::vector<Entity> instantiateModel(Scene& scene, const ModelData& model, const GlobalPosition& position = GlobalPosition());
 
 /// @brief Files a glTF depends on (external `.bin` buffers and images), resolved next to `path`.
 std::vector<std::filesystem::path> gltfDependencies(const std::filesystem::path& path);

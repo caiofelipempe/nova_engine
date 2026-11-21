@@ -86,7 +86,7 @@ void AssetDatabase::registerBuiltinImporters() {
             out.payload = std::make_shared<ModelData>(std::move(*model));
             return true;
         },
-        .instantiate = [](AssetDatabase&, const AssetData& data, Scene& scene, const glm::vec3& position) {
+        .instantiate = [](AssetDatabase&, const AssetData& data, Scene& scene, const GlobalPosition& position) {
             return instantiateModel(scene, *data.as<ModelData>(), position);
         },
         .dependencies = gltfDependencies,
@@ -114,7 +114,7 @@ void AssetDatabase::registerBuiltinImporters() {
             out.payload = std::move(text);
             return true;
         },
-        .instantiate = [](AssetDatabase& db, const AssetData& data, Scene& scene, const glm::vec3& position) {
+        .instantiate = [](AssetDatabase& db, const AssetData& data, Scene& scene, const GlobalPosition& position) {
             std::string error;
             auto entities = instantiatePrefab(scene, *data.as<std::string>(), position, db.serializeOptions(), &error);
             if (!error.empty()) NOVA_CORE_ERROR("Prefab: {}", error);
@@ -311,7 +311,7 @@ void AssetDatabase::unload(AssetGuid guid) {
     // Owner maps are kept: entities may still use the old resources and must keep saving them by GUID.
 }
 
-std::vector<Entity> AssetDatabase::instantiate(AssetGuid guid, Scene& scene, const glm::vec3& position) {
+std::vector<Entity> AssetDatabase::instantiate(AssetGuid guid, Scene& scene, const GlobalPosition& position) {
     const AssetRecord* r = find(guid);
     if (!r || !canInstantiate(*r)) return {};
     const AssetData* data = load(guid);

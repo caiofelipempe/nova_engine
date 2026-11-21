@@ -4,10 +4,12 @@
 // Gameplay logic lives in native scripts attached to entities.
 struct Bobbing : nova::Script {
     float phase = 0.0f;
+    nova::GlobalPosition base;
     explicit Bobbing(float p) : phase(p) {}
+    void onCreate() override { base = transform().position; }
     void onUpdate(float dt) override {
         phase += dt;
-        transform().position.y = 0.75f + 0.35f * std::sin(phase * 2.0f);
+        transform().position = base + glm::vec3(0.0f, 0.35f * std::sin(phase * 2.0f), 0.0f);
     }
 };
 
@@ -206,7 +208,7 @@ public:
         ImGui::Text("Physics bodies: %u", scene().physics() ? scene().physics()->bodyCount() : 0u);
         // Sweep a projectile-sized sphere from the camera: shows what a shot would hit.
         auto& cam = m_camera.transform();
-        if (auto hit = scene().sweepSphere(cam.position + cam.forward(), 0.2f, cam.forward(), 200.0f))
+        if (auto hit = scene().sweepSphere((cam.position + cam.forward()).toVec3(), 0.2f, cam.forward(), 200.0f))
             ImGui::Text("Aim: %s (%.1f m)", hit->entity.name().c_str(), hit->distance);
         else
             ImGui::TextDisabled("Aim: nothing");

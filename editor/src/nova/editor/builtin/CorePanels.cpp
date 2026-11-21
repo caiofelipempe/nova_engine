@@ -74,7 +74,7 @@ void dropAsset(EditorContext& ctx, AssetGuid guid, const ViewportState& vp) {
             }
         }
         if (minY == std::numeric_limits<f32>::max()) return;
-        for (Entity e : created) e.transform().position.y += position.y - minY; // rest on the surface
+        for (Entity e : created) e.transform().position += glm::vec3(0.0f, position.y - minY, 0.0f); // rest on the surface
     });
 }
 } // namespace
@@ -242,7 +242,7 @@ void HierarchyPanel::onImGui(EditorContext& ctx) {
         }
         if (ImGui::BeginPopupContextItem()) {
             if (!ctx.isSelected(e)) ctx.select(e);
-            if (ImGui::MenuItem("Focus")) ctx.camera().focus(e.transform().position);
+            if (ImGui::MenuItem("Focus")) ctx.camera().focus(e.transform().position.toVec3());
             if (ImGui::MenuItem("Duplicate")) ctx.registry().execute("edit.duplicate");
             if (ImGui::MenuItem("Delete")) toDelete = ctx.selection();
             ImGui::EndPopup();

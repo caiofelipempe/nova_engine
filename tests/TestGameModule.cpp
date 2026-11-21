@@ -18,7 +18,11 @@ struct Spin {
 
 struct Waver : nova::Script {
     float height = 0.5f;
-    void onUpdate(float) override { transform().position.y = height * TEST_MODULE_VERSION; }
+    void onUpdate(float) override {
+        glm::dvec3 m = transform().position.toMeters();
+        m.y = height * TEST_MODULE_VERSION;
+        transform().position = m;
+    }
 };
 
 class TestPanel final : public nova::editor::Panel {

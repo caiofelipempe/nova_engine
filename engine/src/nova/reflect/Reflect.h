@@ -17,6 +17,7 @@
 /// Register before the first use (e.g. at the start of `main` or in EditorApp::onSetup).
 
 #include "nova/core/Module.h"
+#include "nova/math/GlobalPosition.h"
 #include "nova/renderer/Mesh.h"
 #include "nova/scene/Script.h"
 
@@ -49,6 +50,7 @@ enum class FieldKind {
     Mesh,   ///< MeshHandle (serialized by mesh name/asset or id)
     Texture, ///< rhi::TextureHandle (serialized by texture asset or id)
     Shader, ///< ShaderHandle (serialized by shader asset or id)
+    Position, ///< GlobalPosition (meters when exact, raw integer steps otherwise)
     Struct, ///< any struct registered with type() (nested object)
 };
 
@@ -177,6 +179,7 @@ constexpr FieldKind kindOf() {
     else if constexpr (std::is_same_v<F, MeshHandle>) return FieldKind::Mesh;
     else if constexpr (std::is_same_v<F, rhi::TextureHandle>) return FieldKind::Texture;
     else if constexpr (std::is_same_v<F, ShaderHandle>) return FieldKind::Shader;
+    else if constexpr (std::is_same_v<F, GlobalPosition>) return FieldKind::Position;
     else return FieldKind::Struct;
 }
 

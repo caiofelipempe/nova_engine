@@ -78,7 +78,7 @@ std::string serializePrefab(const std::vector<Entity>& entities, const Serialize
 
 /// @brief Creates the entities of a prefab (new UUIDs), with the first one at `position`.
 /// @return The created entities (empty, with `error` set, if the text is not a prefab).
-std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const glm::vec3& position = glm::vec3(0.0f),
+std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const GlobalPosition& position = GlobalPosition(),
                                       const SerializeOptions& options = {}, std::string* error = nullptr);
 
 /// @brief Scene name for a file: `levels/forest.scene.json` → `forest`.

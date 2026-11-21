@@ -48,7 +48,7 @@ void defaults() {
 
     // 32.32: 1.5 m is exactly 1.5 * 2^32 steps; round trips through meters exactly.
     GlobalPosition p = GlobalPosition::fromMeters({1.5, -2.25, 1000.0});
-    CHECK(p.x() == 6442450944 && p.y() == -9663676416 && p.z() == 4294967296000);
+    CHECK(p.raw(0) == 6442450944 && p.raw(1) == -9663676416 && p.raw(2) == 4294967296000);
     CHECK(p.toMeters() == glm::dvec3(1.5, -2.25, 1000.0));
     CHECK(GlobalPosition() == GlobalPosition::fromMeters({0, 0, 0}));
 }
@@ -86,9 +86,9 @@ void barrier() {
     GlobalPosition p = GlobalPosition::fromMeters({49.0, 0, 0});
     const u8 hit = p.move(glm::vec3(5.0f, 1.0f, 0.0f));
     CHECK(hit == 0b001);           // only X hit its barrier
-    CHECK(p.x() == w.axis(0).max); // stopped at the edge
+    CHECK(p.raw(0) == w.axis(0).max); // stopped at the edge
     CHECK(near(p.toMeters().y, 1.0, 1e-9));
-    CHECK(GlobalPosition::fromMeters({-500.0, 0, 0}).x() == w.axis(0).min); // clamped on creation
+    CHECK(GlobalPosition::fromMeters({-500.0, 0, 0}).raw(0) == w.axis(0).min); // clamped on creation
 
     // Edge to edge: the difference is the whole axis and still exact.
     GlobalPosition lo = GlobalPosition::fromRaw(w.axis(0).min, 0, 0);
@@ -113,7 +113,7 @@ void wrapFull() {
 
     GlobalPosition edge = GlobalPosition::fromRaw(kMax, 0, 0);
     GlobalPosition across = edge + GlobalOffset(3, 0, 0);
-    CHECK(across.x() == kMin + 2);           // looped
+    CHECK(across.raw(0) == kMin + 2);           // looped
     CHECK((across - edge).x == 3);           // short way across the seam
     CHECK((edge - across).x == -3);
     CHECK(edge.move(GlobalOffset(3, 0, 0)) == 0); // no barrier
@@ -245,6 +245,107 @@ void configuration() {
     CHECK(tiny.axis(2).span == 2); // at least two steps
 }
 
+void maxSize() {
+    // "Every dimension at most 10 km": all 64 bits spent on 10 km.
+    WorldSpaceDesc d = WorldSpaceDesc::withMaxSize(10, LengthUnit::Kilometer);
+    CHECK(d.unit == 10'000.0 / 9223372036854775808.0);
+    WorldSpace w(d);
+    for (int i = 0; i < 3; ++i) {
+        CHECK(w.axis(i).boundary == WorldBoundary::Barrier && w.axis(i).span == WorldSpace::kMaxBarrierSpan);
+        CHECK(near(w.sizeIn(i, LengthUnit::Kilometer), 10.0, 1e-12));
+    }
+    CHECK(w.unitIn(LengthUnit::Nanometer) < 2e-6); // ~1.1 femtometers per step
+
+    // Wrap axes hold twice as many steps: the unit is halved for the same size.
+    WorldSpace wrap(WorldSpaceDesc::withMaxSize(10, LengthUnit::Kilometer, WorldBoundary::Wrap));
+    CHECK(wrap.unit() == d.unit / 2 && wrap.axis(0).full && near(wrap.sizeIn(0, LengthUnit::Kilometer), 10.0, 1e-12));
+
+    // Mixed sizes: the unit fits the largest axis; smaller axes get fewer steps.
+    WorldSpaceDesc mixed = WorldSpaceDesc{}
+                               .setAxis(0, 40, LengthUnit::Kilometer, WorldBoundary::Wrap)
+                               .setAxis(1, 2, LengthUnit::Kilometer, WorldBoundary::Barrier)
+                               .setAxis(2, 40, LengthUnit::Kilometer, WorldBoundary::Wrap)
+                               .fitUnit();
+    WorldSpace m(mixed);
+    CHECK(m.axis(0).full && near(m.sizeIn(0, LengthUnit::Kilometer), 40.0, 1e-9));
+    CHECK(near(m.sizeIn(1, LengthUnit::Kilometer), 2.0, 1e-9) && m.axis(1).span < WorldSpace::kMaxBarrierSpan);
+
+    // Positions work at that scale: 1 nm moves near the 5 km edge are seen.
+    UseWorld use(d);
+    GlobalPosition edge = GlobalPosition::fromUnits({4.999, 0, 0}, LengthUnit::Kilometer);
+    CHECK((edge + GlobalOffset::fromUnits({1, 0, 0}, LengthUnit::Nanometer)) != edge);
+    CHECK(edge.move(glm::vec3(10.0f, 0, 0)) == 0b001); // 1 m short of the 5 km barrier
+}
+
+void sceneIntegration() {
+    // The transform stores a GlobalPosition; meters assign naturally.
+    Scene a("Far");
+    a.setWorldSpace(WorldSpaceDesc{}
+                        .setUnit(1, LengthUnit::Micrometer)
+                        .setAxis(0, 100, LengthUnit::Kilometer, WorldBoundary::Wrap)
+                        .setAxis(2, 100, LengthUnit::Kilometer, WorldBoundary::Wrap));
+    Entity near0 = a.createEntity("Near");
+    near0.transform().position = {1, 2, 3};
+    Entity far = a.createEntity("Far");
+    far.transform().position = GlobalPosition::fromUnits({49.999, 0.5, -12.25}, LengthUnit::Kilometer);
+    far.transform().position += GlobalOffset(1, 0, 0); // one micrometer: still exact in the file
+    Entity odd = a.createEntity("Odd");
+    odd.transform().position = GlobalPosition::fromRaw(123456789012345, 0, 7); // not a short decimal
+
+    const std::string json = serializeScene(a);
+    CHECK(json.find("\"world\"") != std::string::npos && json.find("\"Wrap\"") != std::string::npos);
+    Scene b;
+    CHECK(deserializeScene(b, json));
+    CHECK(b.worldSpace().unit == a.worldSpace().unit);
+    CHECK(b.worldSpace().axes[0].boundary == WorldBoundary::Wrap && b.worldSpace().axes[1].boundary == WorldBoundary::Barrier);
+    CHECK(b.findEntity("Near").transform().position == GlobalPosition(1, 2, 3));
+    CHECK(b.findEntity("Far").transform().position == far.transform().position);
+    CHECK(b.findEntity("Odd").transform().position == odd.transform().position);
+    CHECK(serializeScene(b) == json);
+
+    // Files from before world spaces (meters, no "world") load into the default world.
+    Scene old;
+    const char* legacy = R"({"format": "nova.scene", "version": 1, "name": "Old", "entities": [
+        {"components": {"Id": {"uuid": 5}, "Name": {"name": "Crate"},
+                        "Transform": {"position": [1.5, 0.25, -3.0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}}}]})";
+    CHECK(deserializeScene(old, legacy));
+    CHECK(old.worldSpace().unit == WorldSpaceDesc{}.unit);
+    CHECK(old.findEntity("Crate").transform().position == GlobalPosition(1.5, 0.25, -3.0));
+
+    // Changing the world carries positions over in meters.
+    Scene c;
+    Entity e = c.createEntity("E");
+    e.transform().position = {10.0, -2.0, 4.0};
+    c.setWorldSpace(WorldSpaceDesc{}.setUnit(1, LengthUnit::Millimeter));
+    CHECK(WorldSpace::active().unitIn(LengthUnit::Millimeter) == 1.0);
+    CHECK(e.transform().position.raw(0) == 10'000 && e.transform().position == GlobalPosition(10.0, -2.0, 4.0));
+    // update() re-activates the scene's world after another one was made current.
+    WorldSpace::setActive(WorldSpace());
+    c.update(0.0f);
+    CHECK(WorldSpace::active().unitIn(LengthUnit::Millimeter) == 1.0);
+
+    // Prefabs store offsets from the first entity: placed far away, the layout stays exact.
+    Scene d;
+    Entity p0 = d.createEntity("P0"), p1 = d.createEntity("P1");
+    p0.transform().position = {100.0, 0.0, 0.0};
+    p1.transform().position = GlobalPosition(100.0, 0.0, 0.0) + GlobalOffset(1, 2, 3);
+    const std::string prefab = serializePrefab({p0, p1});
+    const GlobalPosition spot = GlobalPosition::fromUnits({2000, 1, -500}, LengthUnit::Kilometer);
+    auto placed = instantiatePrefab(d, prefab, spot);
+    CHECK(placed.size() == 2 && placed[0].transform().position == spot);
+    CHECK(placed.size() == 2 && placed[1].transform().position - placed[0].transform().position == GlobalOffset(1, 2, 3));
+
+    // Matrices relative to a nearby origin keep precision that the absolute float matrix loses.
+    WorldSpace::setActive(WorldSpace());
+    TransformComponent t;
+    t.position = GlobalPosition(1'000'000.0, 0.0, 0.0) + GlobalOffset::fromMeters(glm::dvec3(0.001, 0, 0));
+    const GlobalPosition camera(1'000'000.0, 0.0, 0.0);
+    CHECK(near(t.matrixRelativeTo(camera)[3].x, 0.001, 1e-9));
+    CHECK(t.matrix()[3].x == 1'000'000.0f); // the millimeter is lost in float
+    t.lookAt(t.position + glm::vec3(0, 0, -5)); // look down −Z
+    CHECK(near(t.forward().z, -1.0, 1e-6));
+}
+
 } // namespace
 
 int main() {
@@ -261,6 +362,8 @@ int main() {
         {"metric units", units},
         {"helpers (lerp, moveTowards, rotateAround)", helpers},
         {"configuration validation", configuration},
+        {"maximum size per dimension (withMaxSize / fitUnit)", maxSize},
+        {"scenes: world settings, files, prefabs, relative matrices", sceneIntegration},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

@@ -3,6 +3,7 @@
 /// @file
 /// @brief Reusable ImGui widgets with the editor's look, for built-in and game panels.
 
+#include "nova/math/GlobalPosition.h"
 #include "nova/renderer/Mesh.h"
 
 #include <glm/glm.hpp>
@@ -39,6 +40,10 @@ bool reflectedField(const reflect::TypeInfo& owner, const reflect::FieldInfo& fi
 /// @param resetValue Value applied when a field is double-clicked.
 /// @return True if the value changed.
 bool vec3(const char* label, glm::vec3& value, float speed = 0.05f, float resetValue = 0.0f);
+
+/// @brief X/Y/Z editor for a world position, in meters (hover an axis for its readable unit and raw steps).
+/// @return True if the value changed.
+bool position(const char* label, GlobalPosition& value, float speed = 0.05f);
 
 /// @brief Editor for a Material (base color, metallic, roughness, emissive, checker).
 /// @return True if anything changed.

@@ -295,7 +295,7 @@ Próximos passos (a estrutura já está preparada):
 
 ## Roadmap geral
 
-- **Mundos grandes** com posições globais inteiras (ponto fixo em `int64`, escala ajustável, bordas com volta ou barreira): plano e status em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md); fase 1 (tipos e aritmética) concluída.
+- **Mundos grandes** com posições globais inteiras (ponto fixo em `int64`, escala ajustável, bordas com volta ou barreira): plano e status em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md); fases 1 (tipos e aritmética) e 2 (cena: `TransformComponent::position` é um `GlobalPosition`, mundo salvo na cena) concluídas.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
 - Renderer: materiais com mais texturas (normal, metallic-roughness, emissive), shadow maps como fallback sem RT, render graph, culling em GPU, backend D3D12.

@@ -418,7 +418,7 @@ void sceneLevelQueries() {
 
     // After falling for a while the crate rests on the ground and the sweep distance changes accordingly.
     for (int i = 0; i < 240; ++i) scene.update(1.0f / 60.0f);
-    CHECK_NEAR(crate.transform().position.y, 0.5f, 0.05f);
+    CHECK_NEAR(crate.transform().position.toMeters().y, 0.5f, 0.05f);
     hit = scene.sweepSphere({0, 10, 0}, 0.5f, kDown);
     CHECK(hit && hit->entity == crate);
     if (hit) CHECK_NEAR(hit->distance, 8.5f, 0.06f);

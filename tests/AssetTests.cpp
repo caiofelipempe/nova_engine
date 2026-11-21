@@ -54,7 +54,7 @@ AssetImporter fakeImporter() {
             out.textures = {rhi::TextureHandle{77, 3}};
             return true;
         },
-        .instantiate = [](AssetDatabase&, const AssetData& data, Scene& scene, const glm::vec3& position) {
+        .instantiate = [](AssetDatabase&, const AssetData& data, Scene& scene, const GlobalPosition& position) {
             Entity e = scene.createEntity("Fake");
             e.transform().position = position;
             e.add<MeshComponent>(data.meshes[1]);

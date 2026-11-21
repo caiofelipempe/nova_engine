@@ -62,6 +62,29 @@ struct WorldSpaceDesc {
         axes[axis] = {toMeters(size, u), boundary};
         return *this;
     }
+
+    /// @brief A world whose every axis is `size` long, with the finest unit that fits it.
+    ///
+    /// `WorldSpaceDesc::withMaxSize(10, LengthUnit::Kilometer)` → 10 km per axis, steps of
+    /// 10 km / 2^63 ≈ 1.1 fm (barrier) — all 64 bits spent on that extent.
+    static WorldSpaceDesc withMaxSize(f64 size, LengthUnit u, WorldBoundary boundary = WorldBoundary::Barrier) {
+        WorldSpaceDesc d;
+        for (int i = 0; i < 3; ++i) d.axes[i] = {toMeters(size, u), boundary};
+        return d.fitUnit();
+    }
+    /// @brief Sets `unit` to the finest step that still fits every axis size (axes with size 0 are
+    ///        ignored; barrier axes hold 2^63 steps, wrap axes 2^64).
+    WorldSpaceDesc& fitUnit() {
+        f64 finest = 0.0;
+        for (const WorldAxisDesc& a : axes) {
+            if (!(a.size > 0.0)) continue;
+            // Dividing by a power of two is exact: the axis gets exactly 2^63 (2^64) steps.
+            const f64 u = a.size / (a.boundary == WorldBoundary::Wrap ? 18446744073709551616.0 : 9223372036854775808.0);
+            finest = u > finest ? u : finest;
+        }
+        if (finest > 0.0) unit = finest;
+        return *this;
+    }
 };
 
 /// @brief Resolved world configuration used by GlobalPosition / GlobalOffset arithmetic.

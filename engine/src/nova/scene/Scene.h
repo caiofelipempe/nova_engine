@@ -154,6 +154,18 @@ public:
     /// @brief Accumulated update time in seconds.
     f32 time() const { return m_time; }
 
+    /// @name World space
+    /// Unit, size and boundaries of the world positions are stored in (see WorldSpace).
+    /// @{
+    /// @brief This scene's world settings.
+    const WorldSpaceDesc& worldSpace() const { return m_worldSpace; }
+    /// @brief Changes the world settings and makes them active. Existing positions are carried over
+    ///        in meters (clamped or wrapped into the new world).
+    void setWorldSpace(const WorldSpaceDesc& desc);
+    /// @brief Makes this scene's world settings the active ones (update() does it every frame).
+    void activateWorldSpace() const;
+    /// @}
+
 private:
     void stepPhysics(f32 dt);
     void createBody(entt::entity e);
@@ -164,6 +176,7 @@ private:
     SceneHit toSceneHit(const physics::QueryHit& hit);
 
     std::string m_name;
+    WorldSpaceDesc m_worldSpace;
     entt::registry m_registry;
     Scope<physics::PhysicsWorld> m_physics; // declared after the registry: destroyed first
     f32 m_time = 0.0f;

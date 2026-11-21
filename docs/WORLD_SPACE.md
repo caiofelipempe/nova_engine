@@ -40,7 +40,37 @@ nova::GlobalOffset d = enemy - base;                         // exato, pelo cami
 double km = d.length(nova::LengthUnit::Kilometer);
 ```
 
-Status: **Fase 1 concluída** (`engine/src/nova/math/`, testes em `tests/WorldSpaceTests.cpp`).
+**Tamanho máximo por dimensão.** Para dizer só "quero no máximo 10 km por dimensão" e deixar a
+engine escolher a escala, use `WorldSpaceDesc::withMaxSize(10, LengthUnit::Kilometer)`: todos os
+eixos ficam com 10 km e a unidade vira a mais fina que cabe (10 km / 2^63 ≈ 1,1 fm com barreira;
+com `WorldBoundary::Wrap`, 10 km / 2^64). Com tamanhos diferentes por eixo, configure-os com
+`setAxis` e chame `fitUnit()`: a unidade passa a caber no maior eixo.
+
+```cpp
+scene.setWorldSpace(nova::WorldSpaceDesc::withMaxSize(10, nova::LengthUnit::Kilometer));
+```
+
+## Na cena (fase 2)
+
+- `TransformComponent::position` é um `GlobalPosition`. Atribuir metros continua natural
+  (`t.position = {0, 3, 10}`), mover usa deslocamentos (`t.position += velocity * dt`), e
+  `t.position - other.position` é um `GlobalOffset` exato. Para mexer num eixo só, guarde uma base e
+  some um deslocamento (`position = base + glm::vec3(0, y, 0)`).
+- `Scene::setWorldSpace(desc)` define o mundo da cena (as posições existentes são convertidas em
+  metros); `Scene::update` reativa o mundo da cena a cada frame.
+- Arquivos de cena gravam `"world": {"unit", "axes": [{"size", "boundary"}]}`. Posições são gravadas
+  como `[x, y, z]` em metros quando a conversão é exata (o caso comum, e o formato antigo — cenas
+  antigas carregam sem mudança); senão como `{"raw": [inteiros], "meters": [...]}`, exato.
+- Prefabs guardam deslocamentos exatos a partir da primeira entidade e são instanciados em qualquer
+  `GlobalPosition`.
+- `TransformComponent::matrixRelativeTo(origem)` dá a matriz com a translação medida a partir de um
+  ponto próximo (a câmera, na fase 3). `matrix()` ainda é absoluta em `float`.
+- Inspetor: posição em metros com `double` (o tooltip mostra a unidade legível e os passos inteiros);
+  editar um eixo move só ele, os outros continuam bit a bit.
+- Ainda em `float` a partir da origem do mundo, até as próximas fases: renderização, DebugDraw,
+  picking e câmera do editor (fase 3), física (fase 4).
+
+Status: **Fases 1 e 2 concluídas** (`engine/src/nova/math/`, testes em `tests/WorldSpaceTests.cpp`).
 
 ## Fases
 

@@ -36,6 +36,30 @@ Json writeFloat(f32 v) {
     return std::strtod(std::string(buf, end).c_str(), nullptr);
 }
 
+// Positions: meters when they convert back exactly (readable, and what older files contain),
+// otherwise the exact integer steps with meters alongside for readers.
+Json writePosition(const GlobalPosition& g) {
+    const glm::dvec3 m = g.toMeters();
+    Json meters = Json::array({m.x, m.y, m.z});
+    if (GlobalPosition::fromMeters(m) == g) return meters;
+    return Json{{"raw", Json::array({g.raw(0), g.raw(1), g.raw(2)})}, {"meters", std::move(meters)}};
+}
+
+Json writeOffset(const GlobalOffset& o) {
+    const glm::dvec3 m = o.toMeters();
+    Json meters = Json::array({m.x, m.y, m.z});
+    if (GlobalOffset::fromMeters(m) == o) return meters;
+    return Json{{"raw", Json::array({o.x, o.y, o.z})}, {"meters", std::move(meters)}};
+}
+
+const char* boundaryName(WorldBoundary b) { return b == WorldBoundary::Wrap ? "Wrap" : "Barrier"; }
+
+Json writeWorld(const WorldSpaceDesc& d) {
+    Json axes = Json::array();
+    for (const WorldAxisDesc& a : d.axes) axes.push_back(Json{{"size", a.size}, {"boundary", boundaryName(a.boundary)}});
+    return Json{{"unit", d.unit}, {"axes", std::move(axes)}};
+}
+
 Json writeVec(const f32* v, int n) {
     Json a = Json::array();
     for (int i = 0; i < n; ++i) a.push_back(writeFloat(v[i]));
@@ -78,6 +102,7 @@ Json writeField(const reflect::FieldInfo& f, void* p, const SerializeOptions& op
             }
             return t.key();
         }
+        case K::Position: return writePosition(*static_cast<GlobalPosition*>(p));
         case K::Shader: {
             const ShaderHandle sh = *static_cast<ShaderHandle*>(p);
             if (!sh) return nullptr;
@@ -133,6 +158,63 @@ Json writeEntity(Entity e, const SerializeOptions& opt, std::set<std::string>& w
 // ---------------------------------------------------------------- reading --
 void readObject(const reflect::TypeInfo& type, void* object, const Json& j, const SerializeOptions& opt);
 
+bool readRaw(const Json& j, i64 out[3]) {
+    if (!j.is_object() || !j.contains("raw") || !j["raw"].is_array() || j["raw"].size() != 3) return false;
+    for (int i = 0; i < 3; ++i) {
+        if (!j["raw"][i].is_number_integer()) return false;
+        out[i] = j["raw"][i].get<i64>();
+    }
+    return true;
+}
+
+bool readMeters(const Json& j, glm::dvec3& out) {
+    const Json& a = j.is_object() && j.contains("meters") ? j["meters"] : j;
+    if (!a.is_array() || a.size() != 3) return false;
+    for (int i = 0; i < 3; ++i) {
+        if (!a[i].is_number()) return false;
+        out[i] = a[i].get<f64>();
+    }
+    return true;
+}
+
+bool readPosition(const Json& j, GlobalPosition& out) {
+    i64 raw[3];
+    if (readRaw(j, raw)) {
+        out = GlobalPosition::fromRaw(raw[0], raw[1], raw[2]);
+        return true;
+    }
+    glm::dvec3 m;
+    if (!readMeters(j, m)) return false;
+    out = GlobalPosition::fromMeters(m);
+    return true;
+}
+
+bool readOffset(const Json& j, GlobalOffset& out) {
+    i64 raw[3];
+    if (readRaw(j, raw)) {
+        out = {raw[0], raw[1], raw[2]};
+        return true;
+    }
+    glm::dvec3 m;
+    if (!readMeters(j, m)) return false;
+    out = GlobalOffset::fromMeters(m);
+    return true;
+}
+
+WorldSpaceDesc readWorld(const Json& j) {
+    WorldSpaceDesc d;
+    if (!j.is_object()) return d;
+    if (j.contains("unit") && j["unit"].is_number()) d.unit = j["unit"].get<f64>();
+    if (j.contains("axes") && j["axes"].is_array())
+        for (int i = 0; i < 3 && i < static_cast<int>(j["axes"].size()); ++i) {
+            const Json& a = j["axes"][i];
+            if (!a.is_object()) continue;
+            if (a.contains("size") && a["size"].is_number()) d.axes[i].size = a["size"].get<f64>();
+            d.axes[i].boundary = a.value("boundary", "Barrier") == "Wrap" ? WorldBoundary::Wrap : WorldBoundary::Barrier;
+        }
+    return d;
+}
+
 template <int N>
 void readVec(f32* out, const Json& j) {
     if (!j.is_array()) return;
@@ -185,6 +267,7 @@ void readField(const reflect::FieldInfo& f, void* p, const Json& j, const Serial
             }
             break;
         }
+        case K::Position: readPosition(j, *static_cast<GlobalPosition*>(p)); break;
         case K::Shader: {
             auto& sh = *static_cast<ShaderHandle*>(p);
             if (j.is_null()) sh = {};
@@ -268,6 +351,7 @@ std::string serializeScene(Scene& scene, const SerializeOptions& options) {
     root["format"] = kFormat;
     root["version"] = kVersion;
     root["name"] = scene.name();
+    root["world"] = writeWorld(scene.worldSpace());
     Json entities = Json::array();
     for (entt::entity e : entitiesInOrder(scene)) entities.push_back(writeEntity({e, &scene}, options, warned));
     root["entities"] = std::move(entities);
@@ -286,6 +370,9 @@ bool deserializeScene(Scene& scene, std::string_view text, const SerializeOption
 
     scene.clear();
     if (root.contains("name") && root["name"].is_string()) scene.setName(root["name"].get<std::string>());
+    // The world settings come first: positions are stored in its units. Files without them
+    // (older versions) use the default world, where their meter positions mean the same.
+    scene.setWorldSpace(root.contains("world") ? readWorld(root["world"]) : WorldSpaceDesc{});
     std::set<std::string> warned;
     try {
         if (root.contains("entities") && root["entities"].is_array())
@@ -344,7 +431,7 @@ std::string serializePrefab(const std::vector<Entity>& entities, const Serialize
     root["format"] = kPrefabFormat;
     root["version"] = kVersion;
     Json list = Json::array();
-    glm::vec3 pivot(0.0f);
+    GlobalPosition pivot;
     bool first = true;
     for (Entity e : entities) {
         if (!e.valid()) continue;
@@ -353,15 +440,15 @@ std::string serializePrefab(const std::vector<Entity>& entities, const Serialize
         Json je = writeEntity(e, options, warned);
         je["components"].erase("Id");
         je["components"].erase("PrefabInstance");
-        const glm::vec3 local = e.transform().position - pivot; // relative to the first entity
-        je["components"]["Transform"]["position"] = writeVec(&local.x, 3);
+        // Relative to the first entity, so the prefab can be placed anywhere.
+        je["components"]["Transform"]["position"] = writeOffset(e.transform().position - pivot);
         list.push_back(std::move(je));
     }
     root["entities"] = std::move(list);
     return root.dump(2);
 }
 
-std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const glm::vec3& position,
+std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const GlobalPosition& position,
                                       const SerializeOptions& options, std::string* error) {
     std::vector<Entity> out;
     Json root = Json::parse(json, nullptr, /*allow_exceptions=*/false);
@@ -373,9 +460,16 @@ std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const
     try {
         if (root.contains("entities") && root["entities"].is_array())
             for (Json je : root["entities"]) {
-                if (je.contains("components")) je["components"].erase("Id"); // fresh UUIDs
+                GlobalOffset local;
+                if (je.contains("components")) {
+                    je["components"].erase("Id"); // fresh UUIDs
+                    if (je["components"].contains("Transform") && je["components"]["Transform"].contains("position")) {
+                        readOffset(je["components"]["Transform"]["position"], local);
+                        je["components"]["Transform"].erase("position");
+                    }
+                }
                 Entity e = readEntity(scene, je, options, warned);
-                e.transform().position += position;
+                e.transform().position = position + local;
                 out.push_back(e);
             }
     } catch (const nlohmann::json::exception& ex) {

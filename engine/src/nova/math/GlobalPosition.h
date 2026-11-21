@@ -104,6 +104,13 @@ class GlobalPosition {
 public:
     /// @brief The world origin.
     constexpr GlobalPosition() = default;
+    /// @brief From meters (implicit, so `transform.position = {0, 3, 10}` reads naturally).
+    GlobalPosition(f64 xMeters, f64 yMeters, f64 zMeters) : GlobalPosition(fromMeters({xMeters, yMeters, zMeters})) {}
+    /// @brief From meters (implicit).
+    GlobalPosition(const glm::dvec3& meters) : GlobalPosition(fromMeters(meters)) {}
+    /// @brief From meters (implicit). Far from the origin a float cannot say where you are: prefer
+    ///        moving existing positions by offsets (`position += velocity * dt`).
+    GlobalPosition(const glm::vec3& meters) : GlobalPosition(fromMeters(glm::dvec3(meters))) {}
 
     /// @brief From raw steps, brought into the world (wrap: modulo; barrier: clamped).
     static GlobalPosition fromRaw(i64 x, i64 y, i64 z);
@@ -111,6 +118,9 @@ public:
     static GlobalPosition fromMeters(const glm::dvec3& meters);
     /// @brief In meters, as double (for display/logs; exact up to 2^53 steps per axis).
     glm::dvec3 toMeters() const;
+    /// @brief In meters from the world origin, as float. Loses precision far from the origin: for
+    ///        rendering and physics prefer offsets from a nearby point (`(p - camera).toVec3()`).
+    glm::vec3 toVec3() const { return glm::vec3(toMeters()); }
     /// @brief From a value in any metric unit (`fromUnits({1500, 0, 20}, LengthUnit::Kilometer)`).
     static GlobalPosition fromUnits(const glm::dvec3& value, LengthUnit u) { return fromMeters(value * metersPer(u)); }
     /// @brief Expressed in a metric unit, as double (`p.toUnits(LengthUnit::Kilometer)`).
@@ -118,12 +128,6 @@ public:
 
     /// @brief Raw steps on axis `i` (0 = x).
     i64 raw(int i) const { return m_v[i]; }
-    /// @brief Raw X steps.
-    i64 x() const { return m_v[0]; }
-    /// @brief Raw Y steps.
-    i64 y() const { return m_v[1]; }
-    /// @brief Raw Z steps.
-    i64 z() const { return m_v[2]; }
 
     /// @brief Moves by `offset` (exact). @return Bit mask of the axes stopped by a barrier (bit i = axis i).
     u8 move(const GlobalOffset& offset);

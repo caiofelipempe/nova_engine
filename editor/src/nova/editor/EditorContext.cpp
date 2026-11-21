@@ -287,7 +287,7 @@ bool EditorContext::saveScene(const std::filesystem::path& path, std::string* er
 }
 
 // ------------------------------------------------------------------ assets --
-std::vector<Entity> EditorContext::instantiateAsset(AssetGuid guid, const glm::vec3& position,
+std::vector<Entity> EditorContext::instantiateAsset(AssetGuid guid, const GlobalPosition& position,
                                                     const std::function<void(std::vector<Entity>&)>& adjust) {
     const AssetRecord* record = m_assets.find(guid);
     if (!record || !m_assets.canInstantiate(*record)) return {};

@@ -58,7 +58,7 @@ struct AssetImporter {
     /// @brief Loads the file (null = the asset is listed but has nothing to load, e.g. scenes).
     std::function<bool(AssetDatabase& db, const std::filesystem::path& file, AssetData& out)> load;
     /// @brief Creates entities from the loaded asset at `position` (null = cannot be placed in a scene).
-    std::function<std::vector<Entity>(AssetDatabase& db, const AssetData& data, Scene& scene, const glm::vec3& position)>
+    std::function<std::vector<Entity>(AssetDatabase& db, const AssetData& data, Scene& scene, const GlobalPosition& position)>
         instantiate;
     /// @brief Other files the asset needs, copied along by AssetDatabase::import (e.g. glTF buffers).
     std::function<std::vector<std::filesystem::path>(const std::filesystem::path& file)> dependencies;
@@ -145,7 +145,7 @@ public:
     /// @brief True if the asset's importer can place it in a scene.
     bool canInstantiate(const AssetRecord& record) const { return record.importer && record.importer->instantiate; }
     /// @brief Loads the asset and creates its entities at `position`; each gets a PrefabInstanceComponent.
-    std::vector<Entity> instantiate(AssetGuid guid, Scene& scene, const glm::vec3& position = glm::vec3(0.0f));
+    std::vector<Entity> instantiate(AssetGuid guid, Scene& scene, const GlobalPosition& position = GlobalPosition());
     /// @}
 
     /// @name References

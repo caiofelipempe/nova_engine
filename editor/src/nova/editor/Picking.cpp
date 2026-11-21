@@ -26,7 +26,7 @@ std::optional<PickHit> pick(Scene& scene, const MeshLookup& meshes, const glm::v
         }
         if (options.markerRadius <= 0.0f) continue;
         // Ray vs marker sphere at the entity position.
-        const glm::vec3 oc = origin - t.position;
+        const glm::vec3 oc = origin - t.position.toVec3();
         const f32 b = glm::dot(oc, dir);
         const f32 c = glm::dot(oc, oc) - options.markerRadius * options.markerRadius;
         const f32 disc = b * b - c;
@@ -36,7 +36,7 @@ std::optional<PickHit> pick(Scene& scene, const MeshLookup& meshes, const glm::v
         if (d < 0.0f || d >= bestDistance) continue;
         bestDistance = d;
         const glm::vec3 p = origin + dir * d;
-        best = PickHit{e, p, glm::normalize(p - t.position), d};
+        best = PickHit{e, p, glm::normalize(p - t.position.toVec3()), d};
     }
     return best;
 }

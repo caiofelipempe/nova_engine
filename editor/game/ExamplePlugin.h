@@ -18,14 +18,15 @@ struct Bob : nova::Script {
     float amplitude = 0.3f;
     float speed = 2.0f;
 
-    void onCreate() override { m_baseY = transform().position.y; }
+    void onCreate() override { m_base = transform().position; }
     void onUpdate(float dt) override {
         m_time += dt;
-        transform().position.y = m_baseY + amplitude * std::sin(m_time * speed);
+        // An offset from an exact base position: precise anywhere in the world.
+        transform().position = m_base + glm::vec3(0.0f, amplitude * std::sin(m_time * speed), 0.0f);
     }
 
 private:
-    float m_baseY = 0.0f;
+    nova::GlobalPosition m_base;
     float m_time = 0.0f;
 };
 

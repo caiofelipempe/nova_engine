@@ -208,7 +208,7 @@ public:
     /// @brief Instantiates an asset (model, prefab...) at `position` as one undo step and selects the result.
     /// @param adjust Optional tweak of the new entities, recorded in the same undo step (e.g. placement).
     /// @return The created entities (empty if the asset cannot be placed).
-    std::vector<Entity> instantiateAsset(AssetGuid guid, const glm::vec3& position,
+    std::vector<Entity> instantiateAsset(AssetGuid guid, const GlobalPosition& position,
                                          const std::function<void(std::vector<Entity>&)>& adjust = {});
     /// @brief Point in front of the editor camera where new things are placed.
     glm::vec3 spawnPoint() const;

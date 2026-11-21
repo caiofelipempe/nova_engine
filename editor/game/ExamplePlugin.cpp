@@ -43,7 +43,7 @@ public:
             ImGui::PushID(static_cast<int>(entt::to_integral(e)));
             if (ImGui::Selectable(name.name.c_str(), ctx.selected() == entity)) {
                 ctx.select(entity);
-                ctx.camera().focus(entity.transform().position);
+                ctx.camera().focus(entity.transform().position.toVec3());
             }
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 40.0f);
             ImGui::TextDisabled("%d pts", target.points);

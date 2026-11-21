@@ -6,6 +6,7 @@
 /// Components are plain aggregates: add them with `entity.add<T>(...)` using aggregate
 /// initialization, e.g. `e.add<nova::PointLightComponent>(glm::vec3(1, 0.5f, 0.2f), 25.0f, 9.0f)`.
 
+#include "nova/math/GlobalPosition.h"
 #include "nova/physics/PhysicsWorld.h"
 #include "nova/renderer/Mesh.h"
 
@@ -38,15 +39,20 @@ struct NameComponent {
 /// Rotation is stored as Euler angles so it can be edited directly; use orientation() for a quaternion.
 /// The entity's local axes: right = +X, up = +Y, forward = −Z.
 struct TransformComponent {
-    glm::vec3 position{0.0f}; ///< World position.
+    /// @brief World position: exact integer fixed point (see WorldSpace). Assign meters directly
+    ///        (`position = {0, 3, 10}`), move with offsets (`position += velocity * dt`).
+    GlobalPosition position;
     glm::vec3 rotation{0.0f}; ///< Euler angles in radians: x = pitch, y = yaw, z = roll.
     glm::vec3 scale{1.0f};    ///< Per-axis scale (also scales colliders).
 
     /// @brief Rotation as a quaternion.
     glm::quat orientation() const { return glm::quat(rotation); }
-    /// @brief Object-to-world matrix (translate · rotate · scale).
-    glm::mat4 matrix() const {
-        return glm::translate(glm::mat4(1.0f), position) * glm::toMat4(orientation()) *
+    /// @brief Object-to-world matrix (translate · rotate · scale), in float meters from the world origin.
+    /// @note Loses precision far from the origin; matrixRelativeTo() is exact around any point.
+    glm::mat4 matrix() const { return matrixRelativeTo(GlobalPosition()); }
+    /// @brief Object matrix with the translation measured from `origin` (e.g. the camera).
+    glm::mat4 matrixRelativeTo(const GlobalPosition& origin) const {
+        return glm::translate(glm::mat4(1.0f), (position - origin).toVec3()) * glm::toMat4(orientation()) *
                glm::scale(glm::mat4(1.0f), scale);
     }
     /// @brief World-space forward direction (local −Z).
@@ -58,8 +64,8 @@ struct TransformComponent {
 
     /// @brief Rotates so forward (−Z) points at `target`, using yaw and pitch only (no roll).
     /// @note Suited to cameras: the result can be edited further by changing rotation.x / rotation.y.
-    void lookAt(const glm::vec3& target) {
-        glm::vec3 dir = glm::normalize(target - position);
+    void lookAt(const GlobalPosition& target) {
+        const glm::vec3 dir = glm::normalize(glm::vec3((target - position).toMeters()));
         rotation = {std::asin(glm::clamp(dir.y, -1.0f, 1.0f)), std::atan2(-dir.x, -dir.z), 0.0f};
     }
 };

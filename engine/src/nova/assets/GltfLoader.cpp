@@ -220,7 +220,7 @@ std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::pa
     return model;
 }
 
-std::vector<Entity> instantiateModel(Scene& scene, const ModelData& model, const glm::vec3& position) {
+std::vector<Entity> instantiateModel(Scene& scene, const ModelData& model, const GlobalPosition& position) {
     std::vector<Entity> out;
     for (const ModelNode& n : model.nodes) {
         Entity e = scene.createEntity(n.name);

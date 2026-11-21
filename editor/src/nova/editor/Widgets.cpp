@@ -67,6 +67,7 @@ bool reflectedField(const reflect::TypeInfo& owner, const reflect::FieldInfo& f,
             else changed = ImGui::DragScalar(f.label.c_str(), ImGuiDataType_U64, p, dragSpeed(a, 1.0f));
             break;
         case K::Float: changed = floatField(f, *static_cast<float*>(p)); break;
+        case K::Position: changed = position(f.label.c_str(), *static_cast<GlobalPosition*>(p)); break;
         case K::Vec2: changed = vecField(f, &static_cast<glm::vec2*>(p)->x, 2); break;
         case K::Vec3: changed = vecField(f, &static_cast<glm::vec3*>(p)->x, 3); break;
         case K::Vec4: changed = vecField(f, &static_cast<glm::vec4*>(p)->x, 4); break;
@@ -220,6 +221,53 @@ bool reflected(const reflect::TypeInfo& type, void* object, EditorContext& ctx) 
         changed |= reflectedField(type, f, f.in(object), ctx);
         ImGui::PopID();
     }
+    return changed;
+}
+
+bool position(const char* label, GlobalPosition& value, float speed) {
+    // Edited in meters (double): exact to well below a nanometer up to millions of km. Unchanged
+    // axes keep their exact integer value.
+    glm::dvec3 meters = value.toMeters();
+    bool changed = false;
+    ImGui::PushID(label);
+    ImGui::Columns(2, nullptr, false);
+    ImGui::SetColumnWidth(0, 90.0f);
+    ImGui::TextUnformatted(label);
+    ImGui::NextColumn();
+    const float w = (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3.0f;
+    const char* axes[3] = {"X", "Y", "Z"};
+    const ImVec4 colors[3] = {{0.75f, 0.2f, 0.2f, 1}, {0.25f, 0.65f, 0.25f, 1}, {0.2f, 0.35f, 0.8f, 1}};
+    const double step = speed;
+    for (int i = 0; i < 3; ++i) {
+        if (i) ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Border, colors[i]);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        ImGui::SetNextItemWidth(w);
+        char id[8];
+        std::snprintf(id, sizeof(id), "##%s", axes[i]);
+        double v = meters[i];
+        bool axisChanged = ImGui::DragScalar(id, ImGuiDataType_Double, &v, static_cast<float>(step), nullptr, nullptr, "%.3f");
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            v = 0.0;
+            axisChanged = true;
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+            const LengthUnit u = readableUnit(meters[i]);
+            ImGui::SetTooltip("%.9g %s\n%lld steps of %.3g m", fromMeters(meters[i], u), unitSymbol(u),
+                              static_cast<long long>(value.raw(i)), WorldSpace::active().unit());
+        }
+        if (axisChanged) {
+            // Move by the edited amount: the other axes stay bit-exact.
+            glm::dvec3 delta(0.0);
+            delta[i] = v - meters[i];
+            value += GlobalOffset::fromMeters(delta);
+            changed = true;
+        }
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+    }
+    ImGui::Columns(1);
+    ImGui::PopID();
     return changed;
 }
 
