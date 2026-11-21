@@ -57,7 +57,7 @@ cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
 build\bin\Debug\Sandbox.exe
-ctest --preset debug              # testes headless (física, cenas, assets, shaders, input, editor, hot reload)
+ctest --preset debug              # testes headless (física, cenas, assets, shaders, espaço do mundo, input, editor, hot reload)
 doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
 
@@ -75,6 +75,7 @@ Em Debug, as validation layers do Vulkan ficam ligadas e as mensagens vão para 
 ```
 engine/src/nova/
   core/       Application (loop), Layer, Log (spdlog)
+  math/       WorldSpace, GlobalPosition / GlobalOffset (posições inteiras exatas), unidades métricas
   platform/   Window (interface) + Input        → glfw/  (backend GLFW)
   rhi/        Device, CommandList (interfaces)  → vulkan/ (backend Vulkan)
   renderer/   Renderer, RenderView, Mesh (+ raycast CPU), DebugDraw, ShaderLibrary — só fala com o RHI
@@ -294,6 +295,7 @@ Próximos passos (a estrutura já está preparada):
 
 ## Roadmap geral
 
+- **Mundos grandes** com posições globais inteiras (ponto fixo em `int64`, escala ajustável, bordas com volta ou barreira): plano e status em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md); fase 1 (tipos e aritmética) concluída.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
 - Renderer: materiais com mais texturas (normal, metallic-roughness, emissive), shadow maps como fallback sem RT, render graph, culling em GPU, backend D3D12.

@@ -21,6 +21,7 @@ file(GLOB_RECURSE NOVA_CORE_SOURCES CONFIGURE_DEPENDS
     ${SRC}/physics/*.cpp   ${SRC}/physics/*.h
     ${SRC}/reflect/*.cpp   ${SRC}/reflect/*.h
     ${SRC}/assets/*.cpp    ${SRC}/assets/*.h
+    ${SRC}/math/*.cpp      ${SRC}/math/*.h
     ${SRC}/ui/*.h          ${SRC}/ui/ImGuiTheme.cpp ${SRC}/ui/ImGuiSync.cpp
     ${SRC}/Nova.h)
 

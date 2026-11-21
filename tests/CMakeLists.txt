@@ -19,6 +19,11 @@ nova_copy_shaders(NovaShaderTests) # engine GLSL headers in <exe>/shaders/includ
 set_target_properties(NovaShaderTests PROPERTIES FOLDER "Tests")
 add_test(NAME shaders COMMAND NovaShaderTests)
 
+add_executable(NovaWorldSpaceTests WorldSpaceTests.cpp)
+target_link_libraries(NovaWorldSpaceTests PRIVATE Nova::Engine)
+set_target_properties(NovaWorldSpaceTests PROPERTIES FOLDER "Tests")
+add_test(NAME worldspace COMMAND NovaWorldSpaceTests)
+
 add_executable(NovaInputTests InputTests.cpp)
 target_link_libraries(NovaInputTests PRIVATE Nova::Engine)
 set_target_properties(NovaInputTests PROPERTIES FOLDER "Tests")
@@ -44,7 +49,7 @@ if(TARGET Nova::Editor)
 endif()
 
 # A failing assert opens a dialog on Windows debug builds: never let it block the suite.
-set_tests_properties(physics input scene assets shaders PROPERTIES TIMEOUT 60)
+set_tests_properties(physics input scene assets shaders worldspace PROPERTIES TIMEOUT 60)
 if(TARGET NovaEditorTests)
     set_tests_properties(editor PROPERTIES TIMEOUT 60)
 endif()

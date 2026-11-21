@@ -16,6 +16,9 @@
 #include "nova/core/Base.h"
 #include "nova/core/Layer.h"
 #include "nova/core/Log.h"
+#include "nova/math/GlobalPosition.h"
+#include "nova/math/Units.h"
+#include "nova/math/WorldSpace.h"
 
 #include "nova/platform/Input.h"
 #include "nova/platform/KeyCodes.h"
