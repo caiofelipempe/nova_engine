@@ -346,6 +346,46 @@ void sceneIntegration() {
     CHECK(near(t.forward().z, -1.0, 1e-6));
 }
 
+void cameraRelativeRendering() {
+    WorldSpace::setActive(WorldSpace());
+    // A scene 10,000 km from the origin: in float, positions there are 1 m apart.
+    const GlobalPosition base = GlobalPosition::fromUnits({10'000, 0.5, -10'000}, LengthUnit::Kilometer);
+    Scene scene;
+    Entity cam = scene.createEntity("Camera");
+    cam.add<CameraComponent>();
+    cam.transform().position = base + glm::vec3(0.0f, 2.0f, 10.0f);
+    Entity box = scene.createEntity("Box");
+    box.add<MeshComponent>(MeshHandle{0});
+    box.transform().position = base + GlobalOffset::fromMeters(glm::dvec3(0.001, 0.0, 0.0)); // 1 mm off the base
+    Entity lamp = scene.createEntity("Lamp");
+    lamp.add<PointLightComponent>();
+    lamp.transform().position = base + glm::vec3(1.0f, 3.0f, 0.0f);
+
+    RenderScene rs;
+    CHECK(scene.buildRenderScene(rs, 1.0f));
+    CHECK(rs.camera.origin == cam.transform().position); // the camera is the origin
+    CHECK(rs.camera.position == glm::vec3(0.0f));
+    CHECK(rs.draws.size() == 1 && rs.pointLights.size() == 1);
+    if (rs.draws.size() == 1) {
+        const glm::vec3 t(rs.draws[0].transform[3]);
+        CHECK(near(t.x, 0.001, 1e-6) && near(t.y, -2.0, 1e-6) && near(t.z, -10.0, 1e-6)); // the millimeter survives
+    }
+    if (rs.pointLights.size() == 1) CHECK(near(rs.pointLights[0].position.x, 1.0, 1e-6) && near(rs.pointLights[0].position.y, 1.0, 1e-6));
+    // The absolute float matrix cannot even tell the box from the base.
+    CHECK(box.transform().matrix()[3].x == static_cast<f32>(base.toMeters().x));
+
+    // An explicit camera (e.g. the editor's) brings its own origin.
+    const CameraData editorCam = CameraData::relativeLookAt(base + glm::vec3(0, 0, 5), {0, 0, -1}, 1.0f, 1.0f, 0.1f, 100.0f);
+    CHECK(scene.buildRenderScene(rs, 1.0f, &editorCam));
+    CHECK(rs.camera.origin == editorCam.origin && near(rs.draws[0].transform[3].z, -5.0, 1e-6));
+
+    // Debug lines are recorded relative to their own origin, exact far away.
+    DebugDraw dd;
+    dd.setOrigin(base);
+    dd.line(base + glm::vec3(0, 0, 0), base + GlobalOffset::fromMeters(glm::dvec3(0.0005, 0, 0)), {1, 1, 1, 1});
+    CHECK(dd.lineCount() == 1 && near(dd.vertices(false)[1].position.x, 0.0005, 1e-7));
+}
+
 } // namespace
 
 int main() {
@@ -364,6 +404,7 @@ int main() {
         {"configuration validation", configuration},
         {"maximum size per dimension (withMaxSize / fitUnit)", maxSize},
         {"scenes: world settings, files, prefabs, relative matrices", sceneIntegration},
+        {"camera-relative rendering 10,000 km away", cameraRelativeRendering},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

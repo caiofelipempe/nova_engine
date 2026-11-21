@@ -51,13 +51,14 @@ void dropAsset(EditorContext& ctx, AssetGuid guid, const ViewportState& vp) {
     }
     if (!ctx.assets().canInstantiate(*record)) return;
 
-    glm::vec3 position = vp.rayOrigin + vp.rayDirection * 6.0f;
+    GlobalPosition position = vp.rayOrigin + vp.rayDirection * 6.0f;
     bool onSurface = false;
     if (hit) {
         position = hit->point;
         onSurface = hit->normal.y > 0.5f;
-    } else if (vp.rayDirection.y < -1e-4f) {
-        position = vp.rayOrigin + vp.rayDirection * (-vp.rayOrigin.y / vp.rayDirection.y);
+    } else if (vp.rayDirection.y < -1e-4f) { // the ground plane y = 0
+        const f64 t = -vp.rayOrigin.toMeters().y / vp.rayDirection.y;
+        position = vp.rayOrigin + GlobalOffset::fromMeters(glm::dvec3(vp.rayDirection) * t);
         onSurface = true;
     }
     ctx.instantiateAsset(guid, position, [&](std::vector<Entity>& created) {
@@ -67,14 +68,14 @@ void dropAsset(EditorContext& ctx, AssetGuid guid, const ViewportState& vp) {
             const auto* mesh = e.tryGet<MeshComponent>();
             if (!mesh) continue;
             const Bounds b = renderer.meshBounds(mesh->mesh);
-            const glm::mat4 m = e.transform().matrix();
+            const glm::mat4 m = e.transform().matrixRelativeTo(position); // heights measured from the drop point
             for (int i = 0; i < 8; ++i) {
                 const glm::vec3 corner{i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z};
                 minY = std::min(minY, glm::vec3(m * glm::vec4(corner, 1.0f)).y);
             }
         }
         if (minY == std::numeric_limits<f32>::max()) return;
-        for (Entity e : created) e.transform().position += glm::vec3(0.0f, position.y - minY, 0.0f); // rest on the surface
+        for (Entity e : created) e.transform().position += glm::vec3(0.0f, -minY, 0.0f); // rest on the surface
     });
 }
 } // namespace
@@ -133,8 +134,9 @@ void ViewportPanel::onImGui(EditorContext& ctx) {
         const glm::vec2 ndc = vp.mouse / vp.size * 2.0f - 1.0f; // Vulkan clip space: y down
         const glm::mat4 inv = glm::inverse(vp.camera.projection * vp.camera.view);
         glm::vec4 nearP = inv * glm::vec4(ndc, 0.0f, 1.0f), farP = inv * glm::vec4(ndc, 1.0f, 1.0f);
-        vp.rayOrigin = glm::vec3(nearP) / nearP.w;
-        vp.rayDirection = glm::normalize(glm::vec3(farP) / farP.w - vp.rayOrigin);
+        const glm::vec3 nearLocal = glm::vec3(nearP) / nearP.w; // relative to the camera origin
+        vp.rayOrigin = vp.camera.origin + nearLocal;
+        vp.rayDirection = glm::normalize(glm::vec3(farP) / farP.w - nearLocal);
     }
 
     if (dropped) dropAsset(ctx, dropped, vp);
@@ -242,7 +244,7 @@ void HierarchyPanel::onImGui(EditorContext& ctx) {
         }
         if (ImGui::BeginPopupContextItem()) {
             if (!ctx.isSelected(e)) ctx.select(e);
-            if (ImGui::MenuItem("Focus")) ctx.camera().focus(e.transform().position.toVec3());
+            if (ImGui::MenuItem("Focus")) ctx.camera().focus(e.transform().position);
             if (ImGui::MenuItem("Duplicate")) ctx.registry().execute("edit.duplicate");
             if (ImGui::MenuItem("Delete")) toDelete = ctx.selection();
             ImGui::EndPopup();

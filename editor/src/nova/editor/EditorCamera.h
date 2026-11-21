@@ -13,7 +13,7 @@ namespace nova::editor {
 ///        Shift to go faster, mouse wheel to change speed.
 class EditorCamera {
 public:
-    glm::vec3 position{0.0f, 4.0f, 12.0f}; ///< World position.
+    GlobalPosition position{0.0, 4.0, 12.0}; ///< Exact world position (the viewport renders relative to it).
     f32 yaw = 0.0f;                        ///< Radians; 0 looks down −Z.
     f32 pitch = -0.3f;                     ///< Radians; positive looks up.
     f32 fovY = glm::radians(60.0f);        ///< Vertical field of view in radians.
@@ -31,9 +31,9 @@ public:
     bool update(f32 dt, bool hovered);
 
     /// @brief Moves the camera so `target` is in front of it at `distance`.
-    void focus(const glm::vec3& target, f32 distance = 6.0f) { position = target - forward() * distance; }
+    void focus(const GlobalPosition& target, f32 distance = 6.0f) { position = target - forward() * distance; }
 
-    /// @brief Camera data for rendering.
+    /// @brief Camera data for rendering (camera-relative: the camera is the frame's origin).
     /// @param aspect Width / height of the viewport.
     CameraData data(f32 aspect) const;
 

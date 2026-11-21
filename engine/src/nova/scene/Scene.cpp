@@ -363,8 +363,8 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
     } else if (Entity cam = primaryCamera()) {
         auto& t = cam.transform();
         auto& c = cam.get<CameraComponent>();
-        glm::mat4 m = glm::translate(glm::mat4(1.0f), t.position.toVec3()) * glm::toMat4(t.orientation());
-        out.camera = CameraData::fromTransform(m, c.fovY, aspect, c.nearClip, c.farClip);
+        // Camera-relative: the camera is the frame's origin, everything else is measured from it.
+        out.camera = CameraData::relative(t.position, t.orientation(), c.fovY, aspect, c.nearClip, c.farClip);
         hasCamera = true;
     }
 
@@ -377,11 +377,11 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
     }
 
     for (auto [e, t, l] : m_registry.view<TransformComponent, PointLightComponent>().each())
-        out.pointLights.push_back({t.position.toVec3(), l.radius, l.color, l.intensity});
+        out.pointLights.push_back({(t.position - out.camera.origin).toVec3(), l.radius, l.color, l.intensity});
 
     for (auto [e, t, m] : m_registry.view<TransformComponent, MeshComponent>().each()) {
         if (!m.mesh) continue;
-        out.draws.push_back({m.mesh, t.matrix(), m.material, m.castShadows});
+        out.draws.push_back({m.mesh, t.matrixRelativeTo(out.camera.origin), m.material, m.castShadows});
     }
     return hasCamera;
 }

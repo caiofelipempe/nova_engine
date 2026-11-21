@@ -102,7 +102,7 @@ Isso mapeia direto para Vulkan (BDA + descriptor indexing) e para D3D12 (SM 6.6 
 
 **Recursos.** São handles geracionais (`BufferHandle`, `TextureHandle`, …): handles obsoletos são detectados em vez de apontarem para outro recurso. A destruição é adiada até a GPU terminar os frames em voo. O estado das texturas é rastreado e as barreiras (sync2) são emitidas automaticamente.
 
-**Frame.** `[TLAS build] → sky → forward PBR (HDR, RGBA16F) → pós-processamento do jogo (HDR) → tonemap (ACES) → UI`. Os dados por frame vêm de um alocador linear num buffer de upload por frame em voo.
+**Frame.** Relativo à câmera (a GPU só vê posições medidas a partir dela; veja [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md)). `[TLAS build] → sky → forward PBR (HDR, RGBA16F) → pós-processamento do jogo (HDR) → tonemap (ACES) → UI`. Os dados por frame vêm de um alocador linear num buffer de upload por frame em voo.
 
 ## Input e players
 
@@ -255,7 +255,7 @@ Um material (`#include "nova/material.glsl"`) implementa `material(inout Surface
 #include "nova/material.glsl"
 
 void material(inout Surface s) {
-    float scan = step(0.5, fract(s.worldPos.y * 10.0 - nova_time()));
+    float scan = step(0.5, fract(s.worldPos.y * 8.0 - nova_time())); // worldPos: mundo módulo 4096 m
     s.albedo   = mix(s.albedo, s.custom.rgb, 0.6);
     s.emissive += s.custom.rgb * scan;            // também: s.normal, s.metallic, s.roughness, s.unlit
 }
@@ -295,7 +295,7 @@ Próximos passos (a estrutura já está preparada):
 
 ## Roadmap geral
 
-- **Mundos grandes** com posições globais inteiras (ponto fixo em `int64`, escala ajustável, bordas com volta ou barreira): plano e status em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md); fases 1 (tipos e aritmética) e 2 (cena: `TransformComponent::position` é um `GlobalPosition`, mundo salvo na cena) concluídas.
+- **Mundos grandes** com posições globais inteiras (ponto fixo em `int64`, escala ajustável, bordas com volta ou barreira): plano e status em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md); fases 1 (tipos e aritmética), 2 (cena: `TransformComponent::position` é um `GlobalPosition`, mundo salvo na cena) e 3 (renderização relativa à câmera) concluídas.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
 - Renderer: materiais com mais texturas (normal, metallic-roughness, emissive), shadow maps como fallback sem RT, render graph, culling em GPU, backend D3D12.

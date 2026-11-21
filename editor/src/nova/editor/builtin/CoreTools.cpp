@@ -13,12 +13,14 @@ namespace nova::editor::builtin {
 bool TransformTool::localSpace = false;
 
 namespace {
-void applyMatrix(TransformComponent& t, const glm::mat4& m) {
+// `m` has its translation measured from `origin` (the camera).
+void applyMatrix(TransformComponent& t, const glm::mat4& m, const GlobalPosition& origin) {
     glm::vec3 scale, translation, skew;
     glm::vec4 persp;
     glm::quat rot;
     if (!glm::decompose(m, scale, rot, translation, skew, persp)) return;
-    t.position = translation;
+    // Keep the exact position when the gizmo did not move it (rotate/scale): no float round trip.
+    if (translation != glm::vec3((t.position - origin).toVec3())) t.position = origin + translation;
     t.rotation = glm::eulerAngles(rot);
     t.scale = scale;
 }
@@ -40,7 +42,9 @@ void TransformTool::onViewport(EditorContext& ctx, const ViewportState& vp) {
     glm::mat4 proj = vp.camera.projection;
     proj[1][1] *= -1.0f; // ImGuizmo expects GL-style Y-up clip space
 
-    const glm::mat4 before = primary.transform().matrix();
+    // Camera-relative matrices: the view is relative to vp.camera.origin, so are the models.
+    const GlobalPosition& origin = vp.camera.origin;
+    const glm::mat4 before = primary.transform().matrixRelativeTo(origin);
     glm::mat4 model = before;
     const ImGuizmo::OPERATION op = m_mode == Mode::Translate ? ImGuizmo::TRANSLATE
                                    : m_mode == Mode::Rotate  ? ImGuizmo::ROTATE
@@ -59,7 +63,7 @@ void TransformTool::onViewport(EditorContext& ctx, const ViewportState& vp) {
     for (Entity e : ctx.selection()) {
         if (!e.valid()) continue;
         auto& t = e.transform();
-        applyMatrix(t, e == primary ? model : delta * t.matrix());
+        applyMatrix(t, e == primary ? model : delta * t.matrixRelativeTo(origin), origin);
         if (scene.isSimulating()) scene.syncTransformToPhysics(e);
     }
 }

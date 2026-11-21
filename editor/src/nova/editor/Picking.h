@@ -14,7 +14,7 @@ namespace nova::editor {
 /// @brief What a pick ray hit.
 struct PickHit {
     Entity entity;           ///< Hit entity.
-    glm::vec3 point{0.0f};   ///< World-space hit point.
+    GlobalPosition point;    ///< World hit point (exact far from the origin).
     glm::vec3 normal{0.0f};  ///< World-space surface normal (facing the ray).
     f32 distance = 0.0f;     ///< Distance from the ray origin.
 };
@@ -32,7 +32,8 @@ struct PickOptions {
 };
 
 /// @brief Closest entity along a ray: exact triangles for meshes, a small sphere for the rest.
-std::optional<PickHit> pick(Scene& scene, const MeshLookup& meshes, const glm::vec3& origin, const glm::vec3& direction,
-                            const PickOptions& options = {});
+/// Geometry is tested relative to `origin`, so picking stays precise far from the world origin.
+std::optional<PickHit> pick(Scene& scene, const MeshLookup& meshes, const GlobalPosition& origin,
+                            const glm::vec3& direction, const PickOptions& options = {});
 
 } // namespace nova::editor

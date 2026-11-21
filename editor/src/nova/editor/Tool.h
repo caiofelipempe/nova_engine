@@ -21,7 +21,7 @@ struct ViewportState {
     glm::vec2 mouse{0.0f};      ///< Mouse position relative to `min`.
     bool hovered = false;       ///< The mouse is over the scene image (and no other window covers it).
     CameraData camera;          ///< Camera the image was rendered with (Vulkan clip space).
-    glm::vec3 rayOrigin{0.0f};  ///< World-space ray under the mouse: origin...
+    GlobalPosition rayOrigin;   ///< World ray under the mouse: exact origin...
     glm::vec3 rayDirection{0.0f, 0.0f, -1.0f}; ///< ...and normalized direction.
 };
 

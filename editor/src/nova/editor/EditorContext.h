@@ -211,7 +211,7 @@ public:
     std::vector<Entity> instantiateAsset(AssetGuid guid, const GlobalPosition& position,
                                          const std::function<void(std::vector<Entity>&)>& adjust = {});
     /// @brief Point in front of the editor camera where new things are placed.
-    glm::vec3 spawnPoint() const;
+    GlobalPosition spawnPoint() const;
     /// @}
 
     /// @brief The game code module host (`nullptr` when the editor has no EditorDesc::gameModule).

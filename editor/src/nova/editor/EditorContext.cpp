@@ -302,9 +302,10 @@ std::vector<Entity> EditorContext::instantiateAsset(AssetGuid guid, const Global
     return created;
 }
 
-glm::vec3 EditorContext::spawnPoint() const {
-    glm::vec3 p = m_camera.position + m_camera.forward() * 6.0f;
-    p.y = std::max(p.y, 0.5f);
+GlobalPosition EditorContext::spawnPoint() const {
+    GlobalPosition p = m_camera.position + m_camera.forward() * 6.0f;
+    const f64 y = p.toMeters().y;
+    if (y < 0.5) p += GlobalOffset::fromMeters(glm::dvec3(0.0, 0.5 - y, 0.0)); // not below the ground
     return p;
 }
 

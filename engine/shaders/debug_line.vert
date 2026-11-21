@@ -11,6 +11,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Li
 layout(push_constant) uniform LinePush {
     FrameBuffer frame;
     LineVertices vertices;
+    vec4 offset; // xyz: DebugDraw origin − frame origin
 } pc;
 
 layout(location = 0) out vec4 vColor;
@@ -18,6 +19,6 @@ layout(location = 0) out vec4 vColor;
 void main() {
     LineVertex v = pc.vertices.items[gl_VertexIndex];
     vColor = unpackUnorm4x8(v.color);
-    gl_Position = pc.frame.data.viewProj * vec4(v.position, 1.0);
+    gl_Position = pc.frame.data.viewProj * vec4(v.position + pc.offset.xyz, 1.0);
     gl_Position.z -= 2e-5 * gl_Position.w; // tiny bias: lines on surfaces win the depth test
 }

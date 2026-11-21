@@ -16,6 +16,8 @@ namespace nova::gpu {
 constexpr u32 kMaxPointLights = 16;      ///< Point lights per frame (`MAX_POINT_LIGHTS`).
 constexpr u32 kFrameFlagRtShadows = 1u;  ///< FrameData::flags: trace shadow rays (`FRAME_FLAG_RT_SHADOWS`).
 constexpr u32 kMaterialFlagChecker = 1u; ///< InstanceData::params.z bit: checker pattern (`MATERIAL_FLAG_CHECKER`).
+/// @brief Period (m) of the world position shaders see (`NOVA_WORLD_TILE`): patterns whose period divides it are seamless.
+constexpr f32 kWorldTile = 4096.0f;
 
 /// @brief One point light as seen by shaders.
 struct PointLight {
@@ -25,7 +27,7 @@ struct PointLight {
 
 /// @brief Per-frame constants, read through a device address.
 struct FrameData {
-    glm::mat4 view;          ///< World → view.
+    glm::mat4 view;          ///< (World − origin) → view: every position the GPU sees is camera-relative.
     glm::mat4 proj;          ///< View → clip.
     glm::mat4 viewProj;      ///< World → clip.
     glm::mat4 invViewProj;   ///< Clip → world (sky ray reconstruction).
@@ -35,13 +37,14 @@ struct FrameData {
     glm::vec4 skyZenith;     ///< rgb = zenith color, w = ambient intensity.
     glm::vec4 skyHorizon;    ///< rgb = horizon color.
     glm::vec4 groundColor;   ///< rgb = ground color.
+    glm::vec4 originTiled;   ///< xyz = frame origin (camera) modulo kWorldTile, w = kWorldTile.
     u32 pointLightCount;     ///< Number of valid entries in pointLights.
     u32 flags;               ///< kFrameFlag* bits.
     f32 shadowBias;          ///< Shadow ray origin offset along the normal.
     f32 _pad0;               ///< Padding (std430).
     PointLight pointLights[kMaxPointLights]; ///< Point lights.
 };
-static_assert(sizeof(FrameData) == 256 + 6 * 16 + 16 + kMaxPointLights * 32);
+static_assert(sizeof(FrameData) == 256 + 7 * 16 + 16 + kMaxPointLights * 32);
 
 /// @brief Per-draw instance data, indexed by DrawPush::instanceIndex.
 struct InstanceData {

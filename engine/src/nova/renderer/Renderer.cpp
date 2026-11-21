@@ -5,6 +5,7 @@
 #include "nova/renderer/GpuTypes.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 #include <algorithm>
 #include <cstring>
@@ -52,6 +53,45 @@ CameraData CameraData::fromTransform(const glm::mat4& cameraToWorld, f32 fovY, f
     c.projection[1][1] *= -1.0f;
     return c;
 }
+
+CameraData CameraData::relative(const GlobalPosition& eye, const glm::quat& orientation, f32 fovY, f32 aspect,
+                                f32 nearClip, f32 farClip) {
+    CameraData c;
+    c.origin = eye;
+    c.position = glm::vec3(0.0f);
+    c.view = glm::inverse(glm::toMat4(orientation)); // rotation only: the eye is the origin
+    c.projection = glm::perspective(fovY, aspect, nearClip, farClip);
+    c.projection[1][1] *= -1.0f;
+    return c;
+}
+
+CameraData CameraData::relativeLookAt(const GlobalPosition& eye, const glm::vec3& direction, f32 fovY, f32 aspect,
+                                      f32 nearClip, f32 farClip) {
+    CameraData c;
+    c.origin = eye;
+    c.position = glm::vec3(0.0f);
+    c.view = glm::lookAt(glm::vec3(0.0f), glm::normalize(direction), glm::vec3(0, 1, 0));
+    c.projection = glm::perspective(fovY, aspect, nearClip, farClip);
+    c.projection[1][1] *= -1.0f;
+    return c;
+}
+
+namespace {
+// The origin modulo the shaders' world tile, exact when the tile is a whole number of steps.
+glm::vec3 tiledOrigin(const GlobalPosition& origin) {
+    const f64 unit = WorldSpace::active().unit();
+    const f64 tileSteps = gpu::kWorldTile / unit;
+    glm::vec3 out;
+    if (tileSteps >= 1.0 && tileSteps < 9.2e18 && std::floor(tileSteps) == tileSteps) {
+        const i64 t = static_cast<i64>(tileSteps);
+        for (int i = 0; i < 3; ++i) out[i] = static_cast<f32>(static_cast<f64>(origin.raw(i) % t) * unit);
+    } else {
+        const glm::dvec3 m = origin.toMeters();
+        for (int i = 0; i < 3; ++i) out[i] = static_cast<f32>(std::fmod(m[i], static_cast<f64>(gpu::kWorldTile)));
+    }
+    return out;
+}
+} // namespace
 
 // -------------------------------------------------------------- RenderView --
 RenderView::RenderView(Renderer& renderer, Extent2D size, bool withOutput)
@@ -348,6 +388,7 @@ void Renderer::beginFrame() {
     m_lastStats = m_stats; // UI code runs before rendering, so expose the previous frame's numbers
     m_stats = {};
     m_debugDraw.clear();
+    m_debugDraw.setOrigin(m_lastOrigin);
 }
 
 Renderer::FrameAllocation Renderer::allocate(u64 size, u64 alignment) {
@@ -398,6 +439,8 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     fd.skyZenith = glm::vec4(s.skyZenith, s.ambientIntensity);
     fd.skyHorizon = glm::vec4(s.skyHorizon, 0.0f);
     fd.groundColor = glm::vec4(s.groundColor, 0.0f);
+    fd.originTiled = glm::vec4(tiledOrigin(scene.camera.origin), gpu::kWorldTile);
+    m_lastOrigin = scene.camera.origin;
     fd.pointLightCount = std::min<u32>(static_cast<u32>(scene.pointLights.size()), gpu::kMaxPointLights);
     fd.flags = useRt ? gpu::kFrameFlagRtShadows : 0u;
     fd.shadowBias = s.shadowBias;
@@ -552,7 +595,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     cmd.endRendering();
     cmd.endDebugLabel();
 
-    if (m_debugDraw.lineCount() > 0) drawDebugLines(cmd, frameAlloc.gpu, depth, output);
+    if (m_debugDraw.lineCount() > 0) drawDebugLines(cmd, frameAlloc.gpu, scene.camera.origin, depth, output);
 }
 
 PipelineHandle Renderer::linePipeline(Format format, bool onTop) {
@@ -576,11 +619,14 @@ PipelineHandle Renderer::linePipeline(Format format, bool onTop) {
     return p;
 }
 
-void Renderer::drawDebugLines(CommandList& cmd, u64 frameAddress, TextureHandle depth, TextureHandle output) {
+void Renderer::drawDebugLines(CommandList& cmd, u64 frameAddress, const GlobalPosition& origin, TextureHandle depth,
+                              TextureHandle output) {
     struct LinePush {
         u64 frame;
         u64 vertices;
+        glm::vec4 offset; // DebugDraw origin − frame origin (lines are recorded relative to the former)
     };
+    const glm::vec4 offset(glm::vec3((m_debugDraw.origin() - origin).toMeters()), 0.0f);
     cmd.beginDebugLabel("Debug lines");
     RenderingDesc pass;
     pass.colors.push_back({output, LoadOp::Load, StoreOp::Store});
@@ -597,7 +643,7 @@ void Renderer::drawDebugLines(CommandList& cmd, u64 frameAddress, TextureHandle 
         }
         std::memcpy(alloc.cpu, verts.data(), bytes);
         cmd.bindPipeline(linePipeline(m_device.backbufferFormat(), onTop)); // outputs use the swapchain format
-        cmd.pushConstants(LinePush{frameAddress, alloc.gpu});
+        cmd.pushConstants(LinePush{frameAddress, alloc.gpu, offset});
         cmd.draw(static_cast<u32>(verts.size()));
     }
     cmd.endRendering();

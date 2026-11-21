@@ -43,7 +43,7 @@ public:
             ImGui::PushID(static_cast<int>(entt::to_integral(e)));
             if (ImGui::Selectable(name.name.c_str(), ctx.selected() == entity)) {
                 ctx.select(entity);
-                ctx.camera().focus(entity.transform().position.toVec3());
+                ctx.camera().focus(entity.transform().position);
             }
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 40.0f);
             ImGui::TextDisabled("%d pts", target.points);
@@ -81,7 +81,7 @@ public:
             m_last.reset();
         }
         if (m_stroke.active()) {
-            if (m_hover && (!m_last || glm::distance(*m_last, m_hover->point) >= spacing)) {
+            if (m_hover && (!m_last || nova::distance(*m_last, m_hover->point) >= spacing)) {
                 Entity e = builtin::createMeshEntity(ctx, "Target", renderer.sphere());
                 e.transform().position = m_hover->point + m_hover->normal * 0.3f;
                 e.transform().scale = glm::vec3(0.6f);
@@ -112,7 +112,7 @@ public:
 private:
     CreationTransaction m_stroke;
     std::optional<PickHit> m_hover;
-    std::optional<glm::vec3> m_last;
+    std::optional<GlobalPosition> m_last;
 };
 
 } // namespace

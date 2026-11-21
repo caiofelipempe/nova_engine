@@ -67,8 +67,25 @@ scene.setWorldSpace(nova::WorldSpaceDesc::withMaxSize(10, nova::LengthUnit::Kilo
   ponto próximo (a câmera, na fase 3). `matrix()` ainda é absoluta em `float`.
 - Inspetor: posição em metros com `double` (o tooltip mostra a unidade legível e os passos inteiros);
   editar um eixo move só ele, os outros continuam bit a bit.
-- Ainda em `float` a partir da origem do mundo, até as próximas fases: renderização, DebugDraw,
-  picking e câmera do editor (fase 3), física (fase 4).
+- Ainda em `float` a partir da origem do mundo: a física (fase 4).
+
+## Renderização relativa à câmera (fase 3)
+
+- `CameraData` tem uma `origin` (`GlobalPosition`); `CameraData::relative(eye, orientação, ...)` e
+  `relativeLookAt(eye, direção, ...)` fazem do olho a origem. Tudo na `RenderScene` (transforms dos
+  draws, luzes, TLAS) é medido a partir dela, então a GPU só vê `float` pequenos — testado com a
+  cena inteira a 10.000 km da origem, onde o `float` absoluto tem precisão de 1 m.
+- `Scene::buildRenderScene` monta tudo relativo à câmera (`TransformComponent::matrixRelativeTo`).
+- Shaders: posições são relativas à câmera (`s.relativePos`, exato, é o que a iluminação usa);
+  `s.worldPos` é a posição de mundo **módulo 4096 m** (`NOVA_WORLD_TILE`), contínua para padrões
+  cujo período divide 4096 m (o checker, ruído em potências de 2) e precisa em qualquer lugar.
+  `FrameData::originTiled` leva a origem já reduzida (em inteiro, quando a unidade permite).
+- `DebugDraw` recebe `GlobalPosition` (metros em `vec3` convertem implicitamente) e guarda as linhas
+  relativas a uma origem própria (a câmera do frame anterior); o renderer corrige a diferença para a
+  câmera atual com um único deslocamento por render.
+- Editor: a câmera é uma `GlobalPosition`; o raio do mouse (`ViewportState::rayOrigin`), o picking
+  (`PickHit::point`), o ponto de spawn e o soltar de assets são exatos; o gizmo trabalha em espaço
+  da câmera e só regrava a posição quando ela de fato mudou.
 
 ## Tempo exato
 
@@ -92,7 +109,7 @@ Vetores e quaternions continuam sendo os do glm (genérico por tipo em tempo de 
 `glm::vec3`, `glm::dvec3`, `glm::i64vec3`...). `GlobalPosition::raw()` e `GlobalOffset::raw()`
 devolvem os passos como `glm::i64vec3`.
 
-Status: **Fases 1 e 2 concluídas** (`engine/src/nova/math/`, testes em `tests/WorldSpaceTests.cpp`).
+Status: **Fases 1, 2 e 3 concluídas** (`engine/src/nova/math/`, testes em `tests/WorldSpaceTests.cpp`).
 
 ## Fases
 

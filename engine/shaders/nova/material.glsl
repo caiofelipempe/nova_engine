@@ -34,7 +34,8 @@ struct Surface {
     vec3 emissive;    // HDR emitted radiance (already × strength)
     bool unlit;       // true: output albedo + emissive, skip lighting
     // Read-only inputs (changing them has no effect on lighting):
-    vec3 worldPos;
+    vec3 worldPos;    // world position modulo NOVA_WORLD_TILE (4096 m): for patterns and noise
+    vec3 relativePos; // position relative to the camera (exact; what lighting uses)
     vec2 uv;
     vec3 viewDir;     // unit vector from the surface to the camera
     vec4 custom;      // Material::customParams
@@ -63,13 +64,14 @@ void main() {
     Surface s;
     s.normal = normalize(vNormal);
     if (!gl_FrontFacing) s.normal = -s.normal;
-    s.worldPos = vWorldPos;
+    s.relativePos = vWorldPos;
+    s.worldPos = vWorldPos + pc.frame.data.originTiled.xyz;
     s.uv = vUV;
     s.viewDir = normalize(nova_cameraPos() - vWorldPos);
     s.custom = inst.custom;
     s.albedo = inst.baseColor.rgb * nova_texture(int(inst.params.w), vUV).rgb;
     if ((matFlags & MATERIAL_FLAG_CHECKER) != 0u) {
-        vec2 c = floor(vWorldPos.xz);
+        vec2 c = floor(s.worldPos.xz);
         s.albedo *= mod(c.x + c.y, 2.0) < 1.0 ? 1.0 : 0.6;
     }
     s.metallic = inst.params.x;

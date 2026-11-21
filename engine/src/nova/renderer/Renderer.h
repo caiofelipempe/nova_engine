@@ -20,10 +20,34 @@ namespace nova {
 // ------------------------------------------------------------- frame input --
 
 /// @brief View and projection of the camera a frame is rendered from.
+///
+/// Everything the GPU sees is measured from `origin` (camera-relative rendering): with
+/// relative() / relativeLookAt() the origin is the eye itself, so view, position and every
+/// transform of the RenderScene stay small floats however far from the world origin the camera is.
 struct CameraData {
-    glm::mat4 view{1.0f};       ///< World → view.
+    glm::mat4 view{1.0f};       ///< (World − origin) → view.
     glm::mat4 projection{1.0f}; ///< View → clip, Vulkan convention (Y down, depth 0..1).
-    glm::vec3 position{0.0f};   ///< Camera position in world space.
+    glm::vec3 position{0.0f};   ///< Camera position relative to `origin` (zero for relative cameras).
+    GlobalPosition origin;      ///< Point every position of the frame is measured from.
+
+    /// @brief Camera at `eye` (which becomes the origin) with the given orientation (looks down −Z).
+    /// @param eye Exact world position of the camera.
+    /// @param orientation World rotation of the camera.
+    /// @param fovY Vertical field of view in radians.
+    /// @param aspect Width / height of the target.
+    /// @param nearClip Near plane distance.
+    /// @param farClip Far plane distance.
+    static CameraData relative(const GlobalPosition& eye, const glm::quat& orientation, f32 fovY, f32 aspect,
+                               f32 nearClip, f32 farClip);
+    /// @brief Camera at `eye` (which becomes the origin) looking along `direction` (Y up).
+    /// @param eye Exact world position of the camera.
+    /// @param direction View direction (need not be normalized).
+    /// @param fovY Vertical field of view in radians.
+    /// @param aspect Width / height of the target.
+    /// @param nearClip Near plane distance.
+    /// @param farClip Far plane distance.
+    static CameraData relativeLookAt(const GlobalPosition& eye, const glm::vec3& direction, f32 fovY, f32 aspect,
+                                     f32 nearClip, f32 farClip);
 
     /// @brief Perspective camera looking from `position` at `target` (Y up).
     /// @param fovY Vertical field of view in radians.
@@ -51,7 +75,7 @@ struct DirectionalLightData {
 
 /// @brief A point light with a finite radius (smooth windowed inverse-square falloff).
 struct PointLightData {
-    glm::vec3 position{0.0f}; ///< World position.
+    glm::vec3 position{0.0f}; ///< Position measured from CameraData::origin.
     f32 radius = 8.0f;        ///< Distance at which the light reaches zero.
     glm::vec3 color{1.0f};    ///< Linear RGB color.
     f32 intensity = 10.0f;    ///< Radiance multiplier.
@@ -60,14 +84,15 @@ struct PointLightData {
 /// @brief One mesh instance to draw.
 struct DrawItem {
     MeshHandle mesh;           ///< Mesh created with Renderer::createMesh.
-    glm::mat4 transform{1.0f}; ///< Object → world.
+    glm::mat4 transform{1.0f}; ///< Object → world, translation measured from CameraData::origin.
     Material material;         ///< Surface parameters.
     bool castShadows = true;   ///< Include in the ray tracing scene (ray-traced shadows).
 };
 
 /// @brief Everything needed to draw one frame of a scene.
 ///
-/// Built by Scene::buildRenderScene(), or filled by hand when not using the ECS.
+/// Built by Scene::buildRenderScene(), or filled by hand when not using the ECS. Positions and
+/// transforms are measured from `camera.origin` (the camera itself for scenes built from the ECS).
 /// Reuse the same object every frame to avoid reallocations (see clear()).
 struct RenderScene {
     CameraData camera;                       ///< Point of view.
@@ -264,6 +289,8 @@ public:
     bool rayTracingAvailable() const { return m_device.caps().rayQuery; }
     /// @brief The device the renderer draws with.
     rhi::Device& device() { return m_device; }
+    /// @brief Origin of the last frame rendered (DebugDraw records lines relative to it).
+    const GlobalPosition& lastOrigin() const { return m_lastOrigin; }
 
     static constexpr rhi::Format kHdrFormat = rhi::Format::RGBA16_FLOAT; ///< Format of the HDR color target.
     static constexpr rhi::Format kDepthFormat = rhi::Format::D32_FLOAT;  ///< Format of the depth target.
@@ -300,7 +327,8 @@ private:
     void createPipelines();
     rhi::PipelineHandle tonemapPipeline(rhi::Format format);
     rhi::PipelineHandle linePipeline(rhi::Format format, bool onTop);
-    void drawDebugLines(rhi::CommandList& cmd, u64 frameAddress, rhi::TextureHandle depth, rhi::TextureHandle output);
+    void drawDebugLines(rhi::CommandList& cmd, u64 frameAddress, const GlobalPosition& origin, rhi::TextureHandle depth,
+                        rhi::TextureHandle output);
     FrameAllocation allocate(u64 size, u64 alignment = 256);
     void renderInternal(rhi::CommandList& cmd, const RenderScene& scene, RenderView& view, rhi::TextureHandle output);
     rhi::PipelineHandle materialPipeline(ShaderHandle shader, bool rayQuery);
@@ -342,6 +370,7 @@ private:
     std::vector<rhi::AccelStructHandle> m_tlas;   // one per frame in flight
 
     Scope<RenderView> m_backbufferView;
+    GlobalPosition m_lastOrigin;
 };
 
 } // namespace nova

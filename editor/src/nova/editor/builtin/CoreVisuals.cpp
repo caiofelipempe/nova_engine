@@ -19,11 +19,11 @@ const glm::vec4 kCamera{0.7f, 0.8f, 1.0f, 0.9f};
 void drawFrustum(DebugDraw& dd, const TransformComponent& t, const CameraComponent& c) {
     const f32 farDist = std::min(c.farClip, 4.0f), aspect = 16.0f / 9.0f;
     const f32 h = std::tan(c.fovY * 0.5f), w = h * aspect;
-    const glm::mat4 m = glm::translate(glm::mat4(1.0f), t.position.toVec3()) * glm::toMat4(t.orientation());
-    auto corner = [&](f32 d, f32 sx, f32 sy) { return glm::vec3(m * glm::vec4(sx * w * d, sy * h * d, -d, 1.0f)); };
+    const glm::quat q = t.orientation();
+    auto corner = [&](f32 d, f32 sx, f32 sy) { return t.position + q * glm::vec3(sx * w * d, sy * h * d, -d); };
     const f32 n = c.nearClip;
-    glm::vec3 nc[4] = {corner(n, -1, -1), corner(n, 1, -1), corner(n, 1, 1), corner(n, -1, 1)};
-    glm::vec3 fc[4] = {corner(farDist, -1, -1), corner(farDist, 1, -1), corner(farDist, 1, 1), corner(farDist, -1, 1)};
+    GlobalPosition nc[4] = {corner(n, -1, -1), corner(n, 1, -1), corner(n, 1, 1), corner(n, -1, 1)};
+    GlobalPosition fc[4] = {corner(farDist, -1, -1), corner(farDist, 1, -1), corner(farDist, 1, 1), corner(farDist, -1, 1)};
     for (int i = 0; i < 4; ++i) {
         dd.line(nc[i], nc[(i + 1) % 4], kCamera);
         dd.line(fc[i], fc[(i + 1) % 4], kCamera);
@@ -33,11 +33,11 @@ void drawFrustum(DebugDraw& dd, const TransformComponent& t, const CameraCompone
 
 void drawLight(DebugDraw& dd, Entity e) {
     const auto& t = e.transform();
-    if (auto* l = e.tryGet<PointLightComponent>()) dd.sphere(t.position.toVec3(), l->radius, kLight);
+    if (auto* l = e.tryGet<PointLightComponent>()) dd.sphere(t.position, l->radius, kLight);
     if (e.has<DirectionalLightComponent>()) {
         const glm::vec3 dir = t.forward();
         for (const glm::vec3 offset : {glm::vec3(0.0f), t.right() * 0.3f, -t.right() * 0.3f})
-            dd.arrow(t.position.toVec3() + offset, t.position.toVec3() + offset + dir * 2.0f, kLight, true);
+            dd.arrow(t.position + offset, t.position + offset + dir * 2.0f, kLight, true);
     }
     if (auto* c = e.tryGet<CameraComponent>()) drawFrustum(dd, t, *c);
 }
@@ -49,13 +49,13 @@ void drawCollider(DebugDraw& dd, Entity e, const glm::vec4& color) {
     const glm::vec3 s = glm::abs(t.scale);
     const glm::quat q = t.orientation();
     if (auto* box = e.tryGet<BoxColliderComponent>()) {
-        dd.box(t.position.toVec3() + q * (box->offset * s), box->halfExtents * s, q, color);
+        dd.box(t.position + q * (box->offset * s), box->halfExtents * s, q, color);
     } else if (auto* sphere = e.tryGet<SphereColliderComponent>()) {
-        dd.sphere(t.position.toVec3() + q * (sphere->offset * s), sphere->radius * std::max({s.x, s.y, s.z}), color);
+        dd.sphere(t.position + q * (sphere->offset * s), sphere->radius * std::max({s.x, s.y, s.z}), color);
     } else if (auto* cap = e.tryGet<CapsuleColliderComponent>()) {
-        dd.capsule(t.position.toVec3() + q * (cap->offset * s), q, cap->radius * std::max(s.x, s.z), cap->halfHeight * s.y, color);
+        dd.capsule(t.position + q * (cap->offset * s), q, cap->radius * std::max(s.x, s.z), cap->halfHeight * s.y, color);
     } else {
-        dd.box(t.position.toVec3(), 0.5f * s, q, color);
+        dd.box(t.position, 0.5f * s, q, color);
     }
 }
 
@@ -89,9 +89,10 @@ void CoreVisualsPlugin::onRegister(Registry& r) {
             if (settings.selectionBounds) {
                 if (auto* mc = e.tryGet<MeshComponent>(); mc && mc->mesh) {
                     const Bounds b = renderer.meshBounds(mc->mesh);
-                    dd.box(e.transform().matrix(), b.center(), b.extents() * 1.02f, kSelection);
+                    const auto& t = e.transform();
+                    dd.box(t.position, t.matrixRelativeTo(t.position), b.center(), b.extents() * 1.02f, kSelection);
                 } else {
-                    dd.sphere(e.transform().position.toVec3(), 0.3f, kSelection, true);
+                    dd.sphere(e.transform().position, 0.3f, kSelection, true);
                 }
             }
             if (e.has<RigidBodyComponent>()) drawCollider(dd, e, kCollider);

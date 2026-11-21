@@ -12,6 +12,11 @@
 
 #define MATERIAL_FLAG_CHECKER 1u
 
+// Positions on the GPU are relative to the frame origin (the camera). Shaders that need world
+// coordinates (patterns, noise) use the world position modulo this tile: seamless for any period
+// that divides it, and precise however far the camera is from the world origin.
+#define NOVA_WORLD_TILE 4096.0
+
 struct PointLight {
     vec4 positionRadius;  // xyz position, w radius
     vec4 colorIntensity;  // rgb color, w intensity
@@ -22,12 +27,13 @@ struct FrameData {
     mat4 proj;
     mat4 viewProj;
     mat4 invViewProj;
-    vec4 cameraPos;     // xyz, w = time (s)
+    vec4 cameraPos;     // xyz relative to the frame origin (zero for camera-relative frames), w = time (s)
     vec4 sunDirection;  // xyz = direction the light travels, w = intensity
     vec4 sunColor;      // rgb
     vec4 skyZenith;     // rgb, w = ambient intensity
     vec4 skyHorizon;
     vec4 groundColor;
+    vec4 originTiled;   // xyz = frame origin modulo NOVA_WORLD_TILE, w = NOVA_WORLD_TILE
     uint pointLightCount;
     uint flags;
     float shadowBias;
