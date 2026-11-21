@@ -41,6 +41,40 @@ void drawLight(DebugDraw& dd, Entity e) {
     }
     if (auto* c = e.tryGet<CameraComponent>()) drawFrustum(dd, t, *c);
 }
+// Barrier edges (red) and wrap seams (cyan) within reach of the camera, as a world-anchored grid
+// patch on the edge plane.
+void drawWorldBounds(DebugDraw& dd, const GlobalPosition& camera) {
+    const WorldSpace& world = WorldSpace::active();
+    constexpr f64 kReach = 300.0;  // draw edges closer than this to the camera
+    constexpr f32 kHalf = 120.0f;  // half size of the drawn patch
+    constexpr f32 kStep = 10.0f;   // grid spacing
+    const glm::dvec3 camMeters = camera.toMeters();
+    for (int axis = 0; axis < 3; ++axis) {
+        const WorldSpace::Axis& a = world.axis(axis);
+        const bool wrap = a.boundary == WorldBoundary::Wrap;
+        const glm::vec4 color = wrap ? glm::vec4(0.2f, 0.85f, 1.0f, 0.8f) : glm::vec4(1.0f, 0.25f, 0.2f, 0.8f);
+        // Barrier: both edges. Wrap: the seam, where max meets min.
+        const i64 edges[2] = {a.min, a.max};
+        for (int k = 0; k < (wrap ? 1 : 2); ++k) {
+            const f64 d = static_cast<f64>(world.difference(axis, edges[k], camera.raw(axis))) * world.unit();
+            if (std::abs(d) > kReach) continue;
+            const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+            glm::vec3 toPlane(0.0f);
+            toPlane[axis] = static_cast<f32>(d);
+            // Snap the grid to world multiples of kStep so it does not slide with the camera.
+            toPlane[u] = -static_cast<f32>(std::fmod(camMeters[u], static_cast<f64>(kStep)));
+            toPlane[v] = -static_cast<f32>(std::fmod(camMeters[v], static_cast<f64>(kStep)));
+            const GlobalPosition center = camera + toPlane;
+            for (f32 o = -kHalf; o <= kHalf; o += kStep) {
+                glm::vec3 a0(0.0f), a1(0.0f), b0(0.0f), b1(0.0f);
+                a0[u] = -kHalf, a1[u] = kHalf, a0[v] = a1[v] = o;
+                b0[v] = -kHalf, b1[v] = kHalf, b0[u] = b1[u] = o;
+                dd.line(center + a0, center + a1, color);
+                dd.line(center + b0, center + b1, color);
+            }
+        }
+    }
+}
 } // namespace
 
 void drawCollider(DebugDraw& dd, Entity e, const glm::vec4& color) {
@@ -73,11 +107,13 @@ void CoreVisualsPlugin::onRegister(Registry& r) {
     toggle("view.colliders", "View/Show All Colliders", &VisualSettings::allColliders, 201);
     toggle("view.lights", "View/Show Light and Camera Gizmos", &VisualSettings::lights, 202);
     toggle("view.grid", "View/Show Grid", &VisualSettings::grid, 203);
+    toggle("view.worldBounds", "View/Show World Bounds", &VisualSettings::worldBounds, 204);
 
     r.uiHook([](EditorContext& ctx) {
         DebugDraw& dd = ctx.renderer().debugDraw();
         Scene& scene = ctx.scene();
         if (settings.grid) dd.grid({0.0f, 0.002f, 0.0f}, 40.0f, 40, {0.45f, 0.45f, 0.5f, 0.6f});
+        if (settings.worldBounds) drawWorldBounds(dd, ctx.camera().position);
 
         if (settings.allColliders)
             for (auto [h, rb] : scene.registry().view<RigidBodyComponent>().each())

@@ -110,6 +110,20 @@ scene.setWorldSpace(nova::WorldSpaceDesc::withMaxSize(10, nova::LengthUnit::Kilo
 - Testado com a cena física inteira a 10.000 km da origem (pilha de caixas estável, consultas
   corretas), onde o Jolt em coordenadas absolutas teria precisão de 1 m.
 
+## Editor (fase 5)
+
+- Painel **World**: passo (unidade) e, por eixo, tamanho e borda, cada valor na unidade métrica que
+  for mais cômoda; "Finest step for these sizes" (`fitUnit`) e "Every axis at most this"
+  (o `withMaxSize`); prévia do resultado já com os limites aplicados; Apply / Revert. Mostra também a
+  posição da câmera e, durante o Play, a origem da física. Fica bloqueado durante o Play.
+- `EditorContext::setWorldSpace(desc)` aplica como **um passo de undo**: entidades e a câmera do editor
+  mantêm o lugar em metros; o undo volta as configurações e cada posição bit a bit.
+- *View/Show World Bounds* (ligado por padrão): bordas `Barrier` em vermelho e emendas `Wrap` em
+  ciano, como uma grade ancorada no mundo, quando estão a menos de 300 m da câmera.
+- A câmera do editor atravessa a emenda sem pulo, e renderização, picking e gizmo veem o mundo
+  contínuo através dela (coberto pelos testes do editor).
+- A posição da câmera aparece no canto da viewport, na unidade mais legível.
+
 ## Tempo exato
 
 O tempo segue o mesmo modelo das posições (`nova/math/Time.h`):
@@ -132,7 +146,7 @@ Vetores e quaternions continuam sendo os do glm (genérico por tipo em tempo de 
 `glm::vec3`, `glm::dvec3`, `glm::i64vec3`...). `GlobalPosition::raw()` e `GlobalOffset::raw()`
 devolvem os passos como `glm::i64vec3`.
 
-Status: **Fases 1 a 4 concluídas** (`engine/src/nova/math/`, testes em `tests/WorldSpaceTests.cpp`).
+Status: **Fases 1 a 5 concluídas** (a 6 — várias regiões de física e determinismo — fica para depois) (`engine/src/nova/math/`, testes em `tests/WorldSpaceTests.cpp`).
 
 ## Fases
 

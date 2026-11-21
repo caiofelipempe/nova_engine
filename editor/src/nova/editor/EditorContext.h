@@ -155,6 +155,12 @@ public:
     EditTransaction beginEdit(std::string name, const std::vector<Entity>& entities);
     /// @brief Runs `change` as one undoable edit of `entities`.
     void edit(std::string name, const std::vector<Entity>& entities, const std::function<void()>& change);
+    /// @brief Changes the scene's world settings (unit, sizes, boundaries) as one undoable step.
+    ///
+    /// Entities and the editor camera keep their place in meters (clamped or wrapped into the new
+    /// world); undo restores the previous settings and every position bit for bit.
+    /// @return False while playing (the world is fixed during simulation).
+    bool setWorldSpace(const WorldSpaceDesc& desc);
     /// @brief Starts recording entity creation (commit when done).
     CreationTransaction beginCreation(std::string name);
     /// @brief Runs `create` and records every entity it creates as one undo step. @return The created entities.

@@ -62,6 +62,24 @@ public:
     void onImGui(EditorContext& ctx) override;
 };
 
+/// @brief World settings of the scene: step size (unit), per-axis size and boundary.
+///
+/// Edits are pending until Apply, which goes through EditorContext::setWorldSpace (one undo step).
+class WorldPanel final : public Panel {
+public:
+    WorldPanel();
+    void onImGui(EditorContext& ctx) override;
+
+private:
+    WorldSpaceDesc m_pending;       // what the fields show
+    WorldSpaceDesc m_loaded;        // scene settings m_pending was loaded from
+    bool m_hasLoaded = false;
+    LengthUnit m_unitShown = LengthUnit::Nanometer;
+    LengthUnit m_sizeShown[3] = {LengthUnit::Kilometer, LengthUnit::Kilometer, LengthUnit::Kilometer};
+    f64 m_maxSize = 10.0;           // "every dimension at most" helper
+    LengthUnit m_maxSizeUnit = LengthUnit::Kilometer;
+};
+
 /// @brief Recent log messages.
 class ConsolePanel final : public Panel {
 public:

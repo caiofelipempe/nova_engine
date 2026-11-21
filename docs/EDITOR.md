@@ -290,12 +290,13 @@ if (auto* vp = r.findPanel<nova::editor::builtin::ViewportPanel>()) vp->useScene
 | Modo de jogo | `ctx.play()`, `ctx.pause()`, `ctx.stop()`, `ctx.playState()` — o Stop restaura a cena inteira (entidades criadas somem, destruídas voltam); handles mudam, **UUIDs** (`entity.uuid()`, `scene.findEntityByUuid`) não |
 | Arquivos de cena | `ctx.newScene()`, `ctx.openScene(path)`, `ctx.saveScene(path)`, `ctx.scenePath()` |
 | Assets | `ctx.assets()` (`AssetDatabase`: `find`, `findByPath`, `load`, `instantiate`, `import`, `createPrefab`, `addImporter`), `ctx.instantiateAsset(guid, pos)`, `ctx.spawnPoint()` |
-| Câmera do editor | `ctx.camera()` (`focus(pos)`, `position`, `yaw`, `pitch`) |
+| Câmera do editor | `ctx.camera()` (`focus(pos)`, `position` — uma `GlobalPosition`, `yaw`, `pitch`) |
+| Mundo | `ctx.setWorldSpace(desc)` — unidade, tamanho e borda por eixo, como um passo de undo (o undo restaura as posições bit a bit); painel **World**; *View/Show World Bounds* desenha barreiras (vermelho) e emendas (ciano) perto da câmera |
 | Código do jogo | `ctx.gameModule()` (`GameModuleHost`: `reload()`, `build()`, `isBuilding()`, `reloadCount()`, sinal `reloaded`) |
 | Engine | `ctx.app()`, `ctx.renderer()` |
 | Extensões | `ctx.registry()` (`execute("id")`, `findPanel<T>()`...) |
 
-Widgets prontos com o visual do editor: `nova::editor::widgets::vec3`, `widgets::material`, `widgets::componentHeader`.
+Widgets prontos com o visual do editor: `nova::editor::widgets::vec3`, `widgets::position` (posição global em metros), `widgets::material`, `widgets::componentHeader`.
 
 ## 4. Comandos e atalhos embutidos
 
