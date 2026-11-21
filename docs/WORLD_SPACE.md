@@ -156,6 +156,11 @@ da câmera. Basta enquanto o alcance da visão (`farClip`) for menor que meia vo
 vendo a 400 m, o mundo deveria se repetir até o horizonte — e só aparece uma volta.
 
 Plano:
+- **Opcional, sem custo quando não precisa:** uma configuração (ex.: `RenderSettings::wrapCopies`
+  = `Off` / `Auto` / `On`, padrão `Off`). Desligada, o caminho atual não muda (nenhum teste de
+  cópia). Em `Auto`, as cópias só são consideradas quando o mundo tem eixo com volta **e** o alcance
+  da câmera passa de meia volta desse eixo — num mundo grande isso nunca acontece, então nada extra
+  roda. A decisão é feita uma vez por frame (por câmera), não por objeto.
 - **Cópias por volta:** para cada eixo com volta, gerar as cópias de cada objeto deslocadas de
   `k × tamanho do eixo`, para todo `k` cuja cópia caia dentro do alcance da câmera
   (`|k| ≤ ceil(farClip / tamanho)`); combinar os eixos (X × Z). Cópias em lugares diferentes não são
