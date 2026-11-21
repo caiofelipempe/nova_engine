@@ -26,7 +26,7 @@ void buildDemoScene(editor::EditorContext& ctx) {
 
     Entity sun = scene.createEntity("Sun");
     sun.add<DirectionalLightComponent>(glm::vec3(1.0f, 0.95f, 0.85f), 3.5f);
-    sun.transform().rotation = {glm::radians(-42.0f), glm::radians(30.0f), 0.0f};
+    sun.transform().setEulerDegrees({-42.0f, 30.0f, 0.0f}); // pitch, yaw, roll
 
     Entity ground = primitive(scene, "Ground", r.plane());
     ground.transform().scale = {60.0f, 1.0f, 60.0f};

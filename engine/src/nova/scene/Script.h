@@ -34,7 +34,7 @@ struct WorldBoundaryHit {
 /// every frame. An entity may have several scripts, run in the order they were added.
 /// @code
 /// struct Spinner : nova::Script {
-///     void onUpdate(float dt) override { transform().rotation.y += dt; }
+///     void onUpdate(float dt) override { transform().rotateLocal(dt, {0, 1, 0}); }
 ///     void onCollision(const nova::Collision& c) override { NOVA_INFO("hit {}", c.other.name()); }
 /// };
 /// entity.addScript<Spinner>();

@@ -386,6 +386,80 @@ void cameraRelativeRendering() {
     CHECK(dd.lineCount() == 1 && near(dd.vertices(false)[1].position.x, 0.0005, 1e-7));
 }
 
+bool sameRotation(const glm::quat& a, const glm::quat& b, f32 eps = 1e-5f) {
+    return std::abs(std::abs(glm::dot(a, b)) - 1.0f) <= eps; // q and −q are the same rotation
+}
+
+void rotations() {
+    const EulerOrder orders[] = {EulerOrder::XYZ, EulerOrder::XZY, EulerOrder::YXZ,
+                                 EulerOrder::YZX, EulerOrder::ZXY, EulerOrder::ZYX};
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<f32> any(-3.0f, 3.0f), middle(-1.4f, 1.4f);
+    bool roundTrip = true, anglesBack = true;
+    for (EulerOrder order : orders)
+        for (int i = 0; i < 200; ++i) {
+            // Angles in the canonical range: the middle rotation of the order within ±80°.
+            glm::vec3 e(any(rng), any(rng), any(rng));
+            const char* name = eulerOrderName(order);
+            e[name[1] - 'X'] = middle(rng);
+            const glm::quat q = quatFromEuler(e, order);
+            const glm::vec3 back = eulerFromQuat(q, order);
+            roundTrip &= sameRotation(quatFromEuler(back, order), q);
+            anglesBack &= glm::length(back - e) < 1e-3f;
+        }
+    CHECK(roundTrip && anglesBack);
+
+    // The old convention (glm::quat(vec3), used by older scene files) is ZYX.
+    bool legacy = true;
+    for (int i = 0; i < 100; ++i) {
+        const glm::vec3 e(any(rng), any(rng), any(rng));
+        legacy &= sameRotation(quatFromEuler(e, EulerOrder::ZYX), glm::quat(e));
+    }
+    CHECK(legacy);
+
+    // Known values: 90° yaw turns forward (−Z) to −X; the order matters once two axes are involved.
+    const glm::quat yaw90 = quatFromEulerDegrees({0, 90, 0});
+    CHECK(glm::length(yaw90 * glm::vec3(0, 0, -1) - glm::vec3(-1, 0, 0)) < 1e-5f);
+    CHECK(!sameRotation(quatFromEulerDegrees({30, 60, 0}, EulerOrder::XYZ), quatFromEulerDegrees({30, 60, 0}, EulerOrder::YXZ)));
+    // Yaw then pitch (YXZ): pitch is around the camera's own right axis, so forward keeps its heading.
+    const glm::vec3 f = quatFromEulerDegrees({-30, 90, 0}) * glm::vec3(0, 0, -1);
+    CHECK(f.x < -0.8f && f.y < -0.4f && std::abs(f.z) < 1e-5f);
+
+    // Gimbal lock: pitch ±90° in YXZ; the angles still rebuild the same rotation.
+    const glm::quat locked = quatFromEulerDegrees({90, 40, 25});
+    const glm::vec3 lockedBack = eulerDegreesFromQuat(locked);
+    CHECK(std::abs(lockedBack.x - 90.0f) < 1e-2f && lockedBack.z == 0.0f);
+    CHECK(sameRotation(quatFromEulerDegrees(lockedBack), locked, 1e-4f));
+
+    // TransformComponent: stored as a quaternion, viewed and set as Euler in any order.
+    TransformComponent t;
+    t.setEulerDegrees({10, 20, 30}, EulerOrder::ZXY);
+    const glm::vec3 d = t.eulerDegrees(EulerOrder::ZXY);
+    CHECK(glm::length(d - glm::vec3(10, 20, 30)) < 1e-3f);
+    CHECK(sameRotation(t.rotation, quatFromEulerDegrees({10, 20, 30}, EulerOrder::ZXY)));
+    t.rotation = glm::quat(1, 0, 0, 0);
+    t.rotate(glm::radians(90.0f), {0, 1, 0});
+    t.rotateLocal(glm::radians(90.0f), {1, 0, 0}); // then pitch up around its own X
+    CHECK(glm::length(t.forward() - glm::vec3(0, 1, 0)) < 1e-5f);
+    t.position = {0.0, 0.0, 0.0};
+    t.lookAt(GlobalPosition(3.0, 0.0, -3.0));
+    CHECK(glm::length(t.forward() - glm::normalize(glm::vec3(1, 0, -1))) < 1e-5f);
+
+    // Files: quaternions as [x, y, z, w]; older files (Euler radians) still load, same orientation.
+    Scene scene;
+    Entity e = scene.createEntity("Rot");
+    e.transform().setEulerDegrees({15, -70, 5});
+    const std::string json = serializeScene(scene);
+    Scene back;
+    CHECK(deserializeScene(back, json));
+    CHECK(sameRotation(back.findEntity("Rot").transform().rotation, e.transform().rotation, 1e-6f));
+    Scene old;
+    const char* legacyFile = R"({"format": "nova.scene", "version": 1, "entities": [
+        {"components": {"Name": {"name": "Old"}, "Transform": {"position": [0, 0, 0], "rotation": [0.3, -1.2, 0.1], "scale": [1, 1, 1]}}}]})";
+    CHECK(deserializeScene(old, legacyFile));
+    CHECK(sameRotation(old.findEntity("Old").transform().rotation, glm::quat(glm::vec3(0.3f, -1.2f, 0.1f))));
+}
+
 } // namespace
 
 int main() {
@@ -405,6 +479,7 @@ int main() {
         {"maximum size per dimension (withMaxSize / fitUnit)", maxSize},
         {"scenes: world settings, files, prefabs, relative matrices", sceneIntegration},
         {"camera-relative rendering 10,000 km away", cameraRelativeRendering},
+        {"rotations: quaternions, Euler in six orders", rotations},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

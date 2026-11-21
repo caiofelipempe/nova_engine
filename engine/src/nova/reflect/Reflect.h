@@ -51,6 +51,7 @@ enum class FieldKind {
     Texture, ///< rhi::TextureHandle (serialized by texture asset or id)
     Shader, ///< ShaderHandle (serialized by shader asset or id)
     Position, ///< GlobalPosition (meters when exact, raw integer steps otherwise)
+    Quat,   ///< `glm::quat` rotation (serialized as [x, y, z, w]; edited as Euler degrees)
     Struct, ///< any struct registered with type() (nested object)
 };
 
@@ -180,6 +181,7 @@ constexpr FieldKind kindOf() {
     else if constexpr (std::is_same_v<F, rhi::TextureHandle>) return FieldKind::Texture;
     else if constexpr (std::is_same_v<F, ShaderHandle>) return FieldKind::Shader;
     else if constexpr (std::is_same_v<F, GlobalPosition>) return FieldKind::Position;
+    else if constexpr (std::is_same_v<F, glm::quat>) return FieldKind::Quat;
     else return FieldKind::Struct;
 }
 

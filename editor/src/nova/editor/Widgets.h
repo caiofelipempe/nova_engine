@@ -4,6 +4,7 @@
 /// @brief Reusable ImGui widgets with the editor's look, for built-in and game panels.
 
 #include "nova/math/GlobalPosition.h"
+#include "nova/math/Rotation.h"
 #include "nova/renderer/Mesh.h"
 
 #include <glm/glm.hpp>
@@ -40,6 +41,16 @@ bool reflectedField(const reflect::TypeInfo& owner, const reflect::FieldInfo& fi
 /// @param resetValue Value applied when a field is double-clicked.
 /// @return True if the value changed.
 bool vec3(const char* label, glm::vec3& value, float speed = 0.05f, float resetValue = 0.0f);
+
+/// @brief Euler order the inspector shows rotations in (*View/Rotation Order*). Default YXZ.
+extern EulerOrder rotationDisplayOrder;
+
+/// @brief Rotation editor: Euler angles in degrees (rotationDisplayOrder) over a quaternion.
+///
+/// The angles typed are remembered while the quaternion does not change elsewhere, so a value
+/// like 180° yaw does not flip to an equivalent triple after the round trip.
+/// @return True if the rotation changed.
+bool rotation(const char* label, glm::quat& value, float speed = 0.5f);
 
 /// @brief X/Y/Z editor for a world position, in meters (hover an axis for its readable unit and raw steps).
 /// @return True if the value changed.

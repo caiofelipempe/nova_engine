@@ -296,7 +296,7 @@ if (auto* vp = r.findPanel<nova::editor::builtin::ViewportPanel>()) vp->useScene
 | Engine | `ctx.app()`, `ctx.renderer()` |
 | Extensões | `ctx.registry()` (`execute("id")`, `findPanel<T>()`...) |
 
-Widgets prontos com o visual do editor: `nova::editor::widgets::vec3`, `widgets::position` (posição global em metros), `widgets::material`, `widgets::componentHeader`.
+Widgets prontos com o visual do editor: `nova::editor::widgets::vec3`, `widgets::position` (posição global em metros), `widgets::rotation` (quaternion editado como Euler em graus, na ordem de *View/Rotation Order*), `widgets::material`, `widgets::componentHeader`.
 
 ## 4. Comandos e atalhos embutidos
 

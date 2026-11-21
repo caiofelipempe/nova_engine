@@ -208,7 +208,7 @@ std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::pa
             ModelNode mn;
             mn.name = node.name ? node.name : ("node" + std::to_string(n));
             mn.position = translation;
-            mn.rotation = glm::eulerAngles(rotation);
+            mn.rotation = rotation;
             mn.scale = scale;
             mn.mesh = cache[pi];
             mn.material = buildMaterial(data, node.mesh->primitives[pi].material, model.textures);

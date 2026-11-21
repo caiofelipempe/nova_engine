@@ -116,8 +116,7 @@ void Scene::update(Duration frame) {
 
     // Built-in systems.
     for (auto [e, t, r] : m_registry.view<TransformComponent, RotatorComponent>().each()) {
-        glm::quat q = glm::angleAxis(r.speed * dt, glm::normalize(r.axis)) * t.orientation();
-        t.rotation = glm::eulerAngles(q);
+        t.rotate(r.speed * dt, r.axis);
     }
 
     if (m_simulating) stepPhysics(frame);
@@ -474,7 +473,7 @@ void Scene::stepPhysics(Duration dt) {
         glm::vec3 p;
         b.region->world->getTransform(b.body, p, q);
         t.position = b.region->fromPhysics(p);
-        t.rotation = glm::eulerAngles(q);
+        t.rotation = q; // quaternion in, quaternion out: no Euler round trip
     }
 
     // Collision callbacks for scripts on both entities, each seen from its own side.

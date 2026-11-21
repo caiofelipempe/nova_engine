@@ -1,6 +1,7 @@
 #include "nova/editor/builtin/CoreVisuals.h"
 
 #include "nova/editor/EditorContext.h"
+#include "nova/editor/Widgets.h"
 #include "nova/renderer/Renderer.h"
 
 #include <algorithm>
@@ -108,6 +109,20 @@ void CoreVisualsPlugin::onRegister(Registry& r) {
     toggle("view.lights", "View/Show Light and Camera Gizmos", &VisualSettings::lights, 202);
     toggle("view.grid", "View/Show Grid", &VisualSettings::grid, 203);
     toggle("view.worldBounds", "View/Show World Bounds", &VisualSettings::worldBounds, 204);
+
+    // How the inspector shows rotations (they are stored as quaternions).
+    for (int i = 0; i < 6; ++i) {
+        const auto order = static_cast<EulerOrder>(i);
+        Command c;
+        c.id = std::string("view.rotationOrder.") + eulerOrderName(order);
+        c.menuPath = std::string("View/Rotation Order/") + eulerOrderName(order) +
+                     (order == EulerOrder::YXZ ? " (yaw, pitch, roll)" : "");
+        c.order = 210 + i;
+        c.separatorBefore = i == 0;
+        c.execute = [order](EditorContext&) { widgets::rotationDisplayOrder = order; };
+        c.isChecked = [order](EditorContext&) { return widgets::rotationDisplayOrder == order; };
+        r.command(std::move(c));
+    }
 
     r.uiHook([](EditorContext& ctx) {
         DebugDraw& dd = ctx.renderer().debugDraw();

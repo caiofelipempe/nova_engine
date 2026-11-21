@@ -10,6 +10,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 namespace nova::editor::widgets {
 
@@ -68,6 +69,7 @@ bool reflectedField(const reflect::TypeInfo& owner, const reflect::FieldInfo& f,
             break;
         case K::Float: changed = floatField(f, *static_cast<float*>(p)); break;
         case K::Position: changed = position(f.label.c_str(), *static_cast<GlobalPosition*>(p)); break;
+        case K::Quat: changed = rotation(f.label.c_str(), *static_cast<glm::quat*>(p), dragSpeed(a, 0.5f)); break;
         case K::Vec2: changed = vecField(f, &static_cast<glm::vec2*>(p)->x, 2); break;
         case K::Vec3: changed = vecField(f, &static_cast<glm::vec3*>(p)->x, 3); break;
         case K::Vec4: changed = vecField(f, &static_cast<glm::vec4*>(p)->x, 4); break;
@@ -222,6 +224,33 @@ bool reflected(const reflect::TypeInfo& type, void* object, EditorContext& ctx) 
         ImGui::PopID();
     }
     return changed;
+}
+
+EulerOrder rotationDisplayOrder = kDefaultEulerOrder;
+
+bool rotation(const char* label, glm::quat& value, float speed) {
+    // Last angles shown per field: kept while the quaternion is unchanged (and the order too).
+    struct Shown {
+        glm::quat q;
+        glm::vec3 degrees;
+        EulerOrder order;
+    };
+    static std::unordered_map<const void*, Shown> shownByField;
+    if (shownByField.size() > 4096) shownByField.clear();
+    Shown& shown = shownByField[&value];
+    if (shown.order != rotationDisplayOrder || !(shown.q == value)) {
+        // "+ 0" turns −0 into 0, so an identity rotation does not read "-0.00".
+        shown = {value, eulerDegreesFromQuat(value, rotationDisplayOrder) + glm::vec3(0.0f), rotationDisplayOrder};
+    }
+    glm::vec3 degrees = shown.degrees;
+    const bool changed = vec3(label, degrees, speed);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+        ImGui::SetTooltip("Euler %s, degrees (View/Rotation Order)\nquaternion x %.4f  y %.4f  z %.4f  w %.4f",
+                          eulerOrderName(rotationDisplayOrder), value.x, value.y, value.z, value.w);
+    if (!changed) return false;
+    value = quatFromEulerDegrees(degrees, rotationDisplayOrder);
+    shown = {value, degrees, rotationDisplayOrder};
+    return true;
 }
 
 bool position(const char* label, GlobalPosition& value, float speed) {

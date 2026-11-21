@@ -21,7 +21,7 @@ void applyMatrix(TransformComponent& t, const glm::mat4& m, const GlobalPosition
     if (!glm::decompose(m, scale, rot, translation, skew, persp)) return;
     // Keep the exact position when the gizmo did not move it (rotate/scale): no float round trip.
     if (translation != glm::vec3((t.position - origin).toVec3())) t.position = origin + translation;
-    t.rotation = glm::eulerAngles(rot);
+    t.rotation = glm::normalize(rot);
     t.scale = scale;
 }
 } // namespace

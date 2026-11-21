@@ -17,6 +17,7 @@
 #include "nova/core/Layer.h"
 #include "nova/core/Log.h"
 #include "nova/math/GlobalPosition.h"
+#include "nova/math/Rotation.h"
 #include "nova/math/Time.h"
 #include "nova/math/Units.h"
 #include "nova/math/WorldSpace.h"

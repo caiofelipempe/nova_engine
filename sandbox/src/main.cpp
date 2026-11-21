@@ -25,13 +25,21 @@ void bindControls() {
 }
 
 // Player 0 flies the camera: WASD to move, hold RMB to look.
+// The rotation is a quaternion; the camera keeps its own yaw/pitch and rebuilds it (YXZ order).
 struct FlyCamera : nova::Script {
+    float yaw = 0.0f, pitch = 0.0f;
+    void onCreate() override {
+        const glm::vec3 e = transform().euler(nova::EulerOrder::YXZ);
+        pitch = e.x;
+        yaw = e.y;
+    }
     void onUpdate(float dt) override {
         auto& t = transform();
         if (nova::Input::isMouseButtonDown(nova::MouseButton::Right)) {
             glm::vec2 look = nova::Input::axis("Look"); // +Y = up
-            t.rotation.y -= look.x;
-            t.rotation.x = glm::clamp(t.rotation.x + look.y, -1.5f, 1.5f);
+            yaw -= look.x;
+            pitch = glm::clamp(pitch + look.y, -1.5f, 1.5f);
+            t.setEuler({pitch, yaw, 0.0f}, nova::EulerOrder::YXZ);
         }
         glm::vec2 move = nova::Input::axis("Move");
         float speed = (nova::Input::isActionDown("Fast") ? 12.0f : 4.0f) * dt;
@@ -84,7 +92,7 @@ public:
 
         auto sun = scene().createEntity("Sun");
         sun.add<nova::DirectionalLightComponent>();
-        sun.transform().rotation = {glm::radians(-50.0f), glm::radians(35.0f), 0.0f};
+        sun.transform().setEulerDegrees({-50.0f, 35.0f, 0.0f}); // pitch, yaw, roll
 
         auto ground = scene().createEntity("Ground");
         ground.transform().scale = {40.0f, 1.0f, 40.0f};

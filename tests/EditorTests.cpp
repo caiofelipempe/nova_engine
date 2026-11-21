@@ -249,7 +249,7 @@ void playPauseStop() {
 
 struct Spinner : Script {
     float speed = 1.0f;
-    void onUpdate(float dt) override { transform().rotation.y += speed * dt; }
+    void onUpdate(float dt) override { transform().rotateLocal(speed * dt, {0, 1, 0}); }
 };
 
 void stopRestoresWholeScene() {
@@ -265,7 +265,7 @@ void stopRestoresWholeScene() {
 
     f.ctx.play();
     for (int i = 0; i < 10; ++i) f.scene.update(0.1f);
-    CHECK(keep.transform().rotation.y > 2.0f); // the script ran
+    CHECK(keep.transform().euler().y > 2.0f); // the script ran
     f.scene.destroyEntity(doomed);             // gameplay destroys an entity
     f.scene.createEntity("Spawned");            // ... and spawns another
     f.ctx.stop();
@@ -275,7 +275,7 @@ void stopRestoresWholeScene() {
     Entity back = f.scene.findEntityByUuid(doomedId);
     CHECK(back.valid() && back.has<PointLightComponent>() && back.get<PointLightComponent>().intensity == 42.0f);
     Entity k = f.scene.findEntityByUuid(keepId);
-    CHECK(k.valid() && k.transform().rotation.y == 0.0f); // script effect undone
+    CHECK(k.valid() && k.transform().rotation == glm::quat(1, 0, 0, 0)); // script effect undone
     auto* sc = k.valid() ? k.tryGet<ScriptComponent>() : nullptr;
     CHECK(sc && sc->scripts.size() == 1 && static_cast<Spinner&>(*sc->scripts[0]).speed == 3.0f); // script + field restored
 }

@@ -96,7 +96,7 @@ void reflection() {
     // Engine types are registered on first access.
     const reflect::TypeInfo* rb = reflect::types().find("RigidBody");
     CHECK(rb && rb->isComponent && rb->field("body")->attrs.transient);
-    CHECK(reflect::types().find("Transform")->field("rotation")->attrs.degrees);
+    CHECK(reflect::types().find("Transform")->field("rotation")->kind == reflect::FieldKind::Quat); // edited as Euler degrees
 
     // Script reflection.
     const reflect::TypeInfo* patrol = reflect::types().find<Patrol>();
@@ -108,7 +108,7 @@ void roundTrip() {
     Scene a("Arena");
     Entity e = a.createEntity("Hero");
     e.transform().position = {1, 2, 3};
-    e.transform().rotation = {0.1f, 0.2f, 0.3f};
+    e.transform().setEuler({0.1f, 0.2f, 0.3f});
     auto& mesh = e.add<MeshComponent>(MeshHandle{4});
     mesh.material.baseColor = {0.1f, 0.2f, 0.3f, 0.4f};
     mesh.material.metallic = 0.7f;
@@ -147,7 +147,7 @@ void roundTrip() {
     CHECK(h.valid() && h.name() == "Hero");
     if (!h.valid()) return;
     CHECK(h.transform().position == glm::vec3(1, 2, 3));
-    CHECK(std::abs(h.transform().rotation.z - 0.3f) < 1e-6f);
+    CHECK(h.transform().rotation == e.transform().rotation); // quaternion stored exactly
     CHECK(h.get<MeshComponent>().mesh.id == 4 && !h.get<MeshComponent>().castShadows);
     CHECK(h.get<MeshComponent>().material.baseColor == glm::vec4(0.1f, 0.2f, 0.3f, 0.4f));
     CHECK(h.get<MeshComponent>().material.metallic == 0.7f);

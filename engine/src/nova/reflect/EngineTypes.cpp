@@ -30,7 +30,7 @@ void registerEngineTypes() {
 
     type<TransformComponent>("Transform")
         .field("position", &TransformComponent::position)
-        .field("rotation", &TransformComponent::rotation, {.speed = 0.5f, .degrees = true})
+        .field("rotation", &TransformComponent::rotation, {.speed = 0.5f})
         .field("scale", &TransformComponent::scale, {.speed = 0.02f})
         .component();
 

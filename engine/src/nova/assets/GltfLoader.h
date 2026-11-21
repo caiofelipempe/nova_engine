@@ -18,7 +18,7 @@ class Renderer;
 struct ModelNode {
     std::string name;                ///< Node name (or "node<N>").
     glm::vec3 position{0.0f};        ///< World position inside the model.
-    glm::vec3 rotation{0.0f};        ///< Euler angles (radians, XYZ).
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; ///< Node rotation (glTF stores quaternions).
     glm::vec3 scale{1.0f};           ///< Scale.
     u32 mesh = 0;                    ///< Index into ModelData::meshes.
     Material material;               ///< Material (textures already resolved).

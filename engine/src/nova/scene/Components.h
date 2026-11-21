@@ -7,6 +7,7 @@
 /// initialization, e.g. `e.add<nova::PointLightComponent>(glm::vec3(1, 0.5f, 0.2f), 25.0f, 9.0f)`.
 
 #include "nova/math/GlobalPosition.h"
+#include "nova/math/Rotation.h"
 #include "nova/physics/PhysicsWorld.h"
 #include "nova/renderer/Mesh.h"
 
@@ -36,37 +37,63 @@ struct NameComponent {
 
 /// @brief Position, rotation and scale of an entity (every entity has one).
 ///
-/// Rotation is stored as Euler angles so it can be edited directly; use orientation() for a quaternion.
+/// Rotation is a quaternion (no gimbal lock, exact round trips with physics); read or set it as
+/// Euler angles in any axis order with euler()/setEuler() (see EulerOrder).
 /// The entity's local axes: right = +X, up = +Y, forward = −Z.
 struct TransformComponent {
     /// @brief World position: exact integer fixed point (see WorldSpace). Assign meters directly
     ///        (`position = {0, 3, 10}`), move with offsets (`position += velocity * dt`).
     GlobalPosition position;
-    glm::vec3 rotation{0.0f}; ///< Euler angles in radians: x = pitch, y = yaw, z = roll.
-    glm::vec3 scale{1.0f};    ///< Per-axis scale (also scales colliders).
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; ///< World rotation (unit quaternion).
+    glm::vec3 scale{1.0f};                      ///< Per-axis scale (also scales colliders).
 
-    /// @brief Rotation as a quaternion.
-    glm::quat orientation() const { return glm::quat(rotation); }
+    /// @brief The rotation (same as `rotation`; kept for readability at call sites).
+    glm::quat orientation() const { return rotation; }
+
+    /// @name Euler angles (a view of `rotation`)
+    /// `x` = pitch (around X), `y` = yaw (around Y), `z` = roll (around Z), applied in `order`
+    /// around the local axes (default YXZ: yaw → pitch → roll).
+    /// @{
+    /// @brief Euler angles in radians.
+    glm::vec3 euler(EulerOrder order = kDefaultEulerOrder) const { return eulerFromQuat(rotation, order); }
+    /// @brief Euler angles in degrees.
+    glm::vec3 eulerDegrees(EulerOrder order = kDefaultEulerOrder) const { return eulerDegreesFromQuat(rotation, order); }
+    /// @brief Sets the rotation from Euler angles in radians.
+    void setEuler(const glm::vec3& radians, EulerOrder order = kDefaultEulerOrder) { rotation = quatFromEuler(radians, order); }
+    /// @brief Sets the rotation from Euler angles in degrees.
+    void setEulerDegrees(const glm::vec3& degrees, EulerOrder order = kDefaultEulerOrder) {
+        rotation = quatFromEulerDegrees(degrees, order);
+    }
+    /// @}
+
+    /// @brief Rotates around a world axis (radians).
+    void rotate(f32 angle, const glm::vec3& worldAxis) {
+        rotation = glm::normalize(glm::angleAxis(angle, glm::normalize(worldAxis)) * rotation);
+    }
+    /// @brief Rotates around one of the entity's own axes (radians), e.g. `rotateLocal(dt, {0, 1, 0})`.
+    void rotateLocal(f32 angle, const glm::vec3& localAxis) {
+        rotation = glm::normalize(rotation * glm::angleAxis(angle, glm::normalize(localAxis)));
+    }
+
     /// @brief Object-to-world matrix (translate · rotate · scale), in float meters from the world origin.
     /// @note Loses precision far from the origin; matrixRelativeTo() is exact around any point.
     glm::mat4 matrix() const { return matrixRelativeTo(GlobalPosition()); }
     /// @brief Object matrix with the translation measured from `origin` (e.g. the camera).
     glm::mat4 matrixRelativeTo(const GlobalPosition& origin) const {
-        return glm::translate(glm::mat4(1.0f), (position - origin).toVec3()) * glm::toMat4(orientation()) *
+        return glm::translate(glm::mat4(1.0f), (position - origin).toVec3()) * glm::toMat4(rotation) *
                glm::scale(glm::mat4(1.0f), scale);
     }
     /// @brief World-space forward direction (local −Z).
-    glm::vec3 forward() const { return orientation() * glm::vec3(0, 0, -1); }
+    glm::vec3 forward() const { return rotation * glm::vec3(0, 0, -1); }
     /// @brief World-space right direction (local +X).
-    glm::vec3 right() const { return orientation() * glm::vec3(1, 0, 0); }
+    glm::vec3 right() const { return rotation * glm::vec3(1, 0, 0); }
     /// @brief World-space up direction (local +Y).
-    glm::vec3 up() const { return orientation() * glm::vec3(0, 1, 0); }
+    glm::vec3 up() const { return rotation * glm::vec3(0, 1, 0); }
 
     /// @brief Rotates so forward (−Z) points at `target`, using yaw and pitch only (no roll).
-    /// @note Suited to cameras: the result can be edited further by changing rotation.x / rotation.y.
     void lookAt(const GlobalPosition& target) {
         const glm::vec3 dir = glm::normalize(glm::vec3((target - position).toMeters()));
-        rotation = {std::asin(glm::clamp(dir.y, -1.0f, 1.0f)), std::atan2(-dir.x, -dir.z), 0.0f};
+        setEuler({std::asin(glm::clamp(dir.y, -1.0f, 1.0f)), std::atan2(-dir.x, -dir.z), 0.0f}, EulerOrder::YXZ);
     }
 };
 

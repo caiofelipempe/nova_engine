@@ -103,6 +103,11 @@ Json writeField(const reflect::FieldInfo& f, void* p, const SerializeOptions& op
             return t.key();
         }
         case K::Position: return writePosition(*static_cast<GlobalPosition*>(p));
+        case K::Quat: {
+            const glm::quat q = *static_cast<glm::quat*>(p);
+            const f32 v[4] = {q.x, q.y, q.z, q.w};
+            return writeVec(v, 4);
+        }
         case K::Shader: {
             const ShaderHandle sh = *static_cast<ShaderHandle*>(p);
             if (!sh) return nullptr;
@@ -268,6 +273,20 @@ void readField(const reflect::FieldInfo& f, void* p, const Json& j, const Serial
             break;
         }
         case K::Position: readPosition(j, *static_cast<GlobalPosition*>(p)); break;
+        case K::Quat: {
+            auto& q = *static_cast<glm::quat*>(p);
+            if (!j.is_array()) break;
+            if (j.size() == 4) { // [x, y, z, w]
+                f32 v[4] = {0, 0, 0, 1};
+                readVec<4>(v, j);
+                q = glm::normalize(glm::quat(v[3], v[0], v[1], v[2]));
+            } else if (j.size() == 3) { // older files: Euler radians in glm::quat(vec3) convention (ZYX)
+                glm::vec3 e(0.0f);
+                readVec<3>(&e.x, j);
+                q = quatFromEuler(e, EulerOrder::ZYX);
+            }
+            break;
+        }
         case K::Shader: {
             auto& sh = *static_cast<ShaderHandle*>(p);
             if (j.is_null()) sh = {};

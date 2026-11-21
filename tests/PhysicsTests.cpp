@@ -664,7 +664,7 @@ void determinism() {
     for (int i = 0; i < 24; ++i) {
         Entity e = source.createEntity("Body " + std::to_string(i));
         e.transform().position = {static_cast<f64>(i % 4) * 0.9 - 1.3, 0.6 + (i / 4) * 1.05, static_cast<f64>(i % 3) * 0.3};
-        e.transform().rotation = {0.1f * i, 0.2f * i, 0.0f};
+        e.transform().setEuler({0.1f * i, 0.2f * i, 0.0f});
         e.add<RigidBodyComponent>();
         if (i % 2) e.add<SphereColliderComponent>();
     }

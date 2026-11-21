@@ -75,7 +75,7 @@ Em Debug, as validation layers do Vulkan ficam ligadas e as mensagens vão para 
 ```
 engine/src/nova/
   core/       Application (loop), Layer, Log (spdlog)
-  math/       WorldSpace, GlobalPosition / GlobalOffset (posições inteiras exatas), TimePoint / Duration (tempo exato em flicks), unidades
+  math/       WorldSpace, GlobalPosition / GlobalOffset (posições inteiras exatas), TimePoint / Duration (tempo exato em flicks), rotações (quaternion + Euler em 6 ordens), unidades
   platform/   Window (interface) + Input        → glfw/  (backend GLFW)
   rhi/        Device, CommandList (interfaces)  → vulkan/ (backend Vulkan)
   renderer/   Renderer, RenderView, Mesh (+ raycast CPU), DebugDraw, ShaderLibrary — só fala com o RHI

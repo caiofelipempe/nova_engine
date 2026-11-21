@@ -61,7 +61,7 @@ void CoreCommandsPlugin::onRegister(Registry& r) {
         cam.transform().lookAt({0.0f, 0.5f, 0.0f});
         Entity sun = ctx.scene().createEntity("Sun");
         sun.add<DirectionalLightComponent>();
-        sun.transform().rotation = {glm::radians(-45.0f), glm::radians(30.0f), 0.0f};
+        sun.transform().setEulerDegrees({-45.0f, 30.0f, 0.0f}); // pitch, yaw, roll
     }, "Ctrl+N", 0);
     newScene.isEnabled = editing;
     r.command(std::move(newScene));
