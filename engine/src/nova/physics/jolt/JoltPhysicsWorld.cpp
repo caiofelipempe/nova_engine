@@ -5,6 +5,9 @@
 // Jolt.h must come first.
 #include <Jolt/Jolt.h>
 
+#include <memory>
+#include <unordered_map>
+
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
@@ -16,6 +19,9 @@
 #include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -194,6 +200,54 @@ JPH::EMotionType toJ(BodyType t) {
     return JPH::EMotionType::Static;
 }
 
+// Hulls and meshes are expensive to build (hull faces, mesh BVH) and Jolt shapes are shared
+// immutable objects: build once per geometry and reuse for every body and every world.
+struct GeometryShape {
+    std::weak_ptr<const ShapeGeometry> geometry; // expired = the address may have been reused
+    JPH::ShapeRefC shape;
+};
+std::unordered_map<u64, GeometryShape>& geometryCache() {
+    static std::unordered_map<u64, GeometryShape> cache;
+    return cache;
+}
+
+JPH::ShapeSettings::ShapeResult buildGeometryShape(const ShapeDesc& s) {
+    const ShapeGeometry& g = *s.geometry;
+    if (s.type == ShapeType::ConvexHull) {
+        JPH::Array<JPH::Vec3> points;
+        points.reserve(g.points.size());
+        for (const glm::vec3& p : g.points) points.push_back(toJ(p));
+        return JPH::ConvexHullShapeSettings(points, JPH::cDefaultConvexRadius).Create();
+    }
+    JPH::VertexList vertices;
+    vertices.reserve(g.points.size());
+    for (const glm::vec3& p : g.points) vertices.push_back(JPH::Float3(p.x, p.y, p.z));
+    JPH::IndexedTriangleList triangles;
+    triangles.reserve(g.indices.size() / 3);
+    for (size_t i = 0; i + 2 < g.indices.size(); i += 3)
+        triangles.push_back(JPH::IndexedTriangle(g.indices[i], g.indices[i + 1], g.indices[i + 2], 0));
+    return JPH::MeshShapeSettings(std::move(vertices), std::move(triangles)).Create();
+}
+
+JPH::ShapeRefC geometryShape(const ShapeDesc& s) {
+    if (!s.geometry || s.geometry->points.empty()) {
+        NOVA_CORE_ERROR("[physics] {} shape without points", s.type == ShapeType::Mesh ? "mesh" : "convex hull");
+        return nullptr;
+    }
+    auto& cache = geometryCache();
+    const u64 key = reinterpret_cast<u64>(s.geometry.get()) ^ (s.type == ShapeType::Mesh ? 1ull : 0ull);
+    if (auto it = cache.find(key); it != cache.end() && !it->second.geometry.expired()) return it->second.shape;
+    JPH::ShapeSettings::ShapeResult result = buildGeometryShape(s);
+    if (result.HasError()) {
+        NOVA_CORE_ERROR("[physics] shape creation failed: {}", result.GetError().c_str());
+        return nullptr;
+    }
+    if (cache.size() > 4096) // drop entries whose geometry is gone
+        std::erase_if(cache, [](const auto& e) { return e.second.geometry.expired(); });
+    cache[key] = {s.geometry, result.Get()};
+    return result.Get();
+}
+
 JPH::ShapeRefC buildShape(const ShapeDesc& s) {
     JPH::ShapeSettings::ShapeResult result;
     constexpr f32 kMin = 0.001f;
@@ -209,6 +263,18 @@ JPH::ShapeRefC buildShape(const ShapeDesc& s) {
         case ShapeType::Capsule:
             result = JPH::CapsuleShapeSettings(std::max(s.halfHeight, kMin), std::max(s.radius, kMin)).Create();
             break;
+        case ShapeType::Cylinder: {
+            const f32 h = std::max(s.halfHeight, kMin), r = std::max(s.radius, kMin);
+            result = JPH::CylinderShapeSettings(h, r, std::min(JPH::cDefaultConvexRadius, std::min(h, r) * 0.5f)).Create();
+            break;
+        }
+        case ShapeType::ConvexHull:
+        case ShapeType::Mesh: {
+            JPH::ShapeRefC shape = geometryShape(s); // cached, shared
+            if (!shape || s.offset == glm::vec3(0.0f)) return shape;
+            auto offsetResult = JPH::RotatedTranslatedShapeSettings(toJ(s.offset), JPH::Quat::sIdentity(), shape).Create();
+            return offsetResult.HasError() ? shape : offsetResult.Get();
+        }
     }
     if (result.HasError()) {
         NOVA_CORE_ERROR("[physics] shape creation failed: {}", result.GetError().c_str());
@@ -287,6 +353,10 @@ JoltPhysicsWorld::~JoltPhysicsWorld() {
 BodyId JoltPhysicsWorld::createBody(const BodyDesc& desc) {
     JPH::ShapeRefC shape = buildShape(desc.shape);
     if (!shape) return {};
+    if (desc.shape.type == ShapeType::Mesh && desc.type == BodyType::Dynamic) {
+        NOVA_CORE_ERROR("[physics] mesh shapes cannot be dynamic (use a convex hull)");
+        return {};
+    }
 
     const bool moving = desc.type != BodyType::Static;
     JPH::BodyCreationSettings bcs(shape, toJR(desc.position), toJ(desc.rotation), toJ(desc.type),

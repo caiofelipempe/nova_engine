@@ -183,6 +183,26 @@ struct CapsuleColliderComponent {
     glm::vec3 offset{0.0f}; ///< Center relative to the entity origin, before scaling.
 };
 
+/// @brief Cylinder collision shape (axis = local Y) for a RigidBodyComponent.
+struct CylinderColliderComponent {
+    f32 radius = 0.5f;      ///< Radius before scaling (multiplied by max(scale.x, scale.z)).
+    f32 halfHeight = 0.5f;  ///< Half height before scaling (multiplied by scale.y).
+    glm::vec3 offset{0.0f}; ///< Center relative to the entity origin, before scaling.
+};
+
+/// @brief Convex polyhedron collision shape: the convex hull of a mesh's vertices (scaled by the
+///        transform). Works for any body type, dynamic included.
+struct ConvexHullColliderComponent {
+    MeshHandle mesh;        ///< Source mesh; invalid = the entity's MeshComponent mesh.
+    glm::vec3 offset{0.0f}; ///< Shift relative to the entity origin, before scaling.
+};
+
+/// @brief Exact triangle-mesh collision shape (level geometry, glTF scenery). Static and kinematic
+///        bodies only: on a dynamic body it falls back to the mesh's convex hull.
+struct MeshColliderComponent {
+    MeshHandle mesh; ///< Source mesh; invalid = the entity's MeshComponent mesh.
+};
+
 /// @brief Built-in behaviour: spins the entity around `axis` while the scene updates.
 struct RotatorComponent {
     glm::vec3 axis{0.0f, 1.0f, 0.0f}; ///< Rotation axis (world space; normalized internally).

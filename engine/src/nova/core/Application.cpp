@@ -3,6 +3,7 @@
 #include "nova/core/Log.h"
 #include "nova/platform/Input.h"
 #include "nova/renderer/Renderer.h"
+#include "nova/scene/Scene.h"
 #include "nova/ui/ImGuiSync.h"
 #include "nova/ui/ImGuiTheme.h"
 
@@ -33,12 +34,15 @@ Application::Application(const ApplicationDesc& desc) : m_desc(desc) {
 
     if (desc.imgui) initImGui();
     m_renderer = makeScope<Renderer>(*m_device);
+    // Mesh colliders (convex hull, triangle mesh) read vertices from the renderer's CPU copies.
+    Scene::setDefaultMeshSource([renderer = m_renderer.get()](MeshHandle m) { return renderer->meshData(m); });
 }
 
 Application::~Application() {
     m_device->waitIdle();
     for (auto it = m_layers.rbegin(); it != m_layers.rend(); ++it) (*it)->onDetach();
     m_layers.clear();
+    Scene::setDefaultMeshSource({});
     m_renderer.reset();
     shutdownImGui();
     m_device.reset();

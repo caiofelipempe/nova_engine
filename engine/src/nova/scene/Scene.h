@@ -9,6 +9,9 @@
 #include "nova/scene/Script.h"
 
 #include <optional>
+#include <tuple>
+#include <map>
+#include <functional>
 #include <unordered_map>
 #include <string>
 
@@ -82,6 +85,12 @@ public:
     /// While simulating, bodies are also created for entities that gain a RigidBodyComponent and
     /// removed when the component or entity goes away.
     void startSimulation(physics::Backend backend = physics::Backend::Jolt);
+    /// @brief Where mesh colliders (convex hull, triangle mesh) read vertices from.
+    using MeshSource = std::function<const MeshData*(MeshHandle)>;
+    /// @brief Sets this scene's mesh source (falls back to the default one when unset).
+    void setMeshSource(MeshSource source) { m_meshSource = std::move(source); }
+    /// @brief Default mesh source of every scene; Application sets it to Renderer::meshData.
+    static void setDefaultMeshSource(MeshSource source);
     /// @brief Same, with a physics world you created — e.g. your own engine implementing
     ///        physics::PhysicsWorld in global positions natively.
     void startSimulation(Scope<physics::PhysicsWorld> world);
@@ -223,6 +232,8 @@ private:
     void onRigidBodyDestroyed(entt::registry& registry, entt::entity e);
     void connectSignals();
     physics::BodyId bodyOf(Entity e);
+    const MeshData* meshData(MeshHandle mesh) const;
+    std::shared_ptr<const physics::ShapeGeometry> meshGeometry(MeshHandle mesh, const glm::vec3& scale, bool triangles);
     physics::QueryFilter filterIgnoring(Entity e) const;
     SceneHit toSceneHit(const physics::QueryHit& hit);
 
@@ -231,6 +242,9 @@ private:
     entt::registry m_registry;
     // Physics, in global positions (declared after the registry: destroyed first).
     Scope<physics::PhysicsWorld> m_physics;
+    MeshSource m_meshSource;
+    // Collider geometry per (mesh, scale, kind): bodies sharing a mesh share one geometry.
+    std::map<std::tuple<u32, u32, u32, u32, bool>, std::shared_ptr<const physics::ShapeGeometry>> m_geometry;
     TimePoint m_time;
     std::vector<GlobalPosition> m_physicsFoci;
     bool m_hasPhysicsFocus = false;

@@ -1,5 +1,6 @@
 #include "nova/editor/builtin/CoreVisuals.h"
 
+#include "nova/core/Application.h"
 #include "nova/editor/EditorContext.h"
 #include "nova/editor/Widgets.h"
 #include "nova/renderer/Renderer.h"
@@ -89,6 +90,31 @@ void drawCollider(DebugDraw& dd, Entity e, const glm::vec4& color) {
         dd.sphere(t.position + q * (sphere->offset * s), sphere->radius * std::max({s.x, s.y, s.z}), color);
     } else if (auto* cap = e.tryGet<CapsuleColliderComponent>()) {
         dd.capsule(t.position + q * (cap->offset * s), q, cap->radius * std::max(s.x, s.z), cap->halfHeight * s.y, color);
+    } else if (auto* cyl = e.tryGet<CylinderColliderComponent>()) {
+        const GlobalPosition c = t.position + q * (cyl->offset * s);
+        const f32 r = cyl->radius * std::max(s.x, s.z), h = cyl->halfHeight * s.y;
+        const glm::vec3 up = q * glm::vec3(0, h, 0);
+        dd.circle(c + up, q * glm::vec3(0, 1, 0), r, color);
+        dd.circle(c - up, q * glm::vec3(0, 1, 0), r, color);
+        for (const glm::vec3& side : {glm::vec3(1, 0, 0), glm::vec3(-1, 0, 0), glm::vec3(0, 0, 1), glm::vec3(0, 0, -1)})
+            dd.line(c + up + q * (side * r), c - up + q * (side * r), color);
+    } else if (e.has<ConvexHullColliderComponent>() || e.has<MeshColliderComponent>()) {
+        // The source mesh's edges (for a hull, an approximation from inside: the hull wraps them).
+        const auto* hull = e.tryGet<ConvexHullColliderComponent>();
+        MeshHandle mesh = hull ? hull->mesh : e.get<MeshColliderComponent>().mesh;
+        if (!mesh)
+            if (const auto* m = e.tryGet<MeshComponent>()) mesh = m->mesh;
+        const MeshData* data = mesh ? Application::get().renderer().meshData(mesh) : nullptr;
+        if (!data) return;
+        const glm::vec3 shift = hull ? q * (hull->offset * s) : glm::vec3(0.0f);
+        auto corner = [&](u32 i) { return t.position + (shift + q * (data->vertices[i].position * s)); };
+        const size_t maxTriangles = 20000; // keep huge meshes affordable
+        for (size_t i = 0; i + 2 < data->indices.size() && i / 3 < maxTriangles; i += 3) {
+            const GlobalPosition a = corner(data->indices[i]), b = corner(data->indices[i + 1]), c = corner(data->indices[i + 2]);
+            dd.line(a, b, color);
+            dd.line(b, c, color);
+            dd.line(c, a, color);
+        }
     } else {
         dd.box(t.position, 0.5f * s, q, color);
     }

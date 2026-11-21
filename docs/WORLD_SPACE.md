@@ -244,7 +244,12 @@ Status: **Fases 1 a 6 concluídas.** (`engine/src/nova/math/`, testes em `tests/
      confinada ao adaptador do Jolt.
    - Ainda não segue: dentro do Jolt, fase ampla e colisão rodam em `float` no espaço da região
      (preciso até alguns km, não determinístico entre plataformas) — é a natureza do Jolt; não há
-     formas poliédricas/malha (`ShapeType` só tem Box, Sphere e Capsule); não há fatiamento de
-     corpos grandes nem tipo local em ponto fixo.
-   - O que falta para o motor próprio: as formas convexas/malha com vértices locais e o próprio
-     motor (colisão por par em referencial local, solver em ponto fixo).
+     fatiamento de corpos grandes nem tipo local em ponto fixo.
+   - Formas (feito): Cylinder, **ConvexHull** e **Mesh** com vértices locais em `ShapeGeometry`,
+     compartilhada por ponteiro (corpos e regiões não copiam a malha; o Jolt guarda as formas
+     construídas em cache). Poliedros entram no contrato como **pontos**, não como faces: o Jolt
+     constrói a própria envoltória (faces, planos) e descartaria faces dadas; um motor próprio deve
+     derivar dos pontos a estrutura que a colisão dele usa (half-edge com planos de face via
+     quickhull, para SAT e recorte de contatos; o GJK só precisa dos vértices).
+   - O que falta para o motor próprio: o próprio motor (envoltória/half-edge, colisão por par em
+     referencial local, solver em ponto fixo).

@@ -1,6 +1,9 @@
 #include "nova/scene/Scene.h"
 
+#include "nova/core/Log.h"
+
 #include <algorithm>
+#include <cstring>
 #include <random>
 
 namespace nova {
@@ -148,6 +151,41 @@ void Scene::stopSimulation() {
     if (!m_physics) return;
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) rb.body = {};
     m_physics.reset();
+    m_geometry.clear();
+}
+
+namespace {
+Scene::MeshSource& defaultMeshSource() {
+    static Scene::MeshSource source;
+    return source;
+}
+u32 floatBits(f32 v) {
+    u32 b;
+    std::memcpy(&b, &v, sizeof(b));
+    return b;
+}
+} // namespace
+
+void Scene::setDefaultMeshSource(MeshSource source) { defaultMeshSource() = std::move(source); }
+
+const MeshData* Scene::meshData(MeshHandle mesh) const {
+    if (!mesh) return nullptr;
+    if (m_meshSource) return m_meshSource(mesh);
+    const MeshSource& fallback = defaultMeshSource();
+    return fallback ? fallback(mesh) : nullptr;
+}
+
+std::shared_ptr<const physics::ShapeGeometry> Scene::meshGeometry(MeshHandle mesh, const glm::vec3& scale, bool triangles) {
+    const auto key = std::make_tuple(mesh.id, floatBits(scale.x), floatBits(scale.y), floatBits(scale.z), triangles);
+    if (auto it = m_geometry.find(key); it != m_geometry.end()) return it->second;
+    const MeshData* data = meshData(mesh);
+    if (!data || data->vertices.empty()) return nullptr;
+    auto g = std::make_shared<physics::ShapeGeometry>();
+    g->points.reserve(data->vertices.size());
+    for (const Vertex& v : data->vertices) g->points.push_back(v.position * scale); // local to the body, scaled
+    if (triangles) g->indices = data->indices;
+    m_geometry.emplace(key, g);
+    return g;
 }
 
 std::vector<GlobalPosition> Scene::currentFoci() {
@@ -190,6 +228,33 @@ void Scene::createBody(entt::entity e) {
         desc.shape.radius = capsule->radius * std::max(s.x, s.z);
         desc.shape.halfHeight = capsule->halfHeight * s.y;
         desc.shape.offset = capsule->offset * s;
+    } else if (auto* cylinder = m_registry.try_get<CylinderColliderComponent>(e)) {
+        desc.shape.type = physics::ShapeType::Cylinder;
+        desc.shape.radius = cylinder->radius * std::max(s.x, s.z);
+        desc.shape.halfHeight = cylinder->halfHeight * s.y;
+        desc.shape.offset = cylinder->offset * s;
+    } else if (m_registry.any_of<ConvexHullColliderComponent, MeshColliderComponent>(e)) {
+        // Polyhedra from the mesh's vertices, local to the body (scaled; the rotation is the body's).
+        const auto* hull = m_registry.try_get<ConvexHullColliderComponent>(e);
+        const auto* mc = m_registry.try_get<MeshColliderComponent>(e);
+        MeshHandle mesh = hull ? hull->mesh : mc->mesh;
+        if (!mesh)
+            if (const auto* m = m_registry.try_get<MeshComponent>(e)) mesh = m->mesh;
+        bool triangles = mc != nullptr;
+        if (triangles && rb.type == physics::BodyType::Dynamic) {
+            NOVA_CORE_WARN("Scene: '{}' has a MeshCollider on a dynamic body; using its convex hull",
+                           Entity{e, this}.name());
+            triangles = false;
+        }
+        desc.shape.type = triangles ? physics::ShapeType::Mesh : physics::ShapeType::ConvexHull;
+        desc.shape.geometry = meshGeometry(mesh, s, triangles);
+        if (hull) desc.shape.offset = hull->offset * s;
+        if (!desc.shape.geometry) {
+            NOVA_CORE_WARN("Scene: no vertices for the collider of '{}' (mesh {}); using a box",
+                           Entity{e, this}.name(), mesh.id);
+            desc.shape = {};
+            desc.shape.halfExtents = 0.5f * s;
+        }
     } else {
         desc.shape.type = physics::ShapeType::Box;
         desc.shape.halfExtents = 0.5f * s;

@@ -11,7 +11,8 @@ namespace nova::editor::builtin {
 
 namespace {
 bool hasCollider(Entity e) {
-    return e.has<BoxColliderComponent>() || e.has<SphereColliderComponent>() || e.has<CapsuleColliderComponent>();
+    return e.has<BoxColliderComponent>() || e.has<SphereColliderComponent>() || e.has<CapsuleColliderComponent>() ||
+           e.has<CylinderColliderComponent>() || e.has<ConvexHullColliderComponent>() || e.has<MeshColliderComponent>();
 }
 
 bool hasUnreflectedScript(Entity e) {
@@ -49,6 +50,9 @@ void CoreComponentsPlugin::onRegister(Registry& r) {
     r.component<BoxColliderComponent>().canAdd = oneCollider;
     r.component<SphereColliderComponent>().canAdd = oneCollider;
     r.component<CapsuleColliderComponent>().canAdd = oneCollider;
+    r.component<CylinderColliderComponent>().canAdd = oneCollider;
+    r.component<ConvexHullColliderComponent>().canAdd = oneCollider;
+    r.component<MeshColliderComponent>().canAdd = oneCollider;
 
     r.component<RotatorComponent>();
 

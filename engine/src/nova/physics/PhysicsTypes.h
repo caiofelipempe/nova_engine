@@ -9,6 +9,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <memory>
+#include <vector>
+
 namespace nova::physics {
 
 /// @brief Available physics backends.
@@ -23,11 +26,24 @@ enum class BodyType : u8 {
     Dynamic,   ///< Fully simulated (gravity, forces, collisions).
 };
 
-/// @brief Collision shape primitives.
+/// @brief Collision shape kinds.
 enum class ShapeType : u8 {
-    Box,     ///< ShapeDesc::halfExtents.
-    Sphere,  ///< ShapeDesc::radius.
-    Capsule, ///< ShapeDesc::radius and ShapeDesc::halfHeight, aligned with local Y.
+    Box,        ///< ShapeDesc::halfExtents.
+    Sphere,     ///< ShapeDesc::radius.
+    Capsule,    ///< ShapeDesc::radius and ShapeDesc::halfHeight, aligned with local Y.
+    Cylinder,   ///< ShapeDesc::radius and ShapeDesc::halfHeight, aligned with local Y.
+    ConvexHull, ///< Convex polyhedron: the hull of ShapeDesc::geometry->points (any body type).
+    Mesh,       ///< Triangle mesh: ShapeDesc::geometry points + indices. Static/kinematic bodies only.
+};
+
+/// @brief Vertices (and triangles) of a ConvexHull or Mesh shape, local to the body.
+///
+/// A convex polyhedron is given by its **points**: backends derive what their collision needs
+/// (Jolt builds its own hull with faces and planes; a custom engine would build a half-edge
+/// structure). Shared by pointer: many bodies and regions can use one geometry without copies.
+struct ShapeGeometry {
+    std::vector<glm::vec3> points; ///< Local vertices.
+    std::vector<u32> indices;      ///< Mesh: 3 per triangle, counter-clockwise from outside. Unused by hulls.
 };
 
 /// @brief Collision shape, in coordinates **local to the body** (sizes final, already scaled).
@@ -40,6 +56,7 @@ struct ShapeDesc {
     f32 radius = 0.5f;               ///< Sphere / Capsule radius.
     f32 halfHeight = 0.5f;           ///< Capsule: half length of the cylindrical part (along local Y).
     glm::vec3 offset{0.0f};          ///< Shape center relative to the body origin (local space).
+    std::shared_ptr<const ShapeGeometry> geometry; ///< ConvexHull / Mesh vertices (already scaled).
 };
 
 /// @brief Identifier of a body inside a world.

@@ -45,6 +45,14 @@ f64 shapeReach(const ShapeDesc& s) {
         case ShapeType::Box: return glm::length(s.halfExtents) + offset;
         case ShapeType::Sphere: return s.radius + offset;
         case ShapeType::Capsule: return s.radius + s.halfHeight + offset;
+        case ShapeType::Cylinder: return std::sqrt(s.radius * s.radius + s.halfHeight * s.halfHeight) + offset;
+        case ShapeType::ConvexHull:
+        case ShapeType::Mesh: {
+            f64 r = 0.0;
+            if (s.geometry)
+                for (const glm::vec3& p : s.geometry->points) r = std::max(r, static_cast<f64>(glm::length(p)));
+            return r + offset;
+        }
     }
     return offset;
 }

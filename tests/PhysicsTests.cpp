@@ -695,6 +695,108 @@ void determinism() {
     CHECK(a.stateHash() != b.stateHash());
 }
 
+// ------------------------------------------------------------- more shapes --
+// Meshes the scene's colliders read (as Renderer::meshData would provide).
+struct TestMeshes {
+    MeshData cube = MeshData::cube();
+    MeshData plane = MeshData::plane(20.0f, 4);
+    MeshData tetra;
+    TestMeshes() {
+        tetra.vertices = {{{0, 1, 0}}, {{-0.8f, -0.5f, 0.5f}}, {{0.8f, -0.5f, 0.5f}}, {{0, -0.5f, -0.9f}}};
+        tetra.indices = {0, 1, 2, 0, 2, 3, 0, 3, 1, 1, 3, 2};
+    }
+    Scene::MeshSource source() {
+        return [this](MeshHandle h) -> const MeshData* {
+            return h.id == 1 ? &cube : h.id == 2 ? &plane : h.id == 3 ? &tetra : nullptr;
+        };
+    }
+};
+
+f64 heightOf(Entity e) { return e.transform().position.toMeters().y; }
+
+void moreShapes() {
+    TestMeshes meshes;
+    Scene scene("shapes");
+    scene.setMeshSource(meshes.source());
+    // Ground: an exact triangle mesh (static), from the 20 m plane mesh.
+    Entity ground = scene.createEntity("Ground");
+    ground.add<MeshComponent>(MeshHandle{2});
+    ground.add<RigidBodyComponent>(BodyType::Static);
+    ground.add<MeshColliderComponent>(); // empty mesh = the entity's MeshComponent
+    // A cylinder standing up, a 2×1×2 box as the convex hull of the scaled cube mesh, a tetrahedron hull.
+    Entity cyl = scene.createEntity("Cylinder");
+    cyl.transform().position = {-4.0, 3.0, 0.0};
+    cyl.add<RigidBodyComponent>();
+    cyl.add<CylinderColliderComponent>().halfHeight = 1.0f;
+    Entity hull = scene.createEntity("Hull");
+    hull.transform().position = {0.0, 3.0, 0.0};
+    hull.transform().scale = {2.0f, 1.0f, 2.0f};
+    hull.add<MeshComponent>(MeshHandle{1});
+    hull.add<RigidBodyComponent>();
+    hull.add<ConvexHullColliderComponent>();
+    Entity tetra = scene.createEntity("Tetra");
+    tetra.transform().position = {4.0, 3.0, 0.0};
+    tetra.add<RigidBodyComponent>();
+    tetra.add<ConvexHullColliderComponent>().mesh = MeshHandle{3};
+    // A dynamic body with a MeshCollider falls back to its convex hull.
+    Entity fallback = scene.createEntity("Fallback");
+    fallback.transform().position = {0.0, 3.0, 5.0};
+    fallback.add<MeshComponent>(MeshHandle{1});
+    fallback.add<RigidBodyComponent>();
+    fallback.add<MeshColliderComponent>();
+
+    scene.startSimulation();
+    for (int i = 0; i < 240; ++i) scene.update(Duration::perSecond(60));
+    CHECK(scene.physicsBodyCount() == 5);
+    CHECK_NEAR(heightOf(cyl), 1.0, 0.03);      // half height 1 on the mesh ground
+    CHECK_NEAR(heightOf(hull), 0.5, 0.03);     // cube scaled to 2×1×2: half height 0.5
+    CHECK_NEAR(heightOf(fallback), 0.5, 0.03); // hull of the cube
+    CHECK(heightOf(tetra) > 0.3 && heightOf(tetra) < 1.0); // resting on a face of the tetrahedron
+    CHECK(std::abs(glm::length(cyl.transform().up()) - 1.0f) < 1e-4f && cyl.transform().up().y > 0.99f); // still upright
+
+    // Queries hit the triangle mesh exactly.
+    auto hit = scene.raycast(GlobalPosition(7.0, 5.0, 7.0), {0, -1, 0}, 20.0f);
+    CHECK(hit && hit->entity == ground);
+    if (hit) {
+        CHECK_NEAR(hit->point.toMeters().y, 0.0, 1e-4);
+        CHECK_VEC(hit->normal, glm::vec3(0, 1, 0), 1e-4f);
+    }
+    // A sweep with a hull shape (any ShapeDesc works in queries too).
+    physics::ShapeDesc probe;
+    probe.type = ShapeType::ConvexHull;
+    auto geometry = std::make_shared<physics::ShapeGeometry>();
+    for (const Vertex& v : meshes.tetra.vertices) geometry->points.push_back(v.position * 0.5f);
+    probe.geometry = geometry;
+    auto swept = scene.sweep(probe, GlobalPosition(0.0, 6.0, 0.0), glm::quat(1, 0, 0, 0), {0, -1, 0}, 20.0f);
+    CHECK(swept && swept->entity == hull);
+}
+
+void meshShapesFarAway() {
+    // The same mesh ground and hull 10,000 km out: shapes stay local, only bodies are global.
+    TestMeshes meshes;
+    const GlobalPosition base = GlobalPosition::fromUnits({10'000, 0, -10'000}, LengthUnit::Kilometer);
+    Scene scene("far shapes");
+    scene.setMeshSource(meshes.source());
+    Entity cam = scene.createEntity("Camera");
+    cam.add<CameraComponent>();
+    cam.transform().position = base + glm::vec3(0, 3, 10);
+    Entity ground = scene.createEntity("Ground");
+    ground.transform().position = base;
+    ground.add<MeshComponent>(MeshHandle{2});
+    ground.add<RigidBodyComponent>(BodyType::Static);
+    ground.add<MeshColliderComponent>();
+    Entity hull = scene.createEntity("Hull");
+    hull.transform().position = base + glm::vec3(1, 3, 0);
+    hull.add<MeshComponent>(MeshHandle{1});
+    hull.add<RigidBodyComponent>();
+    hull.add<ConvexHullColliderComponent>();
+    scene.startSimulation();
+    for (int i = 0; i < 180; ++i) scene.update(Duration::perSecond(60));
+    const glm::dvec3 rest = (hull.transform().position - base).toMeters();
+    CHECK_NEAR(rest.y, 0.5, 0.03);
+    CHECK_NEAR(rest.x, 1.0, 1e-3);
+}
+
 // A backend that works in global positions natively (like a custom integer engine would):
 // implements PhysicsWorld directly — no floating origin, no float positions anywhere.
 // Bodies fall under gravity, integrated as exact integer offsets; no collisions.
@@ -814,6 +916,8 @@ int main() {
         {"physics regions: dormant bodies keep their velocity", dormancy},
         {"determinism: two runs agree bit for bit", determinism},
         {"global contract: a native integer backend plugs in directly", nativeIntegerBackend},
+        {"shapes: cylinder, convex hull, triangle mesh", moreShapes},
+        {"shapes: mesh ground and hull 10,000 km away", meshShapesFarAway},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

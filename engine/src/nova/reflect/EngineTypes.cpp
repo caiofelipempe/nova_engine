@@ -78,6 +78,18 @@ void registerEngineTypes() {
         .field("radius", &SphereColliderComponent::radius, {.speed = 0.01f})
         .field("offset", &SphereColliderComponent::offset, {.speed = 0.01f})
         .component();
+    type<CylinderColliderComponent>("CylinderCollider")
+        .field("radius", &CylinderColliderComponent::radius, {.speed = 0.01f})
+        .field("halfHeight", &CylinderColliderComponent::halfHeight, {.speed = 0.01f})
+        .field("offset", &CylinderColliderComponent::offset, {.speed = 0.01f})
+        .component();
+    type<ConvexHullColliderComponent>("ConvexHullCollider")
+        .field("mesh", &ConvexHullColliderComponent::mesh, {.tooltip = "Empty = the entity's mesh"})
+        .field("offset", &ConvexHullColliderComponent::offset, {.speed = 0.01f})
+        .component();
+    type<MeshColliderComponent>("MeshCollider")
+        .field("mesh", &MeshColliderComponent::mesh, {.tooltip = "Empty = the entity's mesh. Static/kinematic bodies only"})
+        .component();
     type<CapsuleColliderComponent>("CapsuleCollider")
         .field("radius", &CapsuleColliderComponent::radius, {.speed = 0.01f})
         .field("halfHeight", &CapsuleColliderComponent::halfHeight, {.speed = 0.01f})
