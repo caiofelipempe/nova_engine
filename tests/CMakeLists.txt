@@ -56,7 +56,5 @@ endif()
 # A failing assert opens a dialog on Windows debug builds: never let it block the suite.
 set_tests_properties(physics input scene assets shaders worldspace time PROPERTIES TIMEOUT 60)
 if(TARGET NovaEditorTests)
-    # Hot reload loads freshly built DLLs: antivirus cloud checks (e.g. Defender "block at first
-    # sight") can hold the first LoadLibrary of a new binary for ~50 s.
-    set_tests_properties(editor PROPERTIES TIMEOUT 180)
+    set_tests_properties(editor PROPERTIES TIMEOUT 60)
 endif()
