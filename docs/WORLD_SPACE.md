@@ -67,7 +67,7 @@ scene.setWorldSpace(nova::WorldSpaceDesc::withMaxSize(10, nova::LengthUnit::Kilo
   ponto próximo (a câmera, na fase 3). `matrix()` ainda é absoluta em `float`.
 - Inspetor: posição em metros com `double` (o tooltip mostra a unidade legível e os passos inteiros);
   editar um eixo move só ele, os outros continuam bit a bit.
-- Ainda em `float` a partir da origem do mundo: a física (fase 4).
+- A física usa uma origem flutuante (fase 4).
 
 ## Renderização relativa à câmera (fase 3)
 
@@ -86,6 +86,29 @@ scene.setWorldSpace(nova::WorldSpaceDesc::withMaxSize(10, nova::LengthUnit::Kilo
 - Editor: a câmera é uma `GlobalPosition`; o raio do mouse (`ViewportState::rayOrigin`), o picking
   (`PickHit::point`), o ponto de spawn e o soltar de assets são exatos; o gizmo trabalha em espaço
   da câmera e só regrava a posição quando ela de fato mudou.
+
+## Física com origem flutuante (fase 4)
+
+- O Jolt continua em `float`, mas em torno de `Scene::physicsOrigin()`, uma `GlobalPosition`:
+  corpos entram como `posição − origem` e voltam como `origem + p`.
+- A origem segue um foco: `Scene::setPhysicsFocus(p)` (ex.: o jogador) ou, sem foco, a câmera
+  principal. Quando o foco passa de `physicsRebaseDistance` (1024 m) da origem, todos os corpos são
+  deslocados de uma vez (`PhysicsWorld::shiftOrigin`), mantendo velocidades e sono. O deslocamento é
+  um valor que o `float` representa exatamente, então origem inteira e Jolt nunca divergem.
+- A precisão é a do `float` em torno do foco: ~0,06 mm a 1 km, ~0,5 mm a 5 km. Corpos longe do foco
+  (ex.: outro jogador a dezenas de km) ficam menos precisos — várias regiões de física são a fase 6.
+- Consultas (`raycast`, `sweep*`) recebem `GlobalPosition` (metros convertem implicitamente) e
+  `SceneHit::point` / `sweptPoint` e `Collision::point` / `otherPoint` são `GlobalPosition`.
+- **Barreiras:** bordas de eixos `Barrier` a menos de `barrierWallRange` (8 km) da origem viram
+  paredes estáticas no Jolt (sem restituição própria), recriadas a cada rebase. Encostar nelas chama
+  `Script::onWorldBoundary(WorldBoundaryHit{axis, side, point, normal})`; raycasts acertam a parede
+  com `entity` inválida. Movimentos sem física (scripts, kinematic) saturam na borda pela própria
+  aritmética de `GlobalPosition`.
+- **Volta (Wrap):** como as posições relativas usam o caminho mais curto, corpos dos dois lados da
+  emenda são vizinhos para o Jolt quando o foco está perto dela, e um corpo que atravessa a emenda
+  reaparece do outro lado.
+- Testado com a cena física inteira a 10.000 km da origem (pilha de caixas estável, consultas
+  corretas), onde o Jolt em coordenadas absolutas teria precisão de 1 m.
 
 ## Tempo exato
 
@@ -109,7 +132,7 @@ Vetores e quaternions continuam sendo os do glm (genérico por tipo em tempo de 
 `glm::vec3`, `glm::dvec3`, `glm::i64vec3`...). `GlobalPosition::raw()` e `GlobalOffset::raw()`
 devolvem os passos como `glm::i64vec3`.
 
-Status: **Fases 1, 2 e 3 concluídas** (`engine/src/nova/math/`, testes em `tests/WorldSpaceTests.cpp`).
+Status: **Fases 1 a 4 concluídas** (`engine/src/nova/math/`, testes em `tests/WorldSpaceTests.cpp`).
 
 ## Fases
 

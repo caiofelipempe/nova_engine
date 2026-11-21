@@ -40,6 +40,7 @@ public:
     glm::vec3 gravity() const override;
 
     void step(f32 dt) override;
+    void shiftOrigin(const glm::vec3& newOrigin) override;
     bool raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance, RaycastHit& hit,
                  const QueryFilter& filter) const override;
     bool sweep(const ShapeDesc& shape, const glm::vec3& position, const glm::quat& rotation,

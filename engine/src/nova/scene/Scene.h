@@ -17,10 +17,10 @@ namespace nova {
 /// @see physics::QueryHit for how the three normals differ on edges and corners.
 struct SceneHit {
     Entity entity;                      ///< Hit entity.
-    glm::vec3 point{0.0f};              ///< Contact point on the hit entity.
+    GlobalPosition point;               ///< Contact point on the hit entity.
     glm::vec3 normal{0.0f};             ///< Contact normal (separation direction), pointing towards the query.
     glm::vec3 hitSurfaceNormal{0.0f};   ///< Hit entity's surface normal at `point`.
-    glm::vec3 sweptPoint{0.0f};         ///< Sweeps: contact point on the swept shape (zero for raycasts).
+    GlobalPosition sweptPoint;          ///< Sweeps: contact point on the swept shape (the query origin for raycasts).
     glm::vec3 sweptSurfaceNormal{0.0f}; ///< Sweeps: swept shape's surface normal at `sweptPoint` (zero for raycasts).
     f32 distance = 0.0f;                ///< Distance travelled until contact (0 = overlapping at the start).
 };
@@ -102,6 +102,20 @@ public:
     /// @brief Teleports the body to the entity's current transform and zeroes its velocity
     ///        (e.g. after moving it with an editor gizmo).
     void syncTransformToPhysics(Entity e);
+
+    /// @brief Floating origin of the simulation. The physics engine works in floats around it;
+    ///        bodies are converted to and from GlobalPosition at that boundary.
+    const GlobalPosition& physicsOrigin() const { return m_physicsOrigin; }
+    /// @brief The point the physics origin follows (e.g. the player). Without one it follows the
+    ///        primary camera, or stays where it is if there is none.
+    void setPhysicsFocus(const GlobalPosition& focus) { m_physicsFocus = focus; m_hasPhysicsFocus = true; }
+    /// @brief Goes back to following the primary camera.
+    void clearPhysicsFocus() { m_hasPhysicsFocus = false; }
+    /// @brief When the focus gets farther than this (meters) from the physics origin, every body is
+    ///        shifted so the origin is at the focus again. Precision is best within this radius.
+    f64 physicsRebaseDistance = 1024.0;
+    /// @brief Barrier edges closer than this (meters) to the physics origin become static walls.
+    f64 barrierWallRange = 8192.0;
     /// @}
 
     /// @name Queries
@@ -109,24 +123,24 @@ public:
     /// `direction` need not be normalized. `ignore` skips one entity (typically the caller).
     /// @{
     /// @brief Closest entity hit by a ray.
-    std::optional<SceneHit> raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance = 1000.0f,
+    std::optional<SceneHit> raycast(const GlobalPosition& origin, const glm::vec3& direction, f32 maxDistance = 1000.0f,
                                     Entity ignore = {});
     /// @brief Sweeps a sphere and returns the first entity it would touch.
-    std::optional<SceneHit> sweepSphere(const glm::vec3& origin, f32 radius, const glm::vec3& direction,
+    std::optional<SceneHit> sweepSphere(const GlobalPosition& origin, f32 radius, const glm::vec3& direction,
                                         f32 maxDistance = 1000.0f, Entity ignore = {});
     /// @brief Sweeps an oriented box and returns the first entity it would touch.
-    std::optional<SceneHit> sweepBox(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation,
+    std::optional<SceneHit> sweepBox(const GlobalPosition& center, const glm::vec3& halfExtents, const glm::quat& rotation,
                                      const glm::vec3& direction, f32 maxDistance = 1000.0f, Entity ignore = {});
     /// @brief Sweeps a capsule (axis = local Y of `rotation`) and returns the first entity it would touch.
-    std::optional<SceneHit> sweepCapsule(const glm::vec3& center, f32 radius, f32 halfHeight,
+    std::optional<SceneHit> sweepCapsule(const GlobalPosition& center, f32 radius, f32 halfHeight,
                                          const glm::quat& rotation, const glm::vec3& direction,
                                          f32 maxDistance = 1000.0f, Entity ignore = {});
     /// @brief Sweeps any shape and returns the first entity it would touch.
-    std::optional<SceneHit> sweep(const physics::ShapeDesc& shape, const glm::vec3& position,
+    std::optional<SceneHit> sweep(const physics::ShapeDesc& shape, const GlobalPosition& position,
                                   const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance = 1000.0f,
                                   Entity ignore = {});
     /// @brief Sweeps any shape and returns every entity along the way, closest first.
-    std::vector<SceneHit> sweepAll(const physics::ShapeDesc& shape, const glm::vec3& position,
+    std::vector<SceneHit> sweepAll(const physics::ShapeDesc& shape, const GlobalPosition& position,
                                    const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance = 1000.0f,
                                    Entity ignore = {});
     /// @brief Sweeps the entity's own collider from where it is now, ignoring itself.
@@ -175,18 +189,26 @@ public:
 
 private:
     void stepPhysics(Duration dt);
+    void updatePhysicsOrigin();
+    void rebuildBarrierWalls();
+    glm::vec3 toPhysics(const GlobalPosition& p) const { return (p - m_physicsOrigin).toVec3(); }
+    GlobalPosition fromPhysics(const glm::vec3& p) const { return m_physicsOrigin + p; }
     void createBody(entt::entity e);
     void onRigidBodyDestroyed(entt::registry& registry, entt::entity e);
     void connectSignals();
     physics::BodyId bodyOf(Entity e);
     physics::QueryFilter filterIgnoring(Entity e);
-    SceneHit toSceneHit(const physics::QueryHit& hit);
+    SceneHit toSceneHit(const physics::QueryHit& hit, const GlobalPosition& queryOrigin);
 
     std::string m_name;
     WorldSpaceDesc m_worldSpace;
     entt::registry m_registry;
     Scope<physics::PhysicsWorld> m_physics; // declared after the registry: destroyed first
     TimePoint m_time;
+    GlobalPosition m_physicsOrigin;
+    GlobalPosition m_physicsFocus;
+    bool m_hasPhysicsFocus = false;
+    std::vector<physics::BodyId> m_barrierWalls;
     Duration m_physicsAccumulator;
 };
 

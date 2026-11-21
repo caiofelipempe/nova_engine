@@ -173,6 +173,11 @@ public:
 
     /// @brief Advances the simulation by exactly `dt` seconds (callers should use a fixed timestep).
     virtual void step(f32 dt) = 0;
+    /// @brief Moves the world's origin to `newOrigin` (in current coordinates): every body is
+    ///        translated by `-newOrigin`, keeping velocities and sleep state.
+    ///
+    /// Used for floating origins: keep the simulated region near (0, 0, 0), where floats are precise.
+    virtual void shiftOrigin(const glm::vec3& newOrigin) = 0;
 
     /// @name Queries
     /// @{

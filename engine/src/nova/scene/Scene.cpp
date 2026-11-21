@@ -126,20 +126,71 @@ void Scene::update(Duration frame) {
 // ----------------------------------------------------------------- physics --
 namespace {
 u64 toUserData(entt::entity e) { return static_cast<u64>(entt::to_integral(e)); }
+// Barrier walls are bodies without an entity: the top bit marks them, the low bits say which edge.
+constexpr u64 kWallUserData = 1ull << 63;
+bool isWall(u64 v) { return (v & kWallUserData) != 0; }
 entt::entity fromUserData(u64 v) { return static_cast<entt::entity>(static_cast<entt::id_type>(v)); }
 } // namespace
 
 void Scene::startSimulation(physics::Backend backend) {
     if (m_physics) return;
+    activateWorldSpace();
     m_physics = physics::PhysicsWorld::create(backend);
     m_physicsAccumulator = Duration();
+    // Start the floating origin at the focus (or the camera) so nearby bodies are precise from frame one.
+    if (m_hasPhysicsFocus) m_physicsOrigin = m_physicsFocus;
+    else if (Entity cam = primaryCamera()) m_physicsOrigin = cam.transform().position;
     for (auto e : m_registry.view<RigidBodyComponent>()) createBody(e);
+    rebuildBarrierWalls();
 }
 
 void Scene::stopSimulation() {
     if (!m_physics) return;
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) rb.body = {};
+    m_barrierWalls.clear();
     m_physics.reset();
+}
+
+void Scene::updatePhysicsOrigin() {
+    GlobalPosition focus;
+    if (m_hasPhysicsFocus) focus = m_physicsFocus;
+    else if (Entity cam = primaryCamera()) focus = cam.transform().position;
+    else return;
+    if (isWithin(focus, m_physicsOrigin, physicsRebaseDistance)) return;
+    // Shift by an amount floats represent exactly, so the integer origin and the physics engine
+    // agree to the bit after the move (no drift however often it happens).
+    const glm::vec3 shift = (focus - m_physicsOrigin).toVec3();
+    m_physicsOrigin += GlobalOffset::fromMeters(shift);
+    m_physics->shiftOrigin(shift);
+    rebuildBarrierWalls();
+}
+
+void Scene::rebuildBarrierWalls() {
+    for (physics::BodyId wall : m_barrierWalls) m_physics->destroyBody(wall);
+    m_barrierWalls.clear();
+    const WorldSpace& world = WorldSpace::active();
+    const f32 thickness = 1.0f, span = static_cast<f32>(barrierWallRange);
+    for (int axis = 0; axis < 3; ++axis) {
+        const WorldSpace::Axis& a = world.axis(axis);
+        if (a.boundary != WorldBoundary::Barrier) continue;
+        for (int side : {-1, 1}) {
+            // Distance along the axis from the physics origin to the edge.
+            const i64 edgeRaw = side < 0 ? a.min : a.max;
+            const f64 toEdge = static_cast<f64>(world.difference(axis, edgeRaw, m_physicsOrigin.raw(axis))) * world.unit();
+            if (std::abs(toEdge) > barrierWallRange) continue;
+            physics::BodyDesc desc;
+            desc.type = physics::BodyType::Static;
+            desc.shape.type = physics::ShapeType::Box;
+            desc.shape.halfExtents = glm::vec3(span);
+            desc.shape.halfExtents[axis] = thickness;
+            desc.position = glm::vec3(0.0f);
+            desc.position[axis] = static_cast<f32>(toEdge) + side * thickness; // just outside the edge
+            desc.friction = 0.5f;
+            desc.restitution = 0.0f; // the edge adds no bounce of its own (the body's restitution still applies)
+            desc.userData = kWallUserData | static_cast<u64>(axis * 2 + (side > 0 ? 1 : 0));
+            if (physics::BodyId wall = m_physics->createBody(desc)) m_barrierWalls.push_back(wall);
+        }
+    }
 }
 
 void Scene::createBody(entt::entity e) {
@@ -167,7 +218,7 @@ void Scene::createBody(entt::entity e) {
     }
 
     desc.type = rb.type;
-    desc.position = t.position.toVec3(); // physics: float from the world origin until the floating origin (phase 4)
+    desc.position = toPhysics(t.position);
     desc.rotation = t.orientation();
     desc.mass = rb.mass;
     desc.friction = rb.friction;
@@ -188,6 +239,7 @@ void Scene::onRigidBodyDestroyed(entt::registry& registry, entt::entity e) {
 }
 
 void Scene::stepPhysics(Duration dt) {
+    updatePhysicsOrigin();
     // Entities that gained a rigid body since the last frame.
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each())
         if (!rb.body) createBody(e);
@@ -199,7 +251,7 @@ void Scene::stepPhysics(Duration dt) {
     while (fixedTimeStep > Duration() && m_physicsAccumulator >= fixedTimeStep && steps < kMaxSteps) {
         for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each())
             if (rb.type == physics::BodyType::Kinematic && rb.body)
-                m_physics->moveKinematic(rb.body, t.position.toVec3(), t.orientation(), step);
+                m_physics->moveKinematic(rb.body, toPhysics(t.position), t.orientation(), step);
         m_physics->step(step);
         m_physicsAccumulator -= fixedTimeStep;
         ++steps;
@@ -213,12 +265,28 @@ void Scene::stepPhysics(Duration dt) {
         glm::quat q;
         glm::vec3 p;
         m_physics->getTransform(rb.body, p, q);
-        t.position = p;
+        t.position = fromPhysics(p);
         t.rotation = glm::eulerAngles(q);
     }
 
     // Collision callbacks for scripts on both entities, each seen from its own side.
     for (const physics::ContactEvent& c : m_physics->drainContactEvents()) {
+        if (isWall(c.userDataA) || isWall(c.userDataB)) { // a body touched a barrier edge of the world
+            const bool wallIsA = isWall(c.userDataA);
+            const u64 wall = wallIsA ? c.userDataA : c.userDataB;
+            Entity self{fromUserData(wallIsA ? c.userDataB : c.userDataA), this};
+            if (!self.valid() || isWall(wallIsA ? c.userDataB : c.userDataA)) continue;
+            WorldBoundaryHit hit;
+            hit.axis = static_cast<int>((wall & 0xFF) / 2);
+            hit.side = (wall & 1) ? 1 : -1;
+            hit.point = fromPhysics(wallIsA ? c.pointB : c.pointA);
+            hit.normal = glm::vec3(0.0f);
+            hit.normal[hit.axis] = static_cast<f32>(-hit.side);
+            if (auto* sc = self.tryGet<ScriptComponent>())
+                for (auto& s : sc->scripts)
+                    if (s->m_created) s->onWorldBoundary(hit);
+            continue;
+        }
         Entity a{fromUserData(c.userDataA), this};
         Entity b{fromUserData(c.userDataB), this};
         auto notify = [&](Entity self, const Collision& info) {
@@ -228,8 +296,9 @@ void Scene::stepPhysics(Duration dt) {
                     if (s->m_created) s->onCollision(info);
         };
         // c.normal points from A to B: it pushes B out of A, so A is pushed along -normal.
-        notify(a, Collision{b, -c.normal, c.pointA, c.pointB, c.surfaceNormalA, c.surfaceNormalB});
-        notify(b, Collision{a, c.normal, c.pointB, c.pointA, c.surfaceNormalB, c.surfaceNormalA});
+        const GlobalPosition pa = fromPhysics(c.pointA), pb = fromPhysics(c.pointB);
+        notify(a, Collision{b, -c.normal, pa, pb, c.surfaceNormalA, c.surfaceNormalB});
+        notify(b, Collision{a, c.normal, pb, pa, c.surfaceNormalB, c.surfaceNormalA});
     }
 }
 
@@ -257,7 +326,7 @@ glm::vec3 Scene::linearVelocity(Entity e) {
 void Scene::syncTransformToPhysics(Entity e) {
     if (auto b = bodyOf(e)) {
         auto& t = e.transform();
-        m_physics->setTransform(b, t.position.toVec3(), t.orientation());
+        m_physics->setTransform(b, toPhysics(t.position), t.orientation());
         m_physics->setLinearVelocity(b, glm::vec3(0.0f));
         m_physics->setAngularVelocity(b, glm::vec3(0.0f));
     }
@@ -271,47 +340,48 @@ physics::QueryFilter Scene::filterIgnoring(Entity e) {
     return f;
 }
 
-SceneHit Scene::toSceneHit(const physics::QueryHit& hit) {
+SceneHit Scene::toSceneHit(const physics::QueryHit& hit, const GlobalPosition& queryOrigin) {
     SceneHit out;
-    out.entity = {fromUserData(hit.userData), this};
-    out.point = hit.point;
+    out.entity = isWall(hit.userData) ? Entity{} : Entity{fromUserData(hit.userData), this};
+    out.point = fromPhysics(hit.point);
     out.normal = hit.normal;
     out.hitSurfaceNormal = hit.hitSurfaceNormal;
-    out.sweptPoint = hit.sweptPoint;
+    out.sweptPoint = hit.sweptPoint == glm::vec3(0.0f) ? queryOrigin : fromPhysics(hit.sweptPoint);
     out.sweptSurfaceNormal = hit.sweptSurfaceNormal;
     out.distance = hit.distance;
     return out;
 }
 
-std::optional<SceneHit> Scene::raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance,
+std::optional<SceneHit> Scene::raycast(const GlobalPosition& origin, const glm::vec3& direction, f32 maxDistance,
                                        Entity ignore) {
     if (!m_physics) return std::nullopt;
     physics::RaycastHit hit;
-    if (!m_physics->raycast(origin, direction, maxDistance, hit, filterIgnoring(ignore))) return std::nullopt;
-    return toSceneHit(hit);
+    if (!m_physics->raycast(toPhysics(origin), direction, maxDistance, hit, filterIgnoring(ignore))) return std::nullopt;
+    return toSceneHit(hit, origin);
 }
 
-std::optional<SceneHit> Scene::sweep(const physics::ShapeDesc& shape, const glm::vec3& position,
+std::optional<SceneHit> Scene::sweep(const physics::ShapeDesc& shape, const GlobalPosition& position,
                                      const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
                                      Entity ignore) {
     if (!m_physics) return std::nullopt;
     physics::SweepHit hit;
-    if (!m_physics->sweep(shape, position, rotation, direction, maxDistance, hit, filterIgnoring(ignore)))
+    if (!m_physics->sweep(shape, toPhysics(position), rotation, direction, maxDistance, hit, filterIgnoring(ignore)))
         return std::nullopt;
-    return toSceneHit(hit);
+    return toSceneHit(hit, position);
 }
 
-std::vector<SceneHit> Scene::sweepAll(const physics::ShapeDesc& shape, const glm::vec3& position,
+std::vector<SceneHit> Scene::sweepAll(const physics::ShapeDesc& shape, const GlobalPosition& position,
                                       const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
                                       Entity ignore) {
     std::vector<SceneHit> out;
     if (!m_physics) return out;
-    for (const auto& h : m_physics->sweepAll(shape, position, rotation, direction, maxDistance, filterIgnoring(ignore)))
-        out.push_back(toSceneHit(h));
+    for (const auto& h :
+         m_physics->sweepAll(shape, toPhysics(position), rotation, direction, maxDistance, filterIgnoring(ignore)))
+        out.push_back(toSceneHit(h, position));
     return out;
 }
 
-std::optional<SceneHit> Scene::sweepSphere(const glm::vec3& origin, f32 radius, const glm::vec3& direction,
+std::optional<SceneHit> Scene::sweepSphere(const GlobalPosition& origin, f32 radius, const glm::vec3& direction,
                                            f32 maxDistance, Entity ignore) {
     physics::ShapeDesc s;
     s.type = physics::ShapeType::Sphere;
@@ -319,7 +389,7 @@ std::optional<SceneHit> Scene::sweepSphere(const glm::vec3& origin, f32 radius, 
     return sweep(s, origin, glm::quat(1, 0, 0, 0), direction, maxDistance, ignore);
 }
 
-std::optional<SceneHit> Scene::sweepBox(const glm::vec3& center, const glm::vec3& halfExtents,
+std::optional<SceneHit> Scene::sweepBox(const GlobalPosition& center, const glm::vec3& halfExtents,
                                         const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
                                         Entity ignore) {
     physics::ShapeDesc s;
@@ -328,7 +398,7 @@ std::optional<SceneHit> Scene::sweepBox(const glm::vec3& center, const glm::vec3
     return sweep(s, center, rotation, direction, maxDistance, ignore);
 }
 
-std::optional<SceneHit> Scene::sweepCapsule(const glm::vec3& center, f32 radius, f32 halfHeight,
+std::optional<SceneHit> Scene::sweepCapsule(const GlobalPosition& center, f32 radius, f32 halfHeight,
                                             const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
                                             Entity ignore) {
     physics::ShapeDesc s;
@@ -343,7 +413,7 @@ std::optional<SceneHit> Scene::sweepEntity(Entity entity, const glm::vec3& direc
     if (!body) return std::nullopt;
     physics::SweepHit hit;
     if (!m_physics->sweepBody(body, direction, maxDistance, hit)) return std::nullopt;
-    return toSceneHit(hit);
+    return toSceneHit(hit, entity.transform().position);
 }
 
 Entity Scene::primaryCamera() {

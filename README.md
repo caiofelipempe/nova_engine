@@ -215,7 +215,8 @@ Cada hit traz `entity`, `point`, `distance` (0 = já encostado no início) e tr�
 Em superfícies lisas (esfera numa face) as três coincidem; em arestas e vértices divergem. As normais de superfície usam a *supporting face* voltada para o outro corpo (não o ponto), então continuam corretas quando o contato cai exatamente numa quina; em formas curvas (esfera, cápsula) usa-se a normal no ponto. Os eventos de contato (`physics::ContactEvent`, `Script::onCollision`) trazem o mesmo par de normais e de pontos. No backend, `PhysicsWorld::raycast/sweep/sweepAll/sweepBody` aceitam um `QueryFilter` (ignorar um corpo, incluir sensores).
 
 - Corpos **Static**, **Kinematic** (seguem o transform do ECS e empurram os dinâmicos) e **Dynamic**; colliders Box, Sphere e Capsule com offset; tamanhos multiplicados pelo scale.
-- Passo fixo de 60 Hz com acumulador; transforms dos dinâmicos são escritos de volta no ECS.
+- Passo fixo exato (`Duration`, 60 Hz) com acumulador; transforms dos dinâmicos são escritos de volta no ECS.
+- **Origem flutuante:** o Jolt simula em `float` em torno da câmera (ou de `scene().setPhysicsFocus(p)`), com rebase automático; consultas e colisões usam `GlobalPosition`, e bordas `Barrier` do mundo viram paredes (`Script::onWorldBoundary`). Veja [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md).
 - `GameLayer` liga a simulação sozinho. No editor: **Play / Pause / Stop** (Stop restaura os transforms), gizmo arrasta corpos durante o Play.
 - Próximos passos: mesh/convex colliders (para cenas glTF), character controller, joints, debug draw dos colliders, interpolação de transforms.
 
@@ -295,7 +296,7 @@ Próximos passos (a estrutura já está preparada):
 
 ## Roadmap geral
 
-- **Mundos grandes** com posições globais inteiras (ponto fixo em `int64`, escala ajustável, bordas com volta ou barreira): plano e status em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md); fases 1 (tipos e aritmética), 2 (cena: `TransformComponent::position` é um `GlobalPosition`, mundo salvo na cena) e 3 (renderização relativa à câmera) concluídas.
+- **Mundos grandes** com posições globais inteiras (ponto fixo em `int64`, escala ajustável, bordas com volta ou barreira): plano e status em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md); fases 1 (tipos e aritmética), 2 (cena: `TransformComponent::position` é um `GlobalPosition`, mundo salvo na cena) 3 (renderização relativa à câmera) e 4 (física com origem flutuante, paredes nas barreiras) concluídas.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
 - Renderer: materiais com mais texturas (normal, metallic-roughness, emissive), shadow maps como fallback sem RT, render graph, culling em GPU, backend D3D12.

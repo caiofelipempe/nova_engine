@@ -358,6 +358,17 @@ bool JoltPhysicsWorld::isActive(BodyId body) const { return m_impl->bodies().IsA
 void JoltPhysicsWorld::setGravity(const glm::vec3& g) { m_impl->system.SetGravity(toJ(g)); }
 glm::vec3 JoltPhysicsWorld::gravity() const { return toG(m_impl->system.GetGravity()); }
 
+void JoltPhysicsWorld::shiftOrigin(const glm::vec3& newOrigin) {
+    if (newOrigin == glm::vec3(0.0f)) return;
+    JPH::BodyIDVector ids;
+    m_impl->system.GetBodies(ids);
+    const JPH::RVec3 shift = toJR(newOrigin);
+    for (const JPH::BodyID& id : ids)
+        // Same translation for every body: relative poses (and so cached contacts) are unchanged.
+        m_impl->bodies().SetPosition(id, m_impl->bodies().GetPosition(id) - shift, JPH::EActivation::DontActivate);
+    m_impl->broadPhaseDirty = true;
+}
+
 void JoltPhysicsWorld::step(f32 dt) {
     if (m_impl->broadPhaseDirty) {
         m_impl->system.OptimizeBroadPhase();

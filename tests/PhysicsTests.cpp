@@ -24,7 +24,11 @@ void check(bool cond, const char* expr, const char* file, int line) {
     }
 }
 #define CHECK(x) check((x), #x, __FILE__, __LINE__)
-#define CHECK_NEAR(a, b, eps) check(std::abs((a) - (b)) <= (eps), #a " ~= " #b, __FILE__, __LINE__)
+void checkNear(double a, double b, double eps, const char* expr, const char* file, int line) {
+    check(std::abs(a - b) <= eps, expr, file, line);
+    if (std::abs(a - b) > eps) std::printf("    got %.6f, expected %.6f (+-%g)\n", a, b, eps);
+}
+#define CHECK_NEAR(a, b, eps) checkNear(static_cast<double>(a), static_cast<double>(b), static_cast<double>(eps), #a " ~= " #b, __FILE__, __LINE__)
 #define CHECK_VEC(a, b, eps) check(glm::length((a) - (b)) <= (eps), #a " ~= " #b, __FILE__, __LINE__)
 
 constexpr f32 kEps = 0.02f;
@@ -361,7 +365,7 @@ void scriptCollisionNormals() {
         CHECK_VEC(c.normal, kUp, kEps); // pushes the ball up, away from the ground
         CHECK_VEC(c.surfaceNormal, -kUp, kEps);
         CHECK_VEC(c.otherSurfaceNormal, kUp, kEps);
-        CHECK_NEAR(c.point.y, 0.0f, 0.05f);
+        CHECK_NEAR(c.point.toMeters().y, 0.0f, 0.05f);
     }
     if (groundRec.first) {
         const Collision& c = *groundRec.first; // seen from the ground
@@ -425,6 +429,160 @@ void sceneLevelQueries() {
     scene.stopSimulation();
 }
 
+// ------------------------------------------------------------ floating origin --
+struct Restore {
+    ~Restore() { WorldSpace::setActive(WorldSpace()); }
+};
+
+// Ground box (top face at base.y), a ball above it and a camera, all around `base`.
+struct FarScene {
+    Scene scene{"far"};
+    Entity ground, ball, camera;
+    explicit FarScene(const GlobalPosition& base) {
+        ground = scene.createEntity("Ground");
+        ground.transform().position = base + glm::vec3(0, -0.5f, 0);
+        ground.transform().scale = {100, 1, 100};
+        ground.add<RigidBodyComponent>(BodyType::Static);
+        ball = scene.createEntity("Ball");
+        ball.transform().position = base + glm::vec3(0, 2, 0);
+        ball.add<RigidBodyComponent>();
+        ball.add<SphereColliderComponent>(); // radius 0.5
+        camera = scene.createEntity("Camera");
+        camera.add<CameraComponent>();
+        camera.transform().position = base + glm::vec3(0, 3, 10);
+    }
+};
+
+void farFromOrigin() {
+    // 10,000 km away: absolute floats there are 1 m apart; the simulation runs around the camera.
+    const GlobalPosition base = GlobalPosition::fromUnits({10'000, 0, -10'000}, LengthUnit::Kilometer);
+    FarScene f(base);
+    f.scene.startSimulation();
+    CHECK(f.scene.physicsOrigin() == f.camera.transform().position);
+    for (int i = 0; i < 180; ++i) f.scene.update(Duration::perSecond(60));
+    const glm::dvec3 rest = (f.ball.transform().position - base).toMeters();
+    CHECK_NEAR(rest.y, 0.5, 0.02); // resting on the ground
+    CHECK_NEAR(rest.x, 0.0, 1e-3);
+    CHECK_NEAR(rest.z, 0.0, 1e-3);
+
+    // Queries take and return exact positions.
+    auto hit = f.scene.raycast(base + glm::vec3(3, 10, 0), {0, -1, 0}, 50.0f);
+    CHECK(hit && hit->entity == f.ground);
+    if (hit) CHECK_NEAR((hit->point - base).toMeters().y, 0.0, 1e-3);
+    auto sweep = f.scene.sweepSphere(base + glm::vec3(0, 10, 0), 0.25f, {0, -1, 0}, 50.0f);
+    CHECK(sweep && sweep->entity == f.ball);
+    if (sweep) CHECK_NEAR((sweep->point - base).toMeters().y, 1.0, 0.02); // top of the resting ball
+}
+
+void rebase() {
+    const GlobalPosition base = GlobalPosition::fromUnits({500, 0, 0}, LengthUnit::Kilometer);
+    FarScene f(base);
+    f.ball.get<RigidBodyComponent>().gravityFactor = 0.0f;
+    f.ball.get<RigidBodyComponent>().linearDamping = 0.0f; // measure the floating origin, not damping
+    f.scene.startSimulation();
+    f.scene.update(Duration::perSecond(60));
+    f.scene.setLinearVelocity(f.ball, {3.0f, 0.0f, 0.0f});
+    f.scene.update(Duration::perSecond(60));
+    const GlobalPosition before = f.ball.transform().position;
+    const GlobalPosition groundBefore = f.ground.transform().position;
+
+    // The focus jumps 5 km: every body shifts, the origin follows, nothing moves in the world.
+    const GlobalPosition focus = base + glm::vec3(5000.0f, 0.0f, 0.0f);
+    f.scene.setPhysicsFocus(focus);
+    f.scene.update(Duration::perSecond(60));
+    CHECK(isWithin(f.scene.physicsOrigin(), focus, 1e-3));
+    const f64 moved = (f.ball.transform().position - before).toMeters().x;
+    // One more step at 3 m/s, velocity kept. The ball is now 5 km from the physics origin, where
+    // floats are 0.5 mm apart: the shift itself rounds by up to half of that.
+    CHECK_NEAR(moved, 3.0 / 60.0, 5e-4);
+    CHECK(f.ground.transform().position == groundBefore); // static: exactly where it was
+    CHECK_NEAR(f.scene.linearVelocity(f.ball).x, 3.0f, 1e-4f);
+
+    // Far from the focus, precision drops (a 5 cm step rounds to 102 float steps of 0.49 mm)...
+    GlobalPosition mark = f.ball.transform().position;
+    for (int i = 0; i < 60; ++i) f.scene.update(Duration::perSecond(60));
+    const f64 farError = std::abs((f.ball.transform().position - mark).toMeters().x - 3.0);
+    CHECK(farError > 1e-3 && farError < 0.05);
+    // ...and comes back when the focus does: a new rebase near the ball, and 60 steps are exact.
+    f.scene.clearPhysicsFocus();
+    f.scene.update(Duration::perSecond(60));
+    CHECK(isWithin(f.scene.physicsOrigin(), f.camera.transform().position, 1e-3));
+    mark = f.ball.transform().position;
+    for (int i = 0; i < 60; ++i) f.scene.update(Duration::perSecond(60));
+    CHECK_NEAR((f.ball.transform().position - mark).toMeters().x, 3.0, 2e-4);
+}
+
+struct BoundaryRecorder : Script {
+    std::vector<WorldBoundaryHit> hits;
+    void onWorldBoundary(const WorldBoundaryHit& hit) override { hits.push_back(hit); }
+};
+
+void barrierWalls() {
+    Restore restore;
+    Scene scene("walls");
+    scene.setWorldSpace(WorldSpaceDesc{}.setUnit(1, LengthUnit::Millimeter).setAxis(0, 100, LengthUnit::Meter, WorldBoundary::Barrier));
+    Entity ball = scene.createEntity("Ball");
+    ball.transform().position = {40.0, 0.0, 0.0};
+    auto& rb = ball.add<RigidBodyComponent>();
+    rb.gravityFactor = 0.0f;
+    rb.restitution = 0.0f;
+    ball.add<SphereColliderComponent>();
+    auto& rec = ball.addScript<BoundaryRecorder>();
+    scene.startSimulation();
+    scene.update(Duration::perSecond(60)); // creates scripts
+    scene.setLinearVelocity(ball, {20.0f, 0.0f, 0.0f});
+    for (int i = 0; i < 90; ++i) scene.update(Duration::perSecond(60));
+    // The +X edge (50 m) stopped it: the ball's surface rests against the wall.
+    CHECK_NEAR(ball.transform().position.toMeters().x, 49.5, 0.05);
+    CHECK(!rec.hits.empty());
+    if (!rec.hits.empty()) {
+        CHECK(rec.hits[0].axis == 0 && rec.hits[0].side == 1);
+        CHECK_VEC(rec.hits[0].normal, glm::vec3(-1, 0, 0), 1e-6f);
+        CHECK_NEAR(rec.hits[0].point.toMeters().x, 50.0, 0.05);
+    }
+    // Raycasts see the wall but report no entity.
+    auto hit = scene.raycast(GlobalPosition(0, 0, 3), {-1, 0, 0}, 100.0f);
+    CHECK(hit && !hit->entity.valid());
+    if (hit) CHECK_NEAR(hit->point.toMeters().x, -50.0, 0.01);
+}
+
+void wrapSeam() {
+    Restore restore;
+    Scene scene("loop");
+    scene.setWorldSpace(WorldSpaceDesc{}.setUnit(1, LengthUnit::Millimeter).setAxis(0, 100, LengthUnit::Meter, WorldBoundary::Wrap));
+    // A box just past the seam (−49.5 m) and a ball just before it (+48 m) rolling towards it:
+    // with the physics focus at the seam they are neighbours for the physics engine.
+    Entity box = scene.createEntity("Box");
+    box.transform().position = {-49.0, 0.0, 0.0};
+    box.add<RigidBodyComponent>(BodyType::Static).restitution = 0.0f;
+    Entity ball = scene.createEntity("Ball");
+    ball.transform().position = {47.0, 0.0, 0.0};
+    auto& ballBody = ball.add<RigidBodyComponent>();
+    ballBody.gravityFactor = 0.0f;
+    ballBody.restitution = 0.0f;
+    ball.add<SphereColliderComponent>();
+    scene.setPhysicsFocus(GlobalPosition(50.0, 0.0, 0.0));
+    scene.startSimulation();
+    scene.setLinearVelocity(ball, {10.0f, 0.0f, 0.0f});
+    for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
+    // Stopped by the box across the seam: box face at −49.5, ball radius 0.5 → center at −50 ≡ +50.
+    const GlobalOffset fromBox = ball.transform().position - box.transform().position;
+    CHECK_NEAR(fromBox.toMeters().x, -1.0, 0.05);
+    CHECK(ball.transform().position.toMeters().x > 49.0 || ball.transform().position.toMeters().x < -49.0);
+
+    // A free ball crosses the seam and keeps going on the other side.
+    Entity free = scene.createEntity("Free");
+    free.transform().position = {48.0, 5.0, 0.0};
+    auto& freeBody = free.add<RigidBodyComponent>();
+    freeBody.gravityFactor = 0.0f;
+    freeBody.linearDamping = 0.0f;
+    free.add<SphereColliderComponent>();
+    scene.update(Duration::perSecond(60)); // creates the body
+    scene.setLinearVelocity(free, {10.0f, 0.0f, 0.0f});
+    for (int i = 0; i < 30; ++i) scene.update(Duration::perSecond(60));
+    CHECK_NEAR(free.transform().position.toMeters().x, -47.0, 0.1); // 48 + 5 m, wrapped
+}
+
 } // namespace
 
 int main() {
@@ -450,6 +608,10 @@ int main() {
         {"contact normals: tilted box", contactNormalsTiltedBox},
         {"script Collision normals", scriptCollisionNormals},
         {"scene-level queries", sceneLevelQueries},
+        {"floating origin: 10,000 km from the world origin", farFromOrigin},
+        {"floating origin: rebase keeps positions and velocities", rebase},
+        {"barrier edges are walls (onWorldBoundary)", barrierWalls},
+        {"wrap seam: neighbours across it collide", wrapSeam},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

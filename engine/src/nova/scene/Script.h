@@ -14,10 +14,18 @@ namespace nova {
 struct Collision {
     Entity other;                       ///< The entity that was touched.
     glm::vec3 normal{0.0f};             ///< Contact normal, from `other` towards self (direction self is pushed out).
-    glm::vec3 point{0.0f};              ///< Contact point on self's surface.
-    glm::vec3 otherPoint{0.0f};         ///< Contact point on the other entity's surface.
+    GlobalPosition point;               ///< Contact point on self's surface.
+    GlobalPosition otherPoint;          ///< Contact point on the other entity's surface.
     glm::vec3 surfaceNormal{0.0f};      ///< Self's surface normal at `point` (its face that touched).
     glm::vec3 otherSurfaceNormal{0.0f}; ///< Other's surface normal at `otherPoint`.
+};
+
+/// @brief A body touched a barrier edge of the world (see WorldSpace, WorldBoundary::Barrier).
+struct WorldBoundaryHit {
+    int axis = 0;           ///< 0 = X, 1 = Y, 2 = Z.
+    int side = 0;           ///< −1 = the low edge, +1 = the high edge.
+    GlobalPosition point;   ///< Contact point on the body.
+    glm::vec3 normal{0.0f}; ///< Direction the body is pushed back into the world.
 };
 
 /// @brief Native gameplay script attached to an entity.
@@ -43,6 +51,9 @@ public:
     virtual void onDestroy() {}
     /// @brief Called when this entity's rigid body starts touching another one.
     virtual void onCollision(const Collision& /*collision*/) {}
+    /// @brief Called when this entity's rigid body touches a barrier edge of the world
+    ///        (e.g. destroy whatever falls off the map).
+    virtual void onWorldBoundary(const WorldBoundaryHit& /*hit*/) {}
 
     /// @brief The entity this script is attached to.
     Entity entity() const { return m_entity; }
