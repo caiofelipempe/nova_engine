@@ -117,14 +117,55 @@ void FloatingOriginWorld::destroyRegion(size_t index) {
     m_regions.erase(m_regions.begin() + static_cast<std::ptrdiff_t>(index));
 }
 
+namespace {
+// Smallest span (m) of the wrapping axes of the active world (0 = no axis wraps within int64).
+f64 smallestWrapSpan() {
+    const WorldSpace& w = WorldSpace::active();
+    f64 smallest = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        const WorldSpace::Axis& a = w.axis(i);
+        if (a.boundary != WorldBoundary::Wrap || a.full) continue;
+        const f64 size = w.sizeMeters(i);
+        smallest = smallest == 0.0 ? size : std::min(smallest, size);
+    }
+    return smallest;
+}
+} // namespace
+
 void FloatingOriginWorld::rebaseRegion(Region& r, const GlobalPosition& target) {
-    if (isWithin(target, r.origin, m_focus.rebaseDistance)) return;
+    // In a world that wraps, the float window around the origin is one lap wide: follow the foci
+    // closely enough that what is near them is never on the far side of the window.
+    f64 distance = m_focus.rebaseDistance;
+    if (const f64 span = smallestWrapSpan(); span > 0.0) distance = std::min(distance, span / 8.0);
+    if (isWithin(target, r.origin, distance)) return;
     // Shift by an amount floats represent exactly: the integer origin and the float engine agree
     // to the bit after the move, however often it happens.
     const glm::vec3 shift = (target - r.origin).toVec3();
     r.origin += GlobalOffset::fromMeters(shift);
     r.world->shiftOrigin(shift);
     rebuildWalls(r);
+}
+
+void FloatingOriginWorld::rewrapBodies() {
+    // A local world sees one lap of a wrapping axis around its origin. A body that moved more than
+    // half a lap away (or a static one placed when the origin was elsewhere) is put back at the
+    // same world place, the short way: velocity and contacts with its neighbours are unaffected.
+    const f64 span = smallestWrapSpan();
+    if (span <= 0.0) return;
+    const f32 jump = static_cast<f32>(span * 0.25); // a real re-wrap moves by about a lap
+    for (Body& b : m_bodies) {
+        if (!b.alive) continue;
+        for (const Instance& inst : b.instances) {
+            Region* r = findRegion(inst.region);
+            if (!r) continue;
+            glm::vec3 p;
+            glm::quat q;
+            r->world->getTransform(inst.local, p, q);
+            const GlobalPosition where = b.desc.type == BodyType::Dynamic ? r->toGlobal(p) : b.desc.position;
+            const glm::vec3 shortest = r->toLocal(where);
+            if (glm::length(shortest - p) > jump) r->world->setTransform(inst.local, shortest, q);
+        }
+    }
 }
 
 void FloatingOriginWorld::rebuildWalls(Region& r) {
@@ -196,6 +237,7 @@ void FloatingOriginWorld::updateRegions() {
     }
     for (u32 i = 0; i < m_bodies.size(); ++i)
         if (m_bodies[i].alive) assign(i);
+    rewrapBodies();
 }
 
 const FloatingOriginWorld::Region* FloatingOriginWorld::regionAt(const GlobalPosition& p) const {

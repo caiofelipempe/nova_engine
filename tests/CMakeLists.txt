@@ -29,6 +29,12 @@ target_link_libraries(NovaTimeTests PRIVATE Nova::Engine)
 set_target_properties(NovaTimeTests PROPERTIES FOLDER "Tests")
 add_test(NAME time COMMAND NovaTimeTests)
 
+# The small-world scenarios of the sample game (same code as its Game/Scenarios commands).
+add_executable(NovaScenarioTests ScenarioTests.cpp ${PROJECT_SOURCE_DIR}/editor/game/WorldScenarios.cpp)
+target_link_libraries(NovaScenarioTests PRIVATE Nova::Engine)
+set_target_properties(NovaScenarioTests PROPERTIES FOLDER "Tests")
+add_test(NAME scenarios COMMAND NovaScenarioTests)
+
 add_executable(NovaInputTests InputTests.cpp)
 target_link_libraries(NovaInputTests PRIVATE Nova::Engine)
 set_target_properties(NovaInputTests PROPERTIES FOLDER "Tests")
@@ -54,7 +60,7 @@ if(TARGET Nova::Editor)
 endif()
 
 # A failing assert opens a dialog on Windows debug builds: never let it block the suite.
-set_tests_properties(physics input scene assets shaders worldspace time PROPERTIES TIMEOUT 60)
+set_tests_properties(physics input scene assets shaders worldspace time scenarios PROPERTIES TIMEOUT 60)
 if(TARGET NovaEditorTests)
     set_tests_properties(editor PROPERTIES TIMEOUT 60)
 endif()

@@ -28,7 +28,9 @@ if(PROJECT_IS_TOP_LEVEL AND NOVA_SHARED)
         game/DemoScene.cpp
         game/DemoScene.h
         game/ExamplePlugin.cpp
-        game/ExamplePlugin.h)
+        game/ExamplePlugin.h
+        game/WorldScenarios.cpp
+        game/WorldScenarios.h)
     set_target_properties(NovaEditorGame PROPERTIES FOLDER "Apps")
 
     nova_add_editor(NovaEditor app/main.cpp)

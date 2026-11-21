@@ -149,6 +149,29 @@ scene.setWorldSpace(nova::WorldSpaceDesc::withMaxSize(10, nova::LengthUnit::Kilo
   (o port do vcpkg fixa `OFF`; um overlay port resolve, com algum custo de desempenho). A parte da
   engine já é inteira/IEEE estrita; não há `fast-math`.
 
+## Cenários de teste: mundo pequeno com bordas fechadas e abertas
+
+No editor, menu **Game/Scenarios**:
+- **Small World: Closed Edges** — 60 × 40 × 60 m com barreira em todos os eixos. Bolas andam e
+  são chutadas em direções novas; ao tocar uma borda elas piscam (`onWorldBoundary`) e quicam como
+  bilhar. A grade vermelha mostra as barreiras; a câmera do editor para na borda.
+- **Small World: Open Edges (wrap)** — X e Z dão a volta a cada 60 m (Y é barreira de 40 m). O
+  chão são 6 × 6 ladrilhos, sempre desenhados e simulados pelo caminho mais curto, então ele te
+  cerca mesmo na emenda; bolas rolam para sempre atravessando as emendas; pilares marcam os dois
+  lados da emenda X (vermelho em +27 m, azul em −27 m) e a emenda Z (amarelo). A câmera começa
+  olhando para a emenda X: voe por ela (RMB + WASD) e o mundo continua.
+
+Aperte **Play** (F5) para a física; o painel **World** mostra as configurações e a origem da
+física. O código é `editor/game/WorldScenarios.cpp`; os mesmos cenários rodam sem tela em
+`tests/ScenarioTests.cpp` (nada sai do mundo fechado e as bordas são tocadas; no aberto, toda bola
+dá mais de duas voltas sem cair do chão).
+
+Correção que estes cenários revelaram: num mundo que dá a volta em menos que a distância de rebase,
+a janela `float` da física não acompanhava os corpos — uma bola que atravessava a emenda caía pelo
+chão. Agora, em mundos com volta, o rebase acompanha os focos a cada 1/8 do menor eixo com volta e,
+a cada atualização, corpos a mais de meia volta da origem são recolocados no ponto equivalente pelo
+caminho curto (velocidade mantida).
+
 ## Tempo exato
 
 O tempo segue o mesmo modelo das posições (`nova/math/Time.h`):

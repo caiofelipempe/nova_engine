@@ -292,6 +292,7 @@ void EditorContext::newScene() {
     stop();
     clearSelection();
     m_scene->clear();
+    m_scene->setWorldSpace(WorldSpaceDesc{}); // a new scene starts in the default world
     m_scene->setName("Untitled");
     m_scenePath.clear();
     m_undo.clear();

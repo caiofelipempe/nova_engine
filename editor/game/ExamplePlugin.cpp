@@ -1,5 +1,7 @@
 #include "ExamplePlugin.h"
 
+#include "WorldScenarios.h"
+
 #include <nova/editor/builtin/CoreCommands.h>
 
 using namespace nova;
@@ -131,4 +133,24 @@ void ExamplePlugin::onRegister(Registry& r) {
             e.addScript<Bob>();
         });
     }, "Ctrl+T");
+
+    // Scenarios: small worlds with closed (barrier) and open (wrap-around) edges. Fly with RMB +
+    // WASD, press Play to run them; the World panel shows the settings.
+    auto openScenario = [](EditorContext& ctx, SmallWorld kind) {
+        ctx.newScene();
+        Renderer& renderer = ctx.renderer();
+        Entity cam = buildSmallWorld(ctx.scene(), {renderer.cube(), renderer.sphere(), renderer.plane()}, kind);
+        // Start the editor camera where the scene camera is, looking the same way.
+        EditorCamera& view = ctx.camera();
+        view.position = cam.transform().position;
+        const glm::vec3 f = cam.transform().forward();
+        view.yaw = std::atan2(-f.x, -f.z);
+        view.pitch = std::asin(glm::clamp(f.y, -1.0f, 1.0f));
+    };
+    r.command("Game/Scenarios/Small World: Closed Edges", [openScenario](EditorContext& ctx) {
+        openScenario(ctx, SmallWorld::Closed);
+    });
+    r.command("Game/Scenarios/Small World: Open Edges (wrap)", [openScenario](EditorContext& ctx) {
+        openScenario(ctx, SmallWorld::Open);
+    });
 }

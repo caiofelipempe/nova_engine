@@ -94,6 +94,7 @@ private:
     void destroyRegion(size_t index);
     void rebaseRegion(Region& region, const GlobalPosition& target);
     void rebuildWalls(Region& region);
+    void rewrapBodies();
     void updateRegions();
     void assign(u32 index);
     void removeInstance(u32 index, size_t instance);

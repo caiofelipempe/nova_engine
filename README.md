@@ -57,7 +57,7 @@ cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
 build\bin\Debug\Sandbox.exe
-ctest --preset debug              # testes headless (física, cenas, assets, shaders, espaço do mundo, tempo, input, editor, hot reload)
+ctest --preset debug              # testes headless (física, cenas, assets, shaders, espaço do mundo, tempo, cenários, input, editor, hot reload)
 doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
 
