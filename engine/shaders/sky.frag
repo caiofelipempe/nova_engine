@@ -1,5 +1,5 @@
 #version 460
-#include "common.glsl"
+#include "nova/common.glsl"
 
 layout(push_constant) uniform SkyPush { FrameBuffer frame; } pc;
 

@@ -28,6 +28,9 @@ option(NOVA_BUILD_SANDBOX    "Build the runtime sandbox sample"  ${PROJECT_IS_TO
 option(NOVA_BUILD_TESTS      "Build the headless engine tests"   ${PROJECT_IS_TOP_LEVEL})
 # Shared engine/editor libraries let game code live in a DLL that the editor reloads while running.
 option(NOVA_SHARED           "Build Nova::Engine and Nova::Editor as shared libraries (hot reload)" ON)
+# Runtime GLSL -> SPIR-V compilation (shaderc from the Vulkan SDK). Turn off for final builds that
+# ship only precompiled shaders (nova_add_game_shaders): no compiler inside the game.
+option(NOVA_SHADER_COMPILER  "Compile game shaders at runtime (shaderc), with hot reload" ON)
 
 if(NOT NOVA_RHI_VULKAN)
     message(FATAL_ERROR "At least one RHI backend is required (only Vulkan is implemented).")

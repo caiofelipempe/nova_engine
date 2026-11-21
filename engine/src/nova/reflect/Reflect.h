@@ -48,6 +48,7 @@ enum class FieldKind {
     Enum,   ///< any enum registered with enumeration()
     Mesh,   ///< MeshHandle (serialized by mesh name/asset or id)
     Texture, ///< rhi::TextureHandle (serialized by texture asset or id)
+    Shader, ///< ShaderHandle (serialized by shader asset or id)
     Struct, ///< any struct registered with type() (nested object)
 };
 
@@ -175,6 +176,7 @@ constexpr FieldKind kindOf() {
     else if constexpr (std::is_enum_v<F>) return FieldKind::Enum;
     else if constexpr (std::is_same_v<F, MeshHandle>) return FieldKind::Mesh;
     else if constexpr (std::is_same_v<F, rhi::TextureHandle>) return FieldKind::Texture;
+    else if constexpr (std::is_same_v<F, ShaderHandle>) return FieldKind::Shader;
     else return FieldKind::Struct;
 }
 

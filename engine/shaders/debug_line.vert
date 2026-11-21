@@ -1,5 +1,5 @@
 #version 460
-#include "common.glsl"
+#include "nova/common.glsl"
 
 // Debug lines (nova::DebugDraw): vertices pulled from a per-frame buffer.
 struct LineVertex {

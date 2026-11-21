@@ -1,4 +1,7 @@
 // Shared GPU data layouts. Mirrored on the C++ side in nova/renderer/GpuTypes.h — keep in sync.
+// Public: game shaders may include it (#include "nova/common.glsl").
+#ifndef NOVA_COMMON_GLSL
+#define NOVA_COMMON_GLSL
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_nonuniform_qualifier : require
@@ -38,6 +41,8 @@ struct InstanceData {
     vec4 baseColor;
     vec4 emissive;  // rgb, w = strength
     vec4 params;    // x metallic, y roughness, z flags (as float bits), w baseColor texture (bindless, < 0 = none)
+    vec4 custom;    // Material::customParams (free for game material shaders)
+    vec4 extra;     // x = Material::customTexture (bindless, < 0 = none), yzw reserved
 };
 
 struct Vertex {
@@ -53,3 +58,5 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Ve
 
 // Bindless resources (set 0). See rhi/vulkan/VulkanCommon.h.
 layout(set = 0, binding = 0) uniform sampler2D g_textures[];
+
+#endif // NOVA_COMMON_GLSL

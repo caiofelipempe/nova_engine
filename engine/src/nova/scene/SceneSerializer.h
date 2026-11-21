@@ -26,6 +26,8 @@ struct SerializeOptions {
     std::function<MeshHandle(const std::string&)> findMesh;     ///< Name → mesh when reading names.
     std::function<std::string(rhi::TextureHandle)> textureName; ///< Texture → reference string (null = write ids).
     std::function<rhi::TextureHandle(const std::string&)> findTexture; ///< Reference string → texture.
+    std::function<std::string(ShaderHandle)> shaderName;                ///< Shader → reference string (null = write ids).
+    std::function<ShaderHandle(const std::string&)> findShader;         ///< Reference string → shader.
 
     /// @brief Options that store meshes by name using `renderer`.
     static SerializeOptions fromRenderer(Renderer& renderer);

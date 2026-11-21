@@ -93,6 +93,19 @@ void AssetDatabase::registerBuiltinImporters() {
     });
 
     addImporter({
+        .type = "Shader",
+        .extensions = {".vert", ".frag", ".comp", ".vert.glsl", ".frag.glsl", ".comp.glsl", ".vert.spv", ".frag.spv",
+                       ".comp.spv"},
+        .load = [](AssetDatabase& db, const fs::path& file, AssetData& out) {
+            if (!db.renderer()) return false;
+            const ShaderHandle h = db.renderer()->shaders().load(file);
+            if (!h) return false;
+            out.shaders.push_back(h);
+            return true;
+        },
+    });
+
+    addImporter({
         .type = "Prefab",
         .extensions = {".prefab.json"},
         .load = [](AssetDatabase&, const fs::path& file, AssetData& out) {
@@ -287,6 +300,8 @@ const AssetData* AssetDatabase::load(AssetGuid guid) {
         if (data.meshes[i]) m_meshOwners[data.meshes[i].id] = {guid, i};
     for (u32 i = 0; i < data.textures.size(); ++i)
         if (data.textures[i]) m_textureOwners[data.textures[i].key()] = {guid, i};
+    for (u32 i = 0; i < data.shaders.size(); ++i)
+        if (data.shaders[i]) m_shaderOwners[data.shaders[i].id] = {guid, i};
     return &m_loaded.emplace(guid, std::move(data)).first->second;
 }
 
@@ -364,6 +379,26 @@ std::string AssetDatabase::textureLabel(rhi::TextureHandle texture) const {
     return label;
 }
 
+std::string AssetDatabase::shaderRef(ShaderHandle shader) const {
+    auto it = m_shaderOwners.find(shader.id);
+    return it == m_shaderOwners.end() ? std::string{} : makeRef(it->second.first, it->second.second);
+}
+
+ShaderHandle AssetDatabase::findShader(std::string_view ref) {
+    AssetGuid guid = 0;
+    u32 index = 0;
+    if (!parseRef(ref, guid, index)) return {};
+    const AssetData* data = load(guid);
+    return data && index < data->shaders.size() ? data->shaders[index] : ShaderHandle{};
+}
+
+std::string AssetDatabase::shaderLabel(ShaderHandle shader) const {
+    auto it = m_shaderOwners.find(shader.id);
+    if (it == m_shaderOwners.end()) return {};
+    const AssetRecord* r = find(it->second.first);
+    return r ? r->path.generic_string() : makeRef(it->second.first);
+}
+
 SerializeOptions AssetDatabase::serializeOptions() {
     SerializeOptions o;
     o.meshName = [this](MeshHandle m) {
@@ -374,6 +409,8 @@ SerializeOptions AssetDatabase::serializeOptions() {
     o.findMesh = [this](const std::string& ref) { return findMesh(ref); };
     o.textureName = [this](rhi::TextureHandle t) { return textureRef(t); };
     o.findTexture = [this](const std::string& ref) { return findTexture(ref); };
+    o.shaderName = [this](ShaderHandle s) { return shaderRef(s); };
+    o.findShader = [this](const std::string& ref) { return findShader(ref); };
     return o;
 }
 

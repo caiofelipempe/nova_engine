@@ -32,6 +32,7 @@ using AssetGuid = u64;
 struct AssetData {
     std::vector<MeshHandle> meshes;           ///< Meshes, by sub-resource index.
     std::vector<rhi::TextureHandle> textures; ///< Textures, by sub-resource index.
+    std::vector<ShaderHandle> shaders;        ///< Shaders, by sub-resource index.
     std::shared_ptr<void> payload;            ///< Importer-specific data (e.g. ModelData, prefab text).
 
     /// @brief The payload as `T` (the importer decides the type).
@@ -81,8 +82,9 @@ struct AssetRecord {
 /// `<file>.meta` sidecar holding its GUID (commit those files with the assets). load() caches
 /// results; serializeOptions() makes scenes reference assets by GUID.
 ///
-/// Built-in importers: Texture (png, jpg, jpeg, tga, bmp), Model (gltf, glb), Prefab
-/// (`.prefab.json`) and Scene (`.scene.json`, listed only).
+/// Built-in importers: Texture (png, jpg, jpeg, tga, bmp), Model (gltf, glb), Shader (vert, frag,
+/// comp and their `.glsl`/`.spv` forms; loaded through Renderer::shaders(), so they hot reload),
+/// Prefab (`.prefab.json`) and Scene (`.scene.json`, listed only).
 class AssetDatabase {
 public:
     /// @param renderer Receives meshes/textures; may be null (headless: GPU assets fail to load).
@@ -162,6 +164,12 @@ public:
     rhi::TextureHandle findTexture(std::string_view ref);
     /// @brief Readable label for a texture: "textures/wood.png", "" if not from an asset.
     std::string textureLabel(rhi::TextureHandle texture) const;
+    /// @brief Reference of a shader that came from an asset, or "".
+    std::string shaderRef(ShaderHandle shader) const;
+    /// @brief Shader for a reference (loads the asset if needed).
+    ShaderHandle findShader(std::string_view ref);
+    /// @brief Readable label for a shader: "shaders/water.frag", "" if not from an asset.
+    std::string shaderLabel(ShaderHandle shader) const;
     /// @brief Serialization options for files: asset references, then renderer mesh names, then ids.
     SerializeOptions serializeOptions();
     /// @}
@@ -191,6 +199,7 @@ private:
     std::unordered_set<AssetGuid> m_failed; // load errors are reported once
     std::unordered_map<u32, std::pair<AssetGuid, u32>> m_meshOwners;    // mesh id → (asset, index)
     std::unordered_map<u64, std::pair<AssetGuid, u32>> m_textureOwners; // texture key → (asset, index)
+    std::unordered_map<u32, std::pair<AssetGuid, u32>> m_shaderOwners;  // shader id → (asset, index)
 };
 
 } // namespace nova

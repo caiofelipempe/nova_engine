@@ -125,6 +125,21 @@ public:
         crate.add<nova::RotatorComponent>(glm::vec3(0.3f, 1.0f, 0.0f), 0.8f);
         // Kinematic: driven by the Rotator, but pushes dynamic bodies around.
         crate.add<nova::RigidBodyComponent>(nova::physics::BodyType::Kinematic);
+
+        // Game shaders, precompiled at build time (nova_add_game_shaders in CMakeLists.txt).
+        // ShaderSource::Auto would compile assets/shaders/*.frag at runtime when the source is there.
+        auto& shaders = renderer().shaders();
+        nova::Material holo;
+        holo.shader = shaders.load("hologram.frag", {.source = nova::ShaderSource::Precompiled});
+        holo.baseColor = {0.1f, 0.12f, 0.15f, 1.0f};
+        holo.customParams = {1.0f, 0.4f, 0.9f, 14.0f}; // rgb = color, a = scanline density
+        auto hologram = scene().createEntity("Hologram");
+        hologram.transform().position = {-3.0f, 1.2f, -3.0f};
+        hologram.transform().scale = glm::vec3(1.6f);
+        hologram.add<nova::MeshComponent>(renderer().sphere(), holo);
+
+        if (auto vignette = shaders.load("vignette.frag", {.source = nova::ShaderSource::Precompiled}))
+            renderer().settings().postProcess.push_back({.name = "Vignette", .shader = vignette, .params = {0.5f, 1.5f, 0, 0}});
     }
 
     void onTick(float) override {
@@ -184,7 +199,8 @@ public:
         ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.6f);
         ImGui::Begin("##stats", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Text("%.0f FPS | %u draws", app().fps(), renderer().stats().drawCalls);
+        ImGui::Text("%.0f FPS | %u draws | %u post passes", app().fps(), renderer().stats().drawCalls,
+                    renderer().stats().postProcessPasses);
         if (renderer().rayTracingAvailable())
             ImGui::Checkbox("Ray-traced shadows", &renderer().settings().rayTracedShadows);
         ImGui::Text("Physics bodies: %u", scene().physics() ? scene().physics()->bodyCount() : 0u);

@@ -2,6 +2,8 @@
 
 #include "ExamplePlugin.h"
 
+#include <algorithm>
+
 using namespace nova;
 
 namespace {
@@ -111,6 +113,26 @@ void buildDemoScene(editor::EditorContext& ctx) {
         assets.instantiate(model->guid, scene, {3.5f, 0.5f, 3.0f});
     if (const AssetRecord* stack = assets.findByPath("prefabs/crate_stack.prefab.json"))
         assets.instantiate(stack->guid, scene, {-8.5f, 0.5f, 2.0f});
+
+    // Game shaders, compiled at runtime from assets/shaders (edit them while the editor runs):
+    // a material on a sphere, and a post effect on the whole image.
+    if (const AssetRecord* holo = assets.findByPath("shaders/hologram.frag"))
+        if (const AssetData* data = assets.load(holo->guid); data && !data->shaders.empty()) {
+            Entity h = primitive(scene, "Hologram", r.sphere());
+            h.transform().position = {0.0f, 1.0f, 4.5f};
+            h.transform().scale = glm::vec3(1.4f);
+            auto& hm = h.get<MeshComponent>().material;
+            hm.shader = data->shaders[0];
+            hm.baseColor = {0.1f, 0.12f, 0.15f, 1.0f};
+            hm.customParams = {0.2f, 0.9f, 1.0f, 18.0f}; // rgb = color, a = scanline density
+            h.add<RigidBodyComponent>(physics::BodyType::Static);
+            h.add<SphereColliderComponent>();
+        }
+    auto& post = r.settings().postProcess;
+    const bool hasVignette = std::any_of(post.begin(), post.end(), [](const PostProcessDesc& p) { return p.name == "Vignette"; });
+    if (const AssetRecord* vig = assets.findByPath("shaders/vignette.frag"); vig && !hasVignette)
+        if (const AssetData* data = assets.load(vig->guid); data && !data->shaders.empty())
+            post.push_back({.name = "Vignette", .shader = data->shaders[0], .params = {0.45f, 1.5f, 0.0f, 0.0f}});
 
     ctx.camera().position = {0.0f, 4.5f, 13.0f};
     ctx.camera().pitch = -0.28f;

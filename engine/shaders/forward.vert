@@ -1,6 +1,6 @@
 #version 460
-#include "common.glsl"
-#include "forward_push.glsl"
+#include "nova/common.glsl"
+#include "nova/forward_push.glsl"
 
 layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vNormal;

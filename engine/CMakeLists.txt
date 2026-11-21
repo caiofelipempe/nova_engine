@@ -64,6 +64,25 @@ if(NOVA_RHI_VULKAN)
     target_compile_definitions(NovaEngine PUBLIC NOVA_RHI_VULKAN=1)
 endif()
 
+# Runtime shader compiler (optional). The Vulkan SDK ships shaderc_combined (static, glslang + SPIRV-Tools).
+if(NOVA_SHADER_COMPILER)
+    find_package(Vulkan COMPONENTS shaderc_combined)
+    # Vulkan headers may come from vcpkg while shaderc only exists in the SDK: find its headers
+    # separately and give them to the one file that uses them (so they never shadow vcpkg's).
+    find_path(NOVA_SHADERC_INCLUDE_DIR shaderc/shaderc.hpp
+        HINTS "$ENV{VULKAN_SDK}/Include" "$ENV{VULKAN_SDK}/include" ${Vulkan_INCLUDE_DIRS})
+    if(TARGET Vulkan::shaderc_combined AND NOVA_SHADERC_INCLUDE_DIR)
+        target_link_libraries(NovaEngine PRIVATE Vulkan::shaderc_combined)
+        set_source_files_properties(${SRC}/renderer/ShaderLibrary.cpp PROPERTIES INCLUDE_DIRECTORIES ${NOVA_SHADERC_INCLUDE_DIR})
+        target_compile_definitions(NovaEngine PUBLIC NOVA_SHADER_COMPILER=1)
+    else()
+        message(WARNING "shaderc_combined not found in the Vulkan SDK: runtime shader compilation disabled")
+        target_compile_definitions(NovaEngine PUBLIC NOVA_SHADER_COMPILER=0)
+    endif()
+else()
+    target_compile_definitions(NovaEngine PUBLIC NOVA_SHADER_COMPILER=0)
+endif()
+
 if(NOVA_PLATFORM_GLFW)
     file(GLOB NOVA_GLFW_SOURCES CONFIGURE_DEPENDS ${SRC}/platform/glfw/*.cpp ${SRC}/platform/glfw/*.h)
     target_sources(NovaEngine PRIVATE ${NOVA_GLFW_SOURCES})
@@ -84,10 +103,21 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/src FILES ${NOVA_CORE_SOURCES} ${N
 
 # ----------------------------------------------------------------- shaders --
 set(SH ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
-file(GLOB NOVA_SHADER_INCLUDES CONFIGURE_DEPENDS ${SH}/*.glsl)
+file(GLOB NOVA_SHADER_INCLUDES CONFIGURE_DEPENDS ${SH}/nova/*.glsl)
+set(NOVA_SHADER_INCLUDES ${NOVA_SHADER_INCLUDES} CACHE INTERNAL "Public GLSL headers (nova/*.glsl)")
 
 add_custom_target(NovaShaders SOURCES ${NOVA_SHADER_INCLUDES})
 set_target_properties(NovaShaders PROPERTIES FOLDER "Engine")
+# Public headers are deployed to <exe>/shaders/include/nova for runtime-compiled game shaders.
+foreach(_inc ${NOVA_SHADER_INCLUDES})
+    get_filename_component(_inc_name ${_inc} NAME)
+    set(_inc_out ${NOVA_SHADER_OUTPUT_DIR}/include/nova/${_inc_name})
+    add_custom_command(OUTPUT ${_inc_out}
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_inc} ${_inc_out}
+        DEPENDS ${_inc} VERBATIM)
+    target_sources(NovaShaders PRIVATE ${_inc_out})
+    set_source_files_properties(${_inc_out} PROPERTIES GENERATED TRUE HEADER_FILE_ONLY TRUE)
+endforeach()
 nova_add_shader(NovaShaders ${SH}/fullscreen.vert DEPENDS ${NOVA_SHADER_INCLUDES})
 nova_add_shader(NovaShaders ${SH}/sky.frag        DEPENDS ${NOVA_SHADER_INCLUDES})
 nova_add_shader(NovaShaders ${SH}/tonemap.frag    DEPENDS ${NOVA_SHADER_INCLUDES})

@@ -78,6 +78,15 @@ Json writeField(const reflect::FieldInfo& f, void* p, const SerializeOptions& op
             }
             return t.key();
         }
+        case K::Shader: {
+            const ShaderHandle sh = *static_cast<ShaderHandle*>(p);
+            if (!sh) return nullptr;
+            if (opt.shaderName) {
+                std::string name = opt.shaderName(sh);
+                if (!name.empty()) return name;
+            }
+            return sh.id;
+        }
         case K::Struct: {
             const reflect::TypeInfo* t = f.nestedType();
             if (!t) return nullptr; // unregistered struct
@@ -173,6 +182,17 @@ void readField(const reflect::FieldInfo& f, void* p, const Json& j, const Serial
                 const std::string name = j.get<std::string>();
                 t = opt.findTexture ? opt.findTexture(name) : rhi::TextureHandle{};
                 if (!t) NOVA_CORE_WARN("Scene: texture '{}' not found", name);
+            }
+            break;
+        }
+        case K::Shader: {
+            auto& sh = *static_cast<ShaderHandle*>(p);
+            if (j.is_null()) sh = {};
+            else if (j.is_number_integer()) sh = {j.get<u32>()};
+            else if (j.is_string()) {
+                const std::string name = j.get<std::string>();
+                sh = opt.findShader ? opt.findShader(name) : ShaderHandle{};
+                if (!sh) NOVA_CORE_WARN("Scene: shader '{}' not found", name);
             }
             break;
         }

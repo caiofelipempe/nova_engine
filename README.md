@@ -57,9 +57,11 @@ cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
 build\bin\Debug\Sandbox.exe
-ctest --preset debug              # testes headless (física, cenas, assets, input, editor, hot reload)
+ctest --preset debug              # testes headless (física, cenas, assets, shaders, input, editor, hot reload)
 doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
+
+Shaders do jogo podem ser compilados em runtime (`NOVA_SHADER_COMPILER=ON`, padrão: usa o `shaderc_combined` do Vulkan SDK). Com `-DNOVA_SHADER_COMPILER=OFF` o compilador fica fora da engine e o jogo usa só SPIR-V pré-compilado (veja [Shaders do jogo](#shaders-do-jogo)).
 
 Engine e editor são compilados como DLLs (`NOVA_SHARED=ON`, padrão) para que o código do jogo possa ser uma DLL recarregada a quente; com `-DNOVA_SHARED=OFF` viram bibliotecas estáticas (sem hot reload).
 
@@ -75,13 +77,13 @@ engine/src/nova/
   core/       Application (loop), Layer, Log (spdlog)
   platform/   Window (interface) + Input        → glfw/  (backend GLFW)
   rhi/        Device, CommandList (interfaces)  → vulkan/ (backend Vulkan)
-  renderer/   Renderer, RenderView, Mesh (+ raycast CPU), DebugDraw — só fala com o RHI
+  renderer/   Renderer, RenderView, Mesh (+ raycast CPU), DebugDraw, ShaderLibrary — só fala com o RHI
   scene/      Scene (EnTT), Entity, Components, Script, GameLayer, SceneSerializer (JSON)
   physics/    PhysicsWorld (interface)          → jolt/ (backend Jolt)
   reflect/    reflexão de tipos (componentes, scripts, structs, enums)
   assets/     AssetDatabase (GUIDs em .meta, importadores), glTF (cgltf), imagens (stb_image)
   ui/         tema/fontes do ImGui
-engine/shaders/  GLSL → SPIR-V em build-time (glslc)
+engine/shaders/  GLSL → SPIR-V em build-time (glslc); nova/*.glsl são headers públicos para shaders do jogo
 editor/src/      Nova::Editor — framework de editor extensível (painéis, comandos, inspetores, plugins)
 editor/app/      NovaEditor — editor da Nova montado sobre o framework (exemplo de editor de jogo)
 editor/game/     NovaEditorGame — código do jogo de exemplo numa DLL recarregada a quente pelo editor
@@ -99,7 +101,7 @@ Isso mapeia direto para Vulkan (BDA + descriptor indexing) e para D3D12 (SM 6.6 
 
 **Recursos.** São handles geracionais (`BufferHandle`, `TextureHandle`, …): handles obsoletos são detectados em vez de apontarem para outro recurso. A destruição é adiada até a GPU terminar os frames em voo. O estado das texturas é rastreado e as barreiras (sync2) são emitidas automaticamente.
 
-**Frame.** `[TLAS build] → sky → forward PBR (HDR, RGBA16F) → tonemap (ACES) → UI`. Os dados por frame vêm de um alocador linear num buffer de upload por frame em voo.
+**Frame.** `[TLAS build] → sky → forward PBR (HDR, RGBA16F) → pós-processamento do jogo (HDR) → tonemap (ACES) → UI`. Os dados por frame vêm de um alocador linear num buffer de upload por frame em voo.
 
 ## Input e players
 
@@ -216,13 +218,73 @@ Em superfícies lisas (esfera numa face) as três coincidem; em arestas e vérti
 - `GameLayer` liga a simulação sozinho. No editor: **Play / Pause / Stop** (Stop restaura os transforms), gizmo arrasta corpos durante o Play.
 - Próximos passos: mesh/convex colliders (para cenas glTF), character controller, joints, debug draw dos colliders, interpolação de transforms.
 
+## Shaders do jogo
+
+O jogo traz os próprios shaders — **materiais**, **pós-processamento** e **compute** — e escolhe, por shader, de onde vem o SPIR-V:
+
+| Origem | Como | Quando usar |
+|---|---|---|
+| **Runtime** | GLSL compilado pela engine (shaderc), com cache em disco e **hot reload** quando o arquivo (ou um `#include`) muda | desenvolvimento, shaders gerados/configuráveis, editor |
+| **Pré-compilado** | SPIR-V gerado no build por `nova_add_game_shaders` (glslc), copiado para `<exe>/shaders` | jogo final, sem compilador nem custo de compilação |
+| **Auto** (padrão) | runtime se a engine tem o compilador e a fonte existe; senão, pré-compilado | o mesmo código serve aos dois casos |
+
+```cpp
+auto& shaders = renderer().shaders();                                  // nova::ShaderLibrary
+auto water = shaders.load("assets/shaders/water.frag");                 // Auto
+auto blur  = shaders.load("blur.comp", {.source = nova::ShaderSource::Precompiled});
+auto gen   = shaders.compile("gen.frag", sourceText, nova::ShaderStage::Fragment); // gerado em memória
+
+// Material: um fragment shader que só altera a superfície; luz, sombras RT e debug views são da engine.
+nova::Material m;
+m.shader = water;
+m.customParams = {0.1f, 0.4f, 0.8f, 2.0f};  // Surface::custom no GLSL
+m.customTexture = foamTexture;              // nova_customTexture(uv)
+
+// Pós-processamento: passes em HDR, na ordem, antes da exposição/tonemap.
+renderer().settings().postProcess.push_back({.name = "Vignette", .shader = vignette, .params = {0.5f, 1.5f, 0, 0}});
+
+// Compute: pipeline em cache, reconstruído quando o shader recarrega (busque o handle a cada dispatch).
+cmd.bindPipeline(renderer().computePipeline(blur));
+```
+
+Um material (`#include "nova/material.glsl"`) implementa `material(inout Surface s)`; `s` já chega preenchido pelo `Material` (cor × textura, checker, metallic, roughness, emissive). O `forward.frag` da própria engine é exatamente essa interface com um `material()` vazio:
+
+```glsl
+#version 460
+#include "nova/material.glsl"
+
+void material(inout Surface s) {
+    float scan = step(0.5, fract(s.worldPos.y * 10.0 - nova_time()));
+    s.albedo   = mix(s.albedo, s.custom.rgb, 0.6);
+    s.emissive += s.custom.rgb * scan;            // também: s.normal, s.metallic, s.roughness, s.unlit
+}
+```
+
+Um efeito de pós (`#include "nova/postprocess.glsl"`) implementa `vec3 postProcess(vec2 uv)` usando `nova_scene(uv)`, `nova_params()`, `nova_texelSize()` e `nova_time()`. Exemplos: [assets/shaders/hologram.frag](assets/shaders/hologram.frag) e [assets/shaders/vignette.frag](assets/shaders/vignette.frag).
+
+**Pré-compilando no CMake:**
+
+```cmake
+nova_add_game_shaders(MyGame
+    MATERIALS assets/shaders/water.frag       # + variante ray query (water.frag.rq.spv)
+    SHADERS   assets/shaders/vignette.frag assets/shaders/blur.comp
+    DEPENDS   assets/shaders/noise.glsl)      # includes do jogo que devem disparar rebuild
+```
+
+Detalhes:
+- Os headers `nova/*.glsl` vão para `<exe>/shaders/include`; `#include "x.glsl"` também resolve ao lado do arquivo que inclui.
+- O renderer compila sozinho a **variante ray query** de cada material (`NOVA_RAY_QUERY`) na primeira vez que ela é usada; sem ela (ou sem RT na GPU) o material é desenhado sem sombras traçadas.
+- Um erro de compilação mantém o SPIR-V anterior e registra o erro (`ShaderLibrary::error`); se o *primeiro* compile falhar, o objeto usa o material padrão até o arquivo ser corrigido. Pipelines são recriados quando `version()` muda.
+- Cache em `<exe>/shader_cache`, validado por hash do conteúdo da fonte e de cada include.
+- Shaders são assets (`.vert`, `.frag`, `.comp` e as formas `.glsl`/`.spv`): cenas guardam `Material::shader` por GUID. No editor: campo **Shader** no inspetor (combo ou arrastar do painel Assets), soltar o shader sobre um objeto no viewport, ações *Apply to Selection* / *Reload*, e o painel **Renderer** lista os shaders (origem, versão, erros) e os passes de pós.
+
 ## Ray tracing
 
 Já implementado:
 - detecção das capacidades (`DeviceCaps::rayQuery`, `rayTracingPipeline`) e ativação automática das extensões;
 - uma **BLAS** por mesh, criada junto com a mesh;
 - uma **TLAS** por frame em voo, reconstruída a cada frame a partir das instâncias da cena;
-- **sombras por ray query** no fragment shader (sol e point lights), num pipeline-variante (`forward_rq.frag`). Em GPUs sem RT, o pipeline raster normal é usado sem nenhuma mudança no código do jogo.
+- **sombras por ray query** no fragment shader (sol e point lights), num pipeline-variante (`forward_rq.frag`, e a variante `rq` de cada material do jogo). Em GPUs sem RT, o pipeline raster normal é usado sem nenhuma mudança no código do jogo.
 
 Próximos passos (a estrutura já está preparada):
 1. `rhi::RayTracingPipelineDesc` + `CommandList::traceRays` + shader binding table — os entry points (`vkCreateRayTracingPipelinesKHR`, `vkCmdTraceRaysKHR`) já são carregados quando há suporte.
@@ -232,11 +294,7 @@ Próximos passos (a estrutura já está preparada):
 
 ## Roadmap geral
 
-- **Shaders do jogo**: o jogo pode trazer os próprios shaders (materiais, pós-processamento, compute) e escolher, por shader, entre
-  - **compilar em runtime** dentro do próprio jogo/editor (GLSL → SPIR-V embutido na engine, com cache em disco e recompilação a quente quando o arquivo muda — ideal durante o desenvolvimento e para shaders gerados ou configuráveis), ou
-  - **enviar pré-compilado** (SPIR-V gerado no build pelo CMake, como os shaders da engine — para shaders que não vão mudar, sem custo de compilação nem compilador no jogo final).
-  
-  A mesma API carrega os dois casos (fonte ou binário), e o pipeline do renderer aceita shaders do jogo sem alterar o código da engine.
+- Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
 - Renderer: materiais com mais texturas (normal, metallic-roughness, emissive), shadow maps como fallback sem RT, render graph, culling em GPU, backend D3D12.
 - Cena: hierarquia de transforms; colliders de malha/convexos; character controller.

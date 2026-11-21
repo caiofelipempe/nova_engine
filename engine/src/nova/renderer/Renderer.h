@@ -5,6 +5,7 @@
 
 #include "nova/renderer/DebugDraw.h"
 #include "nova/renderer/Mesh.h"
+#include "nova/renderer/ShaderLibrary.h"
 #include "nova/rhi/Device.h"
 
 #include <glm/glm.hpp>
@@ -99,6 +100,19 @@ enum class Tonemapper : u32 {
     None,     ///< Clamp only.
 };
 
+/// @brief A fullscreen pass over the HDR image, written against `nova/postprocess.glsl`.
+///
+/// @code
+/// auto vignette = renderer().shaders().load("assets/shaders/vignette.frag");
+/// renderer().settings().postProcess.push_back({.name = "Vignette", .shader = vignette, .params = {0.6f, 0, 0, 0}});
+/// @endcode
+struct PostProcessDesc {
+    std::string name;        ///< Label (editor, debuggers).
+    ShaderHandle shader;     ///< Fragment shader (passes whose shader is not ready are skipped).
+    glm::vec4 params{0.0f};  ///< `nova_params()` in GLSL.
+    bool enabled = true;     ///< Skip the pass when false.
+};
+
 /// @brief Runtime-tweakable rendering options (Renderer::settings()).
 struct RenderSettings {
     bool rayTracedShadows = true;                ///< Ray-query shadows; ignored when the GPU lacks ray queries.
@@ -111,6 +125,8 @@ struct RenderSettings {
     glm::vec3 skyZenith{0.22f, 0.42f, 0.85f};    ///< Sky color straight up (also the ambient's upper color).
     glm::vec3 skyHorizon{0.78f, 0.84f, 0.92f};   ///< Sky color at the horizon.
     glm::vec3 groundColor{0.28f, 0.25f, 0.22f};  ///< Color below the horizon (also the ambient's lower color).
+    /// @brief Post-process passes, run in order on the HDR image before exposure and tonemapping.
+    std::vector<PostProcessDesc> postProcess;
 };
 
 /// @brief Counters of the last completed frame.
@@ -119,6 +135,7 @@ struct RenderStats {
     u32 instances = 0;     ///< Mesh instances submitted.
     u64 triangles = 0;     ///< Triangles drawn.
     u32 tlasInstances = 0; ///< Instances in the ray tracing scene.
+    u32 postProcessPasses = 0; ///< Post-process passes run.
 };
 
 class Renderer;
@@ -150,13 +167,19 @@ private:
     Extent2D m_size;
     bool m_withOutput;
     rhi::TextureHandle m_hdr;
+    rhi::TextureHandle m_hdrPing; // second HDR target for post-process ping-pong
     rhi::TextureHandle m_depth;
     rhi::TextureHandle m_output;
 };
 
 /// @brief Hybrid forward renderer: rasterized PBR shading with ray-queried shadows.
 ///
-/// Frame graph: `[TLAS build] → sky → opaque forward (HDR) → tonemap (LDR output)`.
+/// Frame graph: `[TLAS build] → sky → opaque forward (HDR) → post-process passes (HDR) → tonemap (LDR output)`.
+///
+/// Game shaders plug in without engine changes: Material::shader selects a material fragment
+/// shader (`nova/material.glsl`), RenderSettings::postProcess adds fullscreen passes
+/// (`nova/postprocess.glsl`) and computePipeline() builds compute pipelines. Shaders come from
+/// shaders() and are hot reloaded; pipelines are rebuilt when their shader changes.
 ///
 /// - Meshes are stored once on the GPU (vertex pulling via device addresses) and, when ray
 ///   tracing is available, each gets a BLAS.
@@ -204,6 +227,18 @@ public:
     /// @param name Debug name.
     rhi::TextureHandle createTexture2D(u32 width, u32 height, const void* rgba8, const char* name = nullptr);
 
+    /// @name Shaders
+    /// @{
+    /// @brief Game shaders: runtime compiled or precompiled, hot reloaded by beginFrame().
+    ShaderLibrary& shaders() { return m_shaders; }
+    /// @brief Compute pipeline for a compute shader, cached and rebuilt after the shader reloads.
+    /// @return Invalid handle while the shader is not ready (e.g. its first compile failed).
+    /// @note Handles change after a reload: fetch it every time you dispatch.
+    rhi::PipelineHandle computePipeline(ShaderHandle shader);
+    /// @brief True if `shader` currently has a working material pipeline (false: drawn with the default).
+    bool materialReady(ShaderHandle shader) const { return m_shaders.ready(shader); }
+    /// @}
+
     /// @brief Creates offscreen targets to render a scene into.
     Scope<RenderView> createView(Extent2D size);
 
@@ -246,6 +281,17 @@ private:
         Bounds bounds;
     };
 
+    struct VersionedPipeline {
+        u32 version = 0;
+        rhi::PipelineHandle pipeline;
+    };
+    struct MaterialPipelines {
+        VersionedPipeline fill;   // raster-only variant
+        VersionedPipeline rq;     // ray query shadows variant
+        ShaderHandle rqShader;
+        bool rqRequested = false;
+    };
+
     struct FrameAllocation {
         void* cpu = nullptr;
         u64 gpu = 0;
@@ -256,10 +302,13 @@ private:
     rhi::PipelineHandle linePipeline(rhi::Format format, bool onTop);
     void drawDebugLines(rhi::CommandList& cmd, u64 frameAddress, rhi::TextureHandle depth, rhi::TextureHandle output);
     FrameAllocation allocate(u64 size, u64 alignment = 256);
-    void renderInternal(rhi::CommandList& cmd, const RenderScene& scene, rhi::TextureHandle hdr,
-                        rhi::TextureHandle depth, rhi::TextureHandle output);
+    void renderInternal(rhi::CommandList& cmd, const RenderScene& scene, RenderView& view, rhi::TextureHandle output);
+    rhi::PipelineHandle materialPipeline(ShaderHandle shader, bool rayQuery);
+    rhi::PipelineHandle postProcessPipeline(ShaderHandle shader);
+    bool rebuild(VersionedPipeline& vp, ShaderHandle shader, const rhi::GraphicsPipelineDesc* graphics);
 
     rhi::Device& m_device;
+    ShaderLibrary m_shaders;
     RenderSettings m_settings;
     RenderStats m_stats;
     RenderStats m_lastStats;
@@ -279,6 +328,11 @@ private:
     rhi::ShaderDesc m_lineVS;
     rhi::ShaderDesc m_lineFS;
     std::unordered_map<u32, rhi::PipelineHandle> m_linePipelines; // key: format | onTop << 8
+    rhi::GraphicsPipelineDesc m_forwardDesc;                      // template of material pipelines
+    std::unordered_map<u32, MaterialPipelines> m_materialPipelines; // key: ShaderHandle::id
+    std::unordered_map<u32, VersionedPipeline> m_postPipelines;     // key: ShaderHandle::id
+    std::unordered_map<u32, VersionedPipeline> m_computePipelines;  // key: ShaderHandle::id
+    std::vector<std::pair<u64, u32>> m_drawOrder;                   // (pipeline key, draw index), reused
     DebugDraw m_debugDraw;
 
     static constexpr u64 kFrameBufferSize = 16ull << 20;

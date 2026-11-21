@@ -34,6 +34,7 @@ const char* typeTag(const std::string& type) {
     if (type == "Model") return "[M]";
     if (type == "Prefab") return "[P]";
     if (type == "Scene") return "[S]";
+    if (type == "Shader") return "[G]"; // GLSL
     return "[?]";
 }
 
@@ -64,6 +65,33 @@ void applyTexture(EditorContext& ctx, const std::vector<Entity>& targets, rhi::T
     ctx.edit("Apply texture", meshes, [&] {
         for (Entity e : meshes) e.get<MeshComponent>().material.baseColorTexture = texture;
     });
+}
+
+ShaderHandle firstShader(EditorContext& ctx, AssetGuid guid) {
+    const AssetData* data = ctx.assets().load(guid);
+    return data && !data->shaders.empty() ? data->shaders[0] : ShaderHandle{};
+}
+
+void applyShader(EditorContext& ctx, const std::vector<Entity>& targets, ShaderHandle shader) {
+    std::vector<Entity> meshes;
+    for (Entity e : targets)
+        if (e.valid() && e.has<MeshComponent>()) meshes.push_back(e);
+    if (meshes.empty()) {
+        NOVA_CORE_WARN("Apply material shader: no mesh entity selected");
+        return;
+    }
+    ctx.edit("Apply material shader", meshes, [&] {
+        for (Entity e : meshes) e.get<MeshComponent>().material.shader = shader;
+    });
+}
+
+const char* shaderSourceName(ShaderSource s) {
+    switch (s) {
+        case ShaderSource::Runtime: return "compiled at runtime";
+        case ShaderSource::Precompiled: return "precompiled";
+        case ShaderSource::Memory: return "from memory";
+        default: return "";
+    }
 }
 
 rhi::TextureHandle firstTexture(EditorContext& ctx, AssetGuid guid) {
@@ -174,6 +202,13 @@ void AssetBrowserPanel::drawFiles(EditorContext& ctx) {
             if (r.type == "Texture")
                 if (rhi::TextureHandle tex = firstTexture(ctx, r.guid); tex && ctx.app().imgui())
                     ImGui::Image(static_cast<ImTextureID>(ctx.app().imgui()->textureId(tex)), {128.0f, 128.0f});
+            if (r.type == "Shader" && db.isLoaded(r.guid)) {
+                const ShaderLibrary& lib = ctx.renderer().shaders();
+                const ShaderHandle sh = firstShader(ctx, r.guid);
+                ImGui::TextDisabled("%s%s, version %u", shaderSourceName(lib.source(sh)),
+                                    lib.fromCache(sh) ? " (cache)" : "", lib.version(sh));
+                if (!lib.error(sh).empty()) ImGui::TextColored({1.0f, 0.45f, 0.4f, 1.0f}, "%s", lib.error(sh).c_str());
+            }
             ImGui::EndTooltip();
         }
         if (ImGui::BeginPopupContextItem()) {
@@ -214,6 +249,17 @@ void CoreAssetsPlugin::onRegister(Registry& r) {
     });
     r.assetAction("Texture", "Apply to Selection", [](EditorContext& ctx, const AssetRecord& a) {
         if (rhi::TextureHandle tex = firstTexture(ctx, a.guid)) applyTexture(ctx, ctx.selection(), tex);
+    });
+    r.assetAction("Shader", "Apply to Selection", [](EditorContext& ctx, const AssetRecord& a) {
+        ShaderStage stage{};
+        if (ShaderLibrary::stageFromPath(a.path, stage) && stage != ShaderStage::Fragment) {
+            NOVA_CORE_WARN("Apply material shader: '{}' is not a fragment shader", a.fileName());
+            return;
+        }
+        if (ShaderHandle sh = firstShader(ctx, a.guid)) applyShader(ctx, ctx.selection(), sh);
+    });
+    r.assetAction("Shader", "Reload", [](EditorContext& ctx, const AssetRecord& a) {
+        if (ShaderHandle sh = firstShader(ctx, a.guid)) ctx.renderer().shaders().reload(sh);
     });
     r.assetAction("*", "Copy Reference", [](EditorContext&, const AssetRecord& a) {
         ImGui::SetClipboardText(AssetDatabase::makeRef(a.guid).c_str());

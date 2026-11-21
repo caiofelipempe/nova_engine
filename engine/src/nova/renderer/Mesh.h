@@ -87,6 +87,15 @@ struct MeshHandle {
     bool operator==(const MeshHandle&) const = default;
 };
 
+/// @brief Reference to a shader loaded by the ShaderLibrary (Renderer::shaders()).
+struct ShaderHandle {
+    u32 id = ~0u; ///< Slot in the shader library; `~0u` = invalid.
+    /// @brief True unless default-constructed.
+    bool valid() const { return id != ~0u; }
+    explicit operator bool() const { return valid(); }
+    bool operator==(const ShaderHandle&) const = default;
+};
+
 /// @brief Metallic-roughness PBR surface parameters.
 struct Material {
     glm::vec4 baseColor{1.0f};    ///< Linear RGBA albedo (metals: specular color).
@@ -96,6 +105,11 @@ struct Material {
     f32 emissiveStrength = 0.0f;  ///< Multiplier for `emissive` (HDR; values > 1 bloom-ready).
     bool checker = false;         ///< Procedural world-space checker pattern (handy for floors).
     rhi::TextureHandle baseColorTexture; ///< Optional albedo texture (multiplies baseColor), sampled with the mesh UVs.
+    /// @brief Optional game material: a fragment shader written against `nova/material.glsl`
+    ///        (invalid = the engine's default shading).
+    ShaderHandle shader;
+    glm::vec4 customParams{0.0f};     ///< Free parameters for `shader` (`Surface::custom` in GLSL).
+    rhi::TextureHandle customTexture; ///< Extra texture for `shader` (`nova_customTexture(uv)` in GLSL).
 };
 
 } // namespace nova

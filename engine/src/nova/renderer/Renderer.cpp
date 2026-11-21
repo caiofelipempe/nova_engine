@@ -76,6 +76,8 @@ void RenderView::create() {
     m_size.height = std::max(1u, m_size.height);
     m_hdr = d.createTexture({m_size.width, m_size.height, 1, Renderer::kHdrFormat,
                              TextureUsage::RenderTarget | TextureUsage::Sampled, "view.hdr"});
+    m_hdrPing = d.createTexture({m_size.width, m_size.height, 1, Renderer::kHdrFormat,
+                                 TextureUsage::RenderTarget | TextureUsage::Sampled, "view.hdr.ping"});
     m_depth = d.createTexture(
         {m_size.width, m_size.height, 1, Renderer::kDepthFormat, TextureUsage::DepthStencil, "view.depth"});
     if (m_withOutput)
@@ -86,9 +88,10 @@ void RenderView::create() {
 void RenderView::destroy() {
     Device& d = m_renderer.device();
     d.destroyTexture(m_hdr);
+    d.destroyTexture(m_hdrPing);
     d.destroyTexture(m_depth);
     if (m_output) d.destroyTexture(m_output);
-    m_hdr = m_depth = m_output = {};
+    m_hdr = m_hdrPing = m_depth = m_output = {};
 }
 
 // ---------------------------------------------------------------- Renderer --
@@ -122,6 +125,12 @@ Renderer::~Renderer() {
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
+    for (auto& [id, mp] : m_materialPipelines)
+        for (PipelineHandle p : {mp.fill.pipeline, mp.rq.pipeline})
+            if (p) m_device.destroyPipeline(p);
+    for (auto* map : {&m_postPipelines, &m_computePipelines})
+        for (auto& [id, vp] : *map)
+            if (vp.pipeline) m_device.destroyPipeline(vp.pipeline);
     m_device.waitIdle();
 }
 
@@ -150,6 +159,9 @@ void Renderer::createPipelines() {
     fwd.depthFormat = kDepthFormat;
     fwd.debugName = "pipeline.forward";
     m_forwardPipeline = m_device.createGraphicsPipeline(fwd);
+    m_forwardDesc = fwd;
+    m_forwardDesc.fragment = {};
+    m_forwardDesc.debugName = "pipeline.material";
 
     if (m_device.caps().wireframe) {
         GraphicsPipelineDesc wire = fwd;
@@ -274,7 +286,64 @@ Scope<RenderView> Renderer::createView(Extent2D size) {
     return Scope<RenderView>(new RenderView(*this, size, true));
 }
 
+// ------------------------------------------------------------ game shaders --
+bool Renderer::rebuild(VersionedPipeline& vp, ShaderHandle shader, const GraphicsPipelineDesc* graphics) {
+    if (!m_shaders.ready(shader)) return false;
+    const u32 version = m_shaders.version(shader);
+    if (vp.pipeline && vp.version == version) return true;
+    if (vp.pipeline) m_device.destroyPipeline(vp.pipeline); // deferred: frames in flight keep it
+    const std::string name = m_shaders.path(shader).filename().string();
+    if (graphics) {
+        GraphicsPipelineDesc desc = *graphics;
+        desc.fragment = m_shaders.desc(shader);
+        desc.debugName = name.c_str();
+        vp.pipeline = m_device.createGraphicsPipeline(desc);
+    } else {
+        ComputePipelineDesc desc;
+        desc.compute = m_shaders.desc(shader);
+        desc.debugName = name.c_str();
+        vp.pipeline = m_device.createComputePipeline(desc);
+    }
+    vp.version = version;
+    return static_cast<bool>(vp.pipeline);
+}
+
+PipelineHandle Renderer::materialPipeline(ShaderHandle shader, bool rayQuery) {
+    if (!m_shaders.ready(shader)) return {};
+    MaterialPipelines& mp = m_materialPipelines[shader.id];
+    if (rayQuery) {
+        if (!mp.rqRequested) { // compiled on first use: games without RT never pay for it
+            mp.rqRequested = true;
+            mp.rqShader = m_shaders.variant(shader, {"NOVA_RAY_QUERY=1"}, "rq");
+            if (!mp.rqShader)
+                NOVA_CORE_WARN("Renderer: material '{}' has no ray query variant; drawn without ray-traced shadows",
+                               m_shaders.path(shader).filename().string());
+        }
+        if (mp.rqShader && rebuild(mp.rq, mp.rqShader, &m_forwardDesc)) return mp.rq.pipeline;
+    }
+    return rebuild(mp.fill, shader, &m_forwardDesc) ? mp.fill.pipeline : PipelineHandle{};
+}
+
+PipelineHandle Renderer::postProcessPipeline(ShaderHandle shader) {
+    if (!m_shaders.ready(shader)) return {};
+    GraphicsPipelineDesc desc;
+    desc.vertex = m_fullscreenVS;
+    desc.colorFormats = {kHdrFormat};
+    desc.cullMode = CullMode::None;
+    desc.depthTest = false;
+    desc.depthWrite = false;
+    VersionedPipeline& vp = m_postPipelines[shader.id];
+    return rebuild(vp, shader, &desc) ? vp.pipeline : PipelineHandle{};
+}
+
+PipelineHandle Renderer::computePipeline(ShaderHandle shader) {
+    if (!m_shaders.ready(shader) || m_shaders.stage(shader) != ShaderStage::Compute) return {};
+    VersionedPipeline& vp = m_computePipelines[shader.id];
+    return rebuild(vp, shader, nullptr) ? vp.pipeline : PipelineHandle{};
+}
+
 void Renderer::beginFrame() {
+    m_shaders.update(); // hot reload: pipelines notice the new version when next used
     m_frameOffset = 0;
     m_lastStats = m_stats; // UI code runs before rendering, so expose the previous frame's numbers
     m_stats = {};
@@ -290,7 +359,7 @@ Renderer::FrameAllocation Renderer::allocate(u64 size, u64 alignment) {
 }
 
 void Renderer::render(CommandList& cmd, const RenderScene& scene, RenderView& view) {
-    renderInternal(cmd, scene, view.m_hdr, view.m_depth, view.m_output);
+    renderInternal(cmd, scene, view, view.m_output);
     cmd.transition(view.m_output, ResourceState::ShaderRead);
 }
 
@@ -298,11 +367,12 @@ void Renderer::renderToBackbuffer(CommandList& cmd, const RenderScene& scene) {
     Extent2D size = m_device.backbufferExtent();
     if (!m_backbufferView) m_backbufferView.reset(new RenderView(*this, size, false));
     else m_backbufferView->resize(size);
-    renderInternal(cmd, scene, m_backbufferView->m_hdr, m_backbufferView->m_depth, m_device.backbuffer());
+    renderInternal(cmd, scene, *m_backbufferView, m_device.backbuffer());
 }
 
-void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, TextureHandle hdr, TextureHandle depth,
-                              TextureHandle output) {
+void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, RenderView& view, TextureHandle output) {
+    const TextureHandle hdr = view.m_hdr;
+    const TextureHandle depth = view.m_depth;
     const Extent2D extent = m_device.textureExtent(hdr);
     const RenderSettings& s = m_settings;
 
@@ -358,6 +428,9 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Textur
         const u32 tex = d.material.baseColorTexture ? m_device.bindlessIndex(d.material.baseColorTexture) : ~0u;
         inst.params = glm::vec4(d.material.metallic, d.material.roughness, flagsAsFloat,
                                 tex == ~0u ? -1.0f : static_cast<f32>(tex));
+        inst.custom = d.material.customParams;
+        const u32 customTex = d.material.customTexture ? m_device.bindlessIndex(d.material.customTexture) : ~0u;
+        inst.extra = glm::vec4(customTex == ~0u ? -1.0f : static_cast<f32>(customTex), 0.0f, 0.0f, 0.0f);
 
         if (tlasRecords && d.castShadows && d.mesh.id < m_meshes.size() && m_meshes[d.mesh.id].alive &&
             m_meshes[d.mesh.id].blas) {
@@ -393,10 +466,24 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Textur
     cmd.pushConstants(gpu::SkyPush{frameAlloc.gpu});
     cmd.draw(3);
 
-    PipelineHandle pipeline = m_forwardPipeline;
-    if (s.wireframe && m_wireframePipeline) pipeline = m_wireframePipeline;
-    else if (useRt && m_forwardRtPipeline) pipeline = m_forwardRtPipeline;
-    cmd.bindPipeline(pipeline);
+    PipelineHandle defaultPipeline = m_forwardPipeline;
+    const bool wireframe = s.wireframe && m_wireframePipeline;
+    if (wireframe) defaultPipeline = m_wireframePipeline;
+    else if (useRt && m_forwardRtPipeline) defaultPipeline = m_forwardRtPipeline;
+
+    // Group draws by pipeline: the default material first, then each game material shader.
+    // A material whose shader is not ready (first compile failed) falls back to the default.
+    m_drawOrder.clear();
+    for (u32 i = 0; i < drawCount; ++i) {
+        const DrawItem& d = scene.draws[i];
+        if (d.mesh.id >= m_meshes.size() || !m_meshes[d.mesh.id].alive) continue;
+        u64 key = 0;
+        if (d.material.shader && !wireframe)
+            if (PipelineHandle custom = materialPipeline(d.material.shader, useRt)) key = custom.key();
+        m_drawOrder.emplace_back(key, i);
+    }
+    std::stable_sort(m_drawOrder.begin(), m_drawOrder.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
 
     gpu::DrawPush push{};
     push.frame = frameAlloc.gpu;
@@ -404,9 +491,13 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Textur
     push.tlas = tlasAddress;
     push.debugView = static_cast<u32>(s.debugView);
     BufferHandle boundIndex{};
-    for (u32 i = 0; i < drawCount; ++i) {
+    u64 boundPipeline = ~0ull;
+    for (const auto& [pipelineKey, i] : m_drawOrder) {
         const DrawItem& d = scene.draws[i];
-        if (d.mesh.id >= m_meshes.size() || !m_meshes[d.mesh.id].alive) continue;
+        if (pipelineKey != boundPipeline) {
+            cmd.bindPipeline(pipelineKey == 0 ? defaultPipeline : materialPipeline(d.material.shader, useRt));
+            boundPipeline = pipelineKey;
+        }
         const GpuMesh& mesh = m_meshes[d.mesh.id];
         if (!(mesh.indexBuffer == boundIndex)) {
             cmd.bindIndexBuffer(mesh.indexBuffer);
@@ -423,20 +514,45 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Textur
     cmd.endRendering();
     cmd.endDebugLabel();
 
+    // ---- post-process (HDR ping-pong)
+    TextureHandle sceneColor = hdr;
+    for (const PostProcessDesc& fx : s.postProcess) {
+        if (!fx.enabled) continue;
+        PipelineHandle p = postProcessPipeline(fx.shader);
+        if (!p) continue;
+        const TextureHandle target = sceneColor == hdr ? view.m_hdrPing : hdr;
+        cmd.beginDebugLabel(fx.name.empty() ? "Post-process" : fx.name.c_str());
+        cmd.transition(sceneColor, ResourceState::ShaderRead);
+        RenderingDesc pp;
+        pp.colors.push_back({target, LoadOp::DontCare, StoreOp::Store});
+        cmd.beginRendering(pp);
+        cmd.bindPipeline(p);
+        gpu::PostProcessPush pushPost{};
+        pushPost.frame = frameAlloc.gpu;
+        pushPost.inputTexture = m_device.bindlessIndex(sceneColor);
+        pushPost.texelSize = glm::vec2(1.0f / f32(extent.width), 1.0f / f32(extent.height));
+        pushPost.params = fx.params;
+        cmd.pushConstants(pushPost);
+        cmd.draw(3);
+        cmd.endRendering();
+        cmd.endDebugLabel();
+        sceneColor = target;
+        ++m_stats.postProcessPasses;
+    }
+
     // ---- tonemap
     cmd.beginDebugLabel("Tonemap");
-    cmd.transition(hdr, ResourceState::ShaderRead);
+    cmd.transition(sceneColor, ResourceState::ShaderRead);
     RenderingDesc tm;
     tm.colors.push_back({output, LoadOp::DontCare, StoreOp::Store});
     cmd.beginRendering(tm);
     cmd.bindPipeline(tonemapPipeline(m_device.backbufferFormat()));
-    cmd.pushConstants(gpu::TonemapPush{m_device.bindlessIndex(hdr), s.exposure, static_cast<u32>(s.tonemapper)});
+    cmd.pushConstants(gpu::TonemapPush{m_device.bindlessIndex(sceneColor), s.exposure, static_cast<u32>(s.tonemapper)});
     cmd.draw(3);
     cmd.endRendering();
     cmd.endDebugLabel();
 
     if (m_debugDraw.lineCount() > 0) drawDebugLines(cmd, frameAlloc.gpu, depth, output);
-    (void)extent;
 }
 
 PipelineHandle Renderer::linePipeline(Format format, bool onTop) {

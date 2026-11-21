@@ -21,7 +21,7 @@ namespace nova::editor::builtin {
 
 // ---------------------------------------------------------------- viewport --
 namespace {
-// Asset dropped on the viewport: textures go onto the mesh under the mouse; models/prefabs are
+// Asset dropped on the viewport: textures and material shaders go onto the mesh under the mouse; models/prefabs are
 // placed where the mouse ray hits the scene (or the ground plane), resting on upward surfaces.
 void dropAsset(EditorContext& ctx, AssetGuid guid, const ViewportState& vp) {
     const AssetRecord* record = ctx.assets().find(guid);
@@ -35,6 +35,17 @@ void dropAsset(EditorContext& ctx, AssetGuid guid, const ViewportState& vp) {
         Entity target = hit->entity;
         const rhi::TextureHandle texture = data->textures[0];
         ctx.edit("Apply texture", {target}, [&] { target.get<MeshComponent>().material.baseColorTexture = texture; });
+        ctx.select(target);
+        return;
+    }
+    if (record->type == "Shader") {
+        ShaderStage stage{};
+        if (ShaderLibrary::stageFromPath(record->path, stage) && stage != ShaderStage::Fragment) return;
+        const AssetData* data = ctx.assets().load(guid);
+        if (!hit || !hit->entity.has<MeshComponent>() || !data || data->shaders.empty()) return;
+        Entity target = hit->entity;
+        const ShaderHandle shader = data->shaders[0];
+        ctx.edit("Apply material shader", {target}, [&] { target.get<MeshComponent>().material.shader = shader; });
         ctx.select(target);
         return;
     }
@@ -331,6 +342,44 @@ void RendererPanel::onImGui(EditorContext& ctx) {
         ImGui::ColorEdit3("Horizon", glm::value_ptr(s.skyHorizon));
         ImGui::ColorEdit3("Ground", glm::value_ptr(s.groundColor));
         ImGui::SliderFloat("Ambient", &s.ambientIntensity, 0.0f, 3.0f);
+        ImGui::TreePop();
+    }
+
+    ShaderLibrary& lib = ctx.renderer().shaders();
+    if (ImGui::TreeNode("postfx", "Post-process (%zu)", s.postProcess.size())) {
+        if (s.postProcess.empty()) ImGui::TextDisabled("None. Add with settings().postProcess.push_back(...)");
+        for (size_t i = 0; i < s.postProcess.size(); ++i) {
+            PostProcessDesc& fx = s.postProcess[i];
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::Checkbox(fx.name.empty() ? "(unnamed)" : fx.name.c_str(), &fx.enabled);
+            if (!lib.ready(fx.shader)) {
+                ImGui::SameLine();
+                ImGui::TextColored({1.0f, 0.45f, 0.4f, 1.0f}, "(not compiled)");
+            }
+            ImGui::DragFloat4("Params", glm::value_ptr(fx.params), 0.01f);
+            ImGui::PopID();
+        }
+        ImGui::TreePop();
+    }
+    if (ImGui::TreeNode("shaders", "Game shaders (%zu)", lib.shaders().size())) {
+        bool hot = lib.hotReload();
+        if (ImGui::Checkbox("Hot reload", &hot)) lib.setHotReload(hot);
+        ImGui::SameLine();
+        ImGui::TextDisabled(ShaderLibrary::compilerAvailable() ? "runtime compiler: on" : "runtime compiler: off");
+        for (ShaderHandle h : lib.shaders()) {
+            ImGui::PushID(static_cast<int>(h.id));
+            const bool failed = !lib.error(h).empty();
+            const char* src = lib.source(h) == ShaderSource::Runtime ? "runtime"
+                              : lib.source(h) == ShaderSource::Precompiled ? "spv" : "memory";
+            ImGui::TextColored(failed ? ImVec4{1.0f, 0.45f, 0.4f, 1.0f} : ImVec4{0.8f, 0.8f, 0.82f, 1.0f}, "%s",
+                               lib.path(h).filename().string().c_str());
+            if (failed && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", lib.error(h).c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s v%u", src, lib.version(h));
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reload")) lib.reload(h);
+            ImGui::PopID();
+        }
         ImGui::TreePop();
     }
 }

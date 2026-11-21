@@ -149,6 +149,51 @@ bool reflectedField(const reflect::TypeInfo& owner, const reflect::FieldInfo& f,
             }
             break;
         }
+        case K::Shader: {
+            auto& sh = *static_cast<ShaderHandle*>(p);
+            AssetDatabase& db = ctx.assets();
+            ShaderLibrary& lib = ctx.renderer().shaders();
+            std::string current = "<default>";
+            if (sh) {
+                current = db.shaderLabel(sh);
+                if (current.empty()) current = lib.path(sh).filename().string();
+                if (current.empty()) current = "<shader " + std::to_string(sh.id) + ">";
+            }
+            auto pick = [&](AssetGuid guid) {
+                if (const AssetData* d = db.load(guid); d && !d->shaders.empty()) {
+                    sh = d->shaders[0];
+                    changed = true;
+                }
+            };
+            if (ImGui::BeginCombo(f.label.c_str(), current.c_str())) {
+                if (ImGui::Selectable("<default>", !sh)) {
+                    sh = {};
+                    changed = true;
+                }
+                for (const AssetRecord& r : db.assets()) {
+                    if (r.type != "Shader") continue;
+                    ShaderStage stage{};
+                    if (ShaderLibrary::stageFromPath(r.path, stage) && stage != ShaderStage::Fragment) continue;
+                    if (ImGui::Selectable(r.path.generic_string().c_str(), sh && db.shaderRef(sh) == AssetDatabase::makeRef(r.guid)))
+                        pick(r.guid);
+                }
+                ImGui::EndCombo();
+            }
+            if (!a.readOnly && ImGui::BeginDragDropTarget()) { // drop a shader from the Assets panel
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+                    AssetGuid guid = 0;
+                    std::memcpy(&guid, payload->Data, sizeof(guid));
+                    pick(guid);
+                }
+                ImGui::EndDragDropTarget();
+            }
+            if (sh && !lib.error(sh).empty()) {
+                ImGui::TextColored({1.0f, 0.45f, 0.4f, 1.0f}, lib.ready(sh) ? "Compile error (previous version in use)"
+                                                                           : "Compile error (default shading in use)");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", lib.error(sh).c_str());
+            }
+            break;
+        }
         case K::Struct: {
             const reflect::TypeInfo* t = f.nestedType();
             if (!t) {

@@ -19,7 +19,10 @@ void registerEngineTypes() {
         .field("emissive", &Material::emissive, {.color = true})
         .field("emissiveStrength", &Material::emissiveStrength, {.min = 0.0f, .max = 100.0f})
         .field("checker", &Material::checker, {.label = "Checker Pattern"})
-        .field("baseColorTexture", &Material::baseColorTexture, {.label = "Base Color Texture"});
+        .field("baseColorTexture", &Material::baseColorTexture, {.label = "Base Color Texture"})
+        .field("shader", &Material::shader, {.tooltip = "Game material shader (nova/material.glsl); empty = default shading"})
+        .field("customParams", &Material::customParams, {.speed = 0.01f, .tooltip = "Surface::custom in the material shader"})
+        .field("customTexture", &Material::customTexture, {.tooltip = "nova_customTexture(uv) in the material shader"});
 
     // Identity and name: always present, edited specially (name at the top of the inspector).
     type<IdComponent>("Id").field("uuid", &IdComponent::uuid, {.readOnly = true}).component().hideInInspector();
