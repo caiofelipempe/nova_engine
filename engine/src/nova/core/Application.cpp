@@ -91,7 +91,8 @@ void Application::run() {
         }
 
         auto now = clock::now();
-        m_deltaTime = std::min(std::chrono::duration<f32>(now - last).count(), 0.25f);
+        m_frameDuration = std::min(Duration::fromChrono(now - last), Duration::milliseconds(250));
+        m_deltaTime = m_frameDuration.secondsF();
         last = now;
         fpsAccum += m_deltaTime;
         if (++fpsFrames >= 30) {

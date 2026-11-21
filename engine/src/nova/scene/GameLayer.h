@@ -61,7 +61,7 @@ public:
     /// @brief Calls onTick(), then updates the scene.
     void onUpdate(f32 dt) override {
         onTick(dt);
-        m_scene.update(dt);
+        m_scene.update(app().frameDuration()); // exact: the scene clock never drifts
     }
     /// @brief Renders the scene to the swapchain image from its primary camera (nothing without a camera).
     void onRender(rhi::CommandList& cmd) override {

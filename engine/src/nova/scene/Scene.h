@@ -3,6 +3,7 @@
 /// @file
 /// @brief Scene: ECS registry, gameplay update, physics integration and scene queries.
 
+#include "nova/math/Time.h"
 #include "nova/renderer/Renderer.h"
 #include "nova/scene/Entity.h"
 #include "nova/scene/Script.h"
@@ -69,7 +70,9 @@ public:
 
     /// @brief Runs scripts, built-in systems and (if simulating) physics.
     /// @param dt Seconds since the previous update.
-    void update(f32 dt);
+    void update(f32 dt) { update(Duration::fromSeconds(dt)); }
+    /// @brief Same, with an exact frame duration (GameLayer passes Application::frameDuration()).
+    void update(Duration dt);
 
     /// @name Physics
     /// @{
@@ -84,8 +87,9 @@ public:
     bool isSimulating() const { return m_physics != nullptr; }
     /// @brief The underlying physics world, or `nullptr` when not simulating.
     physics::PhysicsWorld* physics() { return m_physics.get(); }
-    /// @brief Physics step length in seconds (at most 4 steps run per update).
-    f32 fixedTimeStep = 1.0f / 60.0f;
+    /// @brief Physics step length (at most 4 steps run per update). Exact: the accumulator counts
+    ///        whole flicks, so the simulation never drifts from the scene clock.
+    Duration fixedTimeStep = Duration::perSecond(60);
 
     /// @brief Applies a force (N) to the entity's body during the next step. No-op without a body.
     void addForce(Entity e, const glm::vec3& force);
@@ -151,8 +155,11 @@ public:
     const std::string& name() const { return m_name; }
     /// @brief Renames the scene.
     void setName(std::string name) { m_name = std::move(name); }
-    /// @brief Accumulated update time in seconds.
-    f32 time() const { return m_time; }
+    /// @brief Scene clock: exact sum of every update's duration.
+    TimePoint time() const { return m_time; }
+    /// @brief Period of the time given to shaders (`nova_time()`): it restarts every hour so a float
+    ///        keeps sub-millisecond precision however long the game runs.
+    static constexpr Duration kShaderTimeCycle = Duration::hours(1);
 
     /// @name World space
     /// Unit, size and boundaries of the world positions are stored in (see WorldSpace).
@@ -167,7 +174,7 @@ public:
     /// @}
 
 private:
-    void stepPhysics(f32 dt);
+    void stepPhysics(Duration dt);
     void createBody(entt::entity e);
     void onRigidBodyDestroyed(entt::registry& registry, entt::entity e);
     void connectSignals();
@@ -179,8 +186,8 @@ private:
     WorldSpaceDesc m_worldSpace;
     entt::registry m_registry;
     Scope<physics::PhysicsWorld> m_physics; // declared after the registry: destroyed first
-    f32 m_time = 0.0f;
-    f32 m_physicsAccumulator = 0.0f;
+    TimePoint m_time;
+    Duration m_physicsAccumulator;
 };
 
 } // namespace nova

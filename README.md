@@ -57,7 +57,7 @@ cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
 build\bin\Debug\Sandbox.exe
-ctest --preset debug              # testes headless (física, cenas, assets, shaders, espaço do mundo, input, editor, hot reload)
+ctest --preset debug              # testes headless (física, cenas, assets, shaders, espaço do mundo, tempo, input, editor, hot reload)
 doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
 
@@ -75,7 +75,7 @@ Em Debug, as validation layers do Vulkan ficam ligadas e as mensagens vão para 
 ```
 engine/src/nova/
   core/       Application (loop), Layer, Log (spdlog)
-  math/       WorldSpace, GlobalPosition / GlobalOffset (posições inteiras exatas), unidades métricas
+  math/       WorldSpace, GlobalPosition / GlobalOffset (posições inteiras exatas), TimePoint / Duration (tempo exato em flicks), unidades
   platform/   Window (interface) + Input        → glfw/  (backend GLFW)
   rhi/        Device, CommandList (interfaces)  → vulkan/ (backend Vulkan)
   renderer/   Renderer, RenderView, Mesh (+ raycast CPU), DebugDraw, ShaderLibrary — só fala com o RHI

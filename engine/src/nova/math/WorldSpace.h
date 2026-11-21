@@ -2,36 +2,15 @@
 
 /// @file
 /// @brief World configuration for integer global positions: unit (scale), per-axis size and
-///        boundary (barrier or wrap-around), plus a small unsigned 128-bit integer.
+///        boundary (barrier or wrap-around).
 
 #include "nova/core/Base.h"
+#include "nova/math/Integer.h"
 #include "nova/math/Units.h"
 
 #include <array>
 
 namespace nova {
-
-/// @brief Unsigned 128-bit integer (exact squared lengths of integer offsets).
-struct UInt128 {
-    u64 hi = 0; ///< High 64 bits.
-    u64 lo = 0; ///< Low 64 bits.
-
-    /// @brief Full product of two 64-bit values.
-    static UInt128 mul(u64 a, u64 b);
-    /// @brief Sum (wraps at 2^128, which squared lengths of three int64 never reach).
-    friend UInt128 operator+(UInt128 a, UInt128 b) {
-        UInt128 r{a.hi + b.hi, a.lo + b.lo};
-        if (r.lo < a.lo) ++r.hi;
-        return r;
-    }
-    friend bool operator==(const UInt128&, const UInt128&) = default;
-    friend bool operator<(const UInt128& a, const UInt128& b) { return a.hi != b.hi ? a.hi < b.hi : a.lo < b.lo; }
-    friend bool operator>(const UInt128& a, const UInt128& b) { return b < a; }
-    friend bool operator<=(const UInt128& a, const UInt128& b) { return !(b < a); }
-    friend bool operator>=(const UInt128& a, const UInt128& b) { return !(a < b); }
-    /// @brief Nearest double (53 significant bits).
-    f64 toDouble() const;
-};
 
 /// @brief What happens at the edges of a world axis.
 enum class WorldBoundary : u8 {

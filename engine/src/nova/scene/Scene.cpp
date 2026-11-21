@@ -91,9 +91,10 @@ void Scene::activateWorldSpace() const {
     if (!same) WorldSpace::setActive(WorldSpace(m_worldSpace));
 }
 
-void Scene::update(f32 dt) {
+void Scene::update(Duration frame) {
     activateWorldSpace();
-    m_time += dt;
+    m_time += frame;
+    const f32 dt = frame.secondsF(); // scripts and built-in systems work in float seconds
 
     // Native scripts. Iterate over a snapshot: scripts may create/destroy entities.
     std::vector<entt::entity> scripted;
@@ -119,7 +120,7 @@ void Scene::update(f32 dt) {
         t.rotation = glm::eulerAngles(q);
     }
 
-    if (m_physics) stepPhysics(dt);
+    if (m_physics) stepPhysics(frame);
 }
 
 // ----------------------------------------------------------------- physics --
@@ -131,7 +132,7 @@ entt::entity fromUserData(u64 v) { return static_cast<entt::entity>(static_cast<
 void Scene::startSimulation(physics::Backend backend) {
     if (m_physics) return;
     m_physics = physics::PhysicsWorld::create(backend);
-    m_physicsAccumulator = 0.0f;
+    m_physicsAccumulator = Duration();
     for (auto e : m_registry.view<RigidBodyComponent>()) createBody(e);
 }
 
@@ -186,23 +187,24 @@ void Scene::onRigidBodyDestroyed(entt::registry& registry, entt::entity e) {
     rb.body = {};
 }
 
-void Scene::stepPhysics(f32 dt) {
+void Scene::stepPhysics(Duration dt) {
     // Entities that gained a rigid body since the last frame.
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each())
         if (!rb.body) createBody(e);
 
     constexpr int kMaxSteps = 4; // avoid the spiral of death after a hitch
     m_physicsAccumulator += dt;
+    const f32 step = fixedTimeStep.secondsF();
     int steps = 0;
-    while (m_physicsAccumulator >= fixedTimeStep && steps < kMaxSteps) {
+    while (fixedTimeStep > Duration() && m_physicsAccumulator >= fixedTimeStep && steps < kMaxSteps) {
         for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each())
             if (rb.type == physics::BodyType::Kinematic && rb.body)
-                m_physics->moveKinematic(rb.body, t.position.toVec3(), t.orientation(), fixedTimeStep);
-        m_physics->step(fixedTimeStep);
+                m_physics->moveKinematic(rb.body, t.position.toVec3(), t.orientation(), step);
+        m_physics->step(step);
         m_physicsAccumulator -= fixedTimeStep;
         ++steps;
     }
-    if (steps == kMaxSteps) m_physicsAccumulator = 0.0f;
+    if (steps == kMaxSteps) m_physicsAccumulator = Duration();
     if (steps == 0) return;
 
     // Simulation -> ECS
@@ -352,7 +354,7 @@ Entity Scene::primaryCamera() {
 
 bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cameraOverride) {
     out.clear();
-    out.time = m_time;
+    out.time = static_cast<f32>(m_time.secondsInCycle(kShaderTimeCycle));
 
     bool hasCamera = false;
     if (cameraOverride) {

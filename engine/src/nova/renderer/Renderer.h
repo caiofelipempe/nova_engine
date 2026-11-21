@@ -74,7 +74,7 @@ struct RenderScene {
     DirectionalLightData sun;                ///< Directional light.
     std::vector<PointLightData> pointLights; ///< Point lights (the first 16 are used).
     std::vector<DrawItem> draws;             ///< Mesh instances.
-    f32 time = 0.0f;                         ///< Scene time in seconds (available to shaders).
+    f32 time = 0.0f;                         ///< Scene time in seconds within a 1-hour cycle (shaders: `nova_time()`).
 
     /// @brief Empties the lists, keeping their capacity.
     void clear() {

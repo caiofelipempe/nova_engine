@@ -22,20 +22,6 @@ u64 modSpan(i64 v, u64 span) {
 
 } // namespace
 
-// ----------------------------------------------------------------- UInt128 --
-UInt128 UInt128::mul(u64 a, u64 b) {
-    const u64 aLo = a & 0xFFFFFFFFull, aHi = a >> 32;
-    const u64 bLo = b & 0xFFFFFFFFull, bHi = b >> 32;
-    const u64 ll = aLo * bLo, lh = aLo * bHi, hl = aHi * bLo, hh = aHi * bHi;
-    const u64 mid = (ll >> 32) + (lh & 0xFFFFFFFFull) + (hl & 0xFFFFFFFFull);
-    UInt128 r;
-    r.lo = (mid << 32) | (ll & 0xFFFFFFFFull);
-    r.hi = hh + (lh >> 32) + (hl >> 32) + (mid >> 32);
-    return r;
-}
-
-f64 UInt128::toDouble() const { return static_cast<f64>(hi) * kTwoPow64 + static_cast<f64>(lo); }
-
 // -------------------------------------------------------------- WorldSpace --
 WorldSpace::WorldSpace(const WorldSpaceDesc& desc) : m_desc(desc) {
     if (!(m_desc.unit > 0.0) || !std::isfinite(m_desc.unit)) {

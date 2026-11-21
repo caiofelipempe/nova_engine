@@ -70,6 +70,28 @@ scene.setWorldSpace(nova::WorldSpaceDesc::withMaxSize(10, nova::LengthUnit::Kilo
 - Ainda em `float` a partir da origem do mundo, até as próximas fases: renderização, DebugDraw,
   picking e câmera do editor (fase 3), física (fase 4).
 
+## Tempo exato
+
+O tempo segue o mesmo modelo das posições (`nova/math/Time.h`):
+
+- **Tick = flick** (1/705.600.000 s ≈ 1,42 ns): divide exatamente todas as taxas de quadro (24–240 Hz)
+  e de áudio (8–192 kHz). Um `int64` de flicks cobre ±414 anos.
+- **`TimePoint`** (instante) e **`Duration`** (intervalo): `b - a` é uma `Duration` exata,
+  `a + d` um instante; construtores exatos `milliseconds/seconds/minutes/hours/days(n)` e
+  `perSecond(hz)` (`perSecond(60)` = 11.760.000 flicks); `fromSeconds`/`seconds()` em `double`,
+  `secondsF()` em `float`; interop com `std::chrono` (`fromChrono`, `toChrono`, tipo `Flicks`).
+- **Unidades de tempo** em `Units.h`: `TimeUnit` (ns até dia), `convertTime`, `toSeconds`,
+  `fromSeconds`, `readableTimeUnit`, `unitSymbol`.
+- **Na engine:** o relógio da cena (`Scene::time()`) é um `TimePoint`; o passo da física
+  (`Scene::fixedTimeStep`) é uma `Duration` e o acumulador soma flicks inteiros (60 passos = 1 s
+  exato, sem deriva); `Application::frameDuration()` mede o frame direto do relógio do sistema; o
+  `dt` dos scripts continua `float` em segundos. Shaders recebem `nova_time()` dentro de um ciclo de
+  1 hora (`Scene::kShaderTimeCycle`, módulo inteiro), então o `float` nunca perde precisão.
+
+Vetores e quaternions continuam sendo os do glm (genérico por tipo em tempo de compilação:
+`glm::vec3`, `glm::dvec3`, `glm::i64vec3`...). `GlobalPosition::raw()` e `GlobalOffset::raw()`
+devolvem os passos como `glm::i64vec3`.
+
 Status: **Fases 1 e 2 concluídas** (`engine/src/nova/math/`, testes em `tests/WorldSpaceTests.cpp`).
 
 ## Fases

@@ -4,6 +4,7 @@
 /// @brief Application object, its configuration and the `nova::run` entry point.
 
 #include "nova/core/Layer.h"
+#include "nova/math/Time.h"
 #include "nova/platform/Window.h"
 #include "nova/rhi/Device.h"
 
@@ -97,6 +98,8 @@ public:
 
     /// @brief Duration of the last frame in seconds (clamped to 0.25 s to survive hitches).
     f32 deltaTime() const { return m_deltaTime; }
+    /// @brief Exact duration of the last frame, from the steady clock (clamped to 0.25 s, like deltaTime()).
+    Duration frameDuration() const { return m_frameDuration; }
     /// @brief Frames per second, averaged over the last 30 frames.
     f32 fps() const { return m_fps; }
 
@@ -116,6 +119,7 @@ private:
 
     bool m_running = true;
     f32 m_deltaTime = 0.0f;
+    Duration m_frameDuration;
     f32 m_fps = 0.0f;
 };
 

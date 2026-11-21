@@ -20,7 +20,7 @@ i64 toSteps(f64 v) {
     return static_cast<i64>(std::llround(v));
 }
 
-u64 magnitude(i64 v) { return v >= 0 ? static_cast<u64>(v) : static_cast<u64>(-(v + 1)) + 1; }
+using detail::magnitude;
 
 // v * t rounded to the nearest step, precise to well under one step even when |v| > 2^53:
 // v = hi * 2^32 + lo, and the rounding error of hi * t is recovered with an FMA.
@@ -93,16 +93,7 @@ bool GlobalOffset::isShorterThan(f64 meters) const {
 GlobalOffset GlobalOffset::scaled(f64 t) const { return {scaleSteps(x, t), scaleSteps(y, t), scaleSteps(z, t)}; }
 
 GlobalOffset operator*(const GlobalOffset& a, i64 n) {
-    GlobalOffset r;
-    for (int i = 0; i < 3; ++i) {
-        const i64 v = a[i];
-        const bool negative = (v < 0) != (n < 0);
-        const UInt128 p = UInt128::mul(magnitude(v), magnitude(n));
-        const u64 limit = negative ? (u64(1) << 63) : static_cast<u64>(kMax);
-        if (p.hi != 0 || p.lo > limit) r[i] = negative ? kMin : kMax;
-        else r[i] = negative ? static_cast<i64>(0 - p.lo) : static_cast<i64>(p.lo);
-    }
-    return r;
+    return {detail::saturatingMul(a.x, n), detail::saturatingMul(a.y, n), detail::saturatingMul(a.z, n)};
 }
 
 int compareLength(const GlobalOffset& a, const GlobalOffset& b) {

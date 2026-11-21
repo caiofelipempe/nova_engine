@@ -24,6 +24,11 @@ target_link_libraries(NovaWorldSpaceTests PRIVATE Nova::Engine)
 set_target_properties(NovaWorldSpaceTests PROPERTIES FOLDER "Tests")
 add_test(NAME worldspace COMMAND NovaWorldSpaceTests)
 
+add_executable(NovaTimeTests TimeTests.cpp)
+target_link_libraries(NovaTimeTests PRIVATE Nova::Engine)
+set_target_properties(NovaTimeTests PROPERTIES FOLDER "Tests")
+add_test(NAME time COMMAND NovaTimeTests)
+
 add_executable(NovaInputTests InputTests.cpp)
 target_link_libraries(NovaInputTests PRIVATE Nova::Engine)
 set_target_properties(NovaInputTests PROPERTIES FOLDER "Tests")
@@ -49,7 +54,9 @@ if(TARGET Nova::Editor)
 endif()
 
 # A failing assert opens a dialog on Windows debug builds: never let it block the suite.
-set_tests_properties(physics input scene assets shaders worldspace PROPERTIES TIMEOUT 60)
+set_tests_properties(physics input scene assets shaders worldspace time PROPERTIES TIMEOUT 60)
 if(TARGET NovaEditorTests)
-    set_tests_properties(editor PROPERTIES TIMEOUT 60)
+    # Hot reload loads freshly built DLLs: antivirus cloud checks (e.g. Defender "block at first
+    # sight") can hold the first LoadLibrary of a new binary for ~50 s.
+    set_tests_properties(editor PROPERTIES TIMEOUT 180)
 endif()

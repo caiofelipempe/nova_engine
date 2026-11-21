@@ -6,23 +6,12 @@
 #include "nova/math/WorldSpace.h"
 
 #include <glm/glm.hpp>
+#include <glm/ext/vector_int3_sized.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <limits>
 
 namespace nova {
-
-namespace detail {
-/// @brief `a + b`, saturating at the int64 limits.
-inline i64 saturatingAdd(i64 a, i64 b) {
-    constexpr i64 kMax = std::numeric_limits<i64>::max(), kMin = std::numeric_limits<i64>::min();
-    if (b > 0 && a > kMax - b) return kMax;
-    if (b < 0 && a < kMin - b) return kMin;
-    return a + b;
-}
-/// @brief `-a`, saturating (−INT64_MIN → INT64_MAX).
-inline i64 saturatingNegate(i64 a) { return a == std::numeric_limits<i64>::min() ? std::numeric_limits<i64>::max() : -a; }
-} // namespace detail
 
 /// @brief A displacement between world positions, in integer steps of the world unit.
 ///
@@ -40,6 +29,10 @@ struct GlobalOffset {
     constexpr GlobalOffset() = default;
     /// @brief From raw integer steps.
     constexpr GlobalOffset(i64 x_, i64 y_, i64 z_) : x(x_), y(y_), z(z_) {}
+    /// @brief From raw integer steps in a glm vector.
+    explicit constexpr GlobalOffset(const glm::i64vec3& steps) : x(steps.x), y(steps.y), z(steps.z) {}
+    /// @brief Raw integer steps as a glm vector (for custom integer math with glm).
+    constexpr glm::i64vec3 raw() const { return {x, y, z}; }
 
     /// @brief From meters (rounded to the nearest step, saturating).
     static GlobalOffset fromMeters(const glm::dvec3& meters);
@@ -114,6 +107,8 @@ public:
 
     /// @brief From raw steps, brought into the world (wrap: modulo; barrier: clamped).
     static GlobalPosition fromRaw(i64 x, i64 y, i64 z);
+    /// @brief From raw steps in a glm vector.
+    static GlobalPosition fromRaw(const glm::i64vec3& steps) { return fromRaw(steps.x, steps.y, steps.z); }
     /// @brief From meters (rounded to the nearest step; wrap axes loop, barrier axes clamp).
     static GlobalPosition fromMeters(const glm::dvec3& meters);
     /// @brief In meters, as double (for display/logs; exact up to 2^53 steps per axis).
@@ -128,6 +123,9 @@ public:
 
     /// @brief Raw steps on axis `i` (0 = x).
     i64 raw(int i) const { return m_v[i]; }
+    /// @brief Raw steps as a glm vector. Plain glm arithmetic on them ignores the world's
+    ///        boundaries: use GlobalOffset / the operators here for positions.
+    glm::i64vec3 raw() const { return {m_v[0], m_v[1], m_v[2]}; }
 
     /// @brief Moves by `offset` (exact). @return Bit mask of the axes stopped by a barrier (bit i = axis i).
     u8 move(const GlobalOffset& offset);
