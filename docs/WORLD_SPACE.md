@@ -149,6 +149,31 @@ scene.setWorldSpace(nova::WorldSpaceDesc::withMaxSize(10, nova::LengthUnit::Kilo
   (o port do vcpkg fixa `OFF`; um overlay port resolve, com algum custo de desempenho). A parte da
   engine já é inteira/IEEE estrita; não há `fast-math`.
 
+## Futuro: renderização circular (mundos que dão a volta)
+
+Hoje a física é circular, mas a renderização desenha cada objeto **uma vez**, na cópia mais próxima
+da câmera. Basta enquanto o alcance da visão (`farClip`) for menor que meia volta; num mundo de 60 m
+vendo a 400 m, o mundo deveria se repetir até o horizonte — e só aparece uma volta.
+
+Plano:
+- **Cópias por volta:** para cada eixo com volta, gerar as cópias de cada objeto deslocadas de
+  `k × tamanho do eixo`, para todo `k` cuja cópia caia dentro do alcance da câmera
+  (`|k| ≤ ceil(farClip / tamanho)`); combinar os eixos (X × Z). Cópias em lugares diferentes não são
+  duplicatas: um objeto atravessando a emenda deve mesmo aparecer duas vezes, uma de cada lado.
+- **Estabilidade:** testar todas as cópias no alcance (não só a "mais próxima") — senão um objeto a
+  meia volta pula de lado entre frames.
+- **Culling por cópia:** frustum culling de cada cópia contra a câmera (bounds da malha × transform),
+  para o custo crescer só com o que aparece; limite de cópias por objeto e por frame.
+- **Desenho por instâncias:** as cópias de uma malha viram instâncias extras no mesmo draw (o
+  `InstanceData` já é por instância), sem novos objetos no ECS.
+- **O resto do frame:** luzes pontuais também replicadas; TLAS (sombras por ray tracing) com as
+  cópias, senão objetos do outro lado da emenda não projetam sombra; DebugDraw e picking cientes das
+  cópias (clicar numa cópia seleciona o objeto original).
+- **Física:** a janela `float` já cobre uma volta em torno do foco; colisões **entre** cópias
+  (um corpo encostando na própria cópia em mundos menores que ele) ficam como caso-limite documentado.
+- Testes: um mundo pequeno com `farClip` maior que várias voltas deve desenhar as cópias certas, sem
+  saltos ao mover a câmera e sem cópias fora do campo de visão.
+
 ## Cenários de teste: mundo pequeno com bordas fechadas e abertas
 
 No editor, menu **Game/Scenarios**:
