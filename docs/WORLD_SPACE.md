@@ -191,3 +191,14 @@ Status: **Fases 1 a 6 concluídas.** (`engine/src/nova/math/`, testes em `tests/
    atravessando a emenda sem pulo.
 6. **Regiões de física e determinismo** — vários focos (jogadores distantes), cada grupo com seu
    mundo físico; corpos dormentes fora do alcance; hash de estado para lockstep/replay.
+7. **Futuro: backend de física com posições inteiras nativas** — para um motor de física próprio
+   em ponto fixo:
+   - capacidade declarada pelo backend (ex.: `caps().globalPositions`);
+   - variante inteira do contrato do `PhysicsWorld`: criação de corpos, transforms, consultas e
+     eventos de contato em `GlobalPosition`/`GlobalOffset`, e `step(Duration)` em vez de `f32`;
+   - na cena, com um backend inteiro: uma região só, origem zero, sem rebase e sem `float` no
+     caminho (determinismo entre plataformas); com o Jolt, o caminho atual continua igual;
+   - um backend esqueleto que passe nos testes de interface, para o motor próprio nascer encaixado.
+   Do lado do motor: matemática de ponto fixo para rotações/quaternions, raiz e trigonometria
+   determinísticas, colisão (GJK/EPA ou formas analíticas) e solver — velocidades e rotações
+   podem ser ponto fixo de 32 bits; posições usam os 64 bits de `GlobalPosition`.
