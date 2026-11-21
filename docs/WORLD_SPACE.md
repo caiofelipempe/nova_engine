@@ -202,3 +202,30 @@ Status: **Fases 1 a 6 concluídas.** (`engine/src/nova/math/`, testes em `tests/
    Do lado do motor: matemática de ponto fixo para rotações/quaternions, raiz e trigonometria
    determinísticas, colisão (GJK/EPA ou formas analíticas) e solver — velocidades e rotações
    podem ser ponto fixo de 32 bits; posições usam os 64 bits de `GlobalPosition`.
+
+   **Diretriz de desenho: corpo global, forma local.**
+   - Posição do corpo em `GlobalPosition` (`int64`); forma e vértices (poliedros, malhas de colisão,
+     offsets) em coordenadas **locais ao corpo** de 32 bits — `float`, ou ponto fixo 16.16
+     (±32 km com 15 µm de precisão) para um motor inteiro determinístico. A unidade do mundo
+     (2⁻³² m) não serve para o local: em 32 bits ela cobriria só ±0,5 m.
+   - Fase ampla em inteiro (AABBs em `int64` ou por célula); para cada par próximo,
+     `posB − posA` exato em `int64` vira um deslocamento pequeno, e a colisão estreita (GJK/EPA,
+     SAT) e o solver rodam num **referencial local ao par**, ancorado num dos corpos — o mesmo
+     princípio da renderização relativa à câmera.
+   - Corpos gigantes (terrenos de km) são fatiados em pedaços, cada um com origem global própria e
+     vértices locais pequenos.
+   - `int64` em tudo não ajuda: a precisão necessária é relativa ao tamanho do corpo, e vértices em
+     `int64` dobram memória e banda e tornam a rotação (produtos de 128 bits, metade da largura
+     SIMD) várias vezes mais lenta.
+
+   **Estado atual da estrutura em relação a essa diretriz:**
+   - Já segue: posição da entidade é `GlobalPosition`; colliders (`halfExtents`, `radius`,
+     `offset`) são locais em `float`; vértices de malha (renderização) são locais ao objeto.
+   - Ainda não segue: o contrato do `PhysicsWorld` recebe a posição do corpo em `float` relativo à
+     origem da região (não em `GlobalPosition`), então a fase ampla e a colisão do Jolt rodam em
+     `float` no espaço da região (preciso até alguns km, mas não exato nem determinístico entre
+     plataformas); não há formas poliédricas/malha (`ShapeType` só tem Box, Sphere e Capsule);
+     não há fatiamento de corpos grandes nem tipo local em ponto fixo.
+   - O que fecha a lacuna: o contrato inteiro desta fase (corpo em `GlobalPosition`, forma local
+     de 32 bits), as formas convexas/malha com vértices locais, e o motor próprio fazendo a colisão
+     por par em referencial local.
