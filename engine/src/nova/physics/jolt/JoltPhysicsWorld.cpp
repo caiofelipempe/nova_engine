@@ -344,6 +344,9 @@ void JoltPhysicsWorld::moveKinematic(BodyId body, const glm::vec3& position, con
 glm::vec3 JoltPhysicsWorld::linearVelocity(BodyId body) const {
     return toG(m_impl->bodies().GetLinearVelocity(toJ(body)));
 }
+glm::vec3 JoltPhysicsWorld::angularVelocity(BodyId body) const {
+    return toG(m_impl->bodies().GetAngularVelocity(toJ(body)));
+}
 void JoltPhysicsWorld::setLinearVelocity(BodyId body, const glm::vec3& v) {
     m_impl->bodies().SetLinearVelocity(toJ(body), toJ(v));
 }

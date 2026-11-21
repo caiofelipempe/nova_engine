@@ -205,7 +205,7 @@ public:
                     renderer().stats().postProcessPasses);
         if (renderer().rayTracingAvailable())
             ImGui::Checkbox("Ray-traced shadows", &renderer().settings().rayTracedShadows);
-        ImGui::Text("Physics bodies: %u", scene().physics() ? scene().physics()->bodyCount() : 0u);
+        ImGui::Text("Physics bodies: %u", scene().physicsBodyCount());
         // Sweep a projectile-sized sphere from the camera: shows what a shot would hit.
         auto& cam = m_camera.transform();
         if (auto hit = scene().sweepSphere(cam.position + cam.forward(), 0.2f, cam.forward(), 200.0f))

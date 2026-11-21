@@ -479,6 +479,7 @@ void rebase() {
     FarScene f(base);
     f.ball.get<RigidBodyComponent>().gravityFactor = 0.0f;
     f.ball.get<RigidBodyComponent>().linearDamping = 0.0f; // measure the floating origin, not damping
+    f.scene.physicsRegionRadius = 0.0; // one unlimited region: this test is about a single floating origin
     f.scene.startSimulation();
     f.scene.update(Duration::perSecond(60));
     f.scene.setLinearVelocity(f.ball, {3.0f, 0.0f, 0.0f});
@@ -583,6 +584,116 @@ void wrapSeam() {
     CHECK_NEAR(free.transform().position.toMeters().x, -47.0, 0.1); // 48 + 5 m, wrapped
 }
 
+// ------------------------------------------------------------ physics regions --
+void twoRegions() {
+    // Two players 50 km apart: each gets its own region, precise around it.
+    const GlobalPosition a = GlobalPosition::fromUnits({1000, 0, 0}, LengthUnit::Kilometer);
+    const GlobalPosition b = a + glm::vec3(50'000.0f, 0.0f, 0.0f);
+    Scene scene("regions");
+    std::vector<Entity> balls;
+    for (const GlobalPosition& base : {a, b}) {
+        Entity ground = scene.createEntity("Ground");
+        ground.transform().position = base + glm::vec3(0, -0.5f, 0);
+        ground.transform().scale = {100, 1, 100};
+        ground.add<RigidBodyComponent>(BodyType::Static);
+        Entity ball = scene.createEntity("Ball");
+        ball.transform().position = base + glm::vec3(0, 2, 0);
+        ball.add<RigidBodyComponent>();
+        ball.add<SphereColliderComponent>();
+        balls.push_back(ball);
+    }
+    scene.setPhysicsFoci({a + glm::vec3(0, 2, 5), b + glm::vec3(0, 2, 5)});
+    scene.startSimulation();
+    CHECK(scene.physicsRegionCount() == 2);
+    CHECK(isWithin(scene.physicsOrigin(0), a, 10.0) && isWithin(scene.physicsOrigin(1), b, 10.0));
+    for (int i = 0; i < 180; ++i) scene.update(Duration::perSecond(60));
+    CHECK_NEAR((balls[0].transform().position - a).toMeters().y, 0.5, 0.02); // both rest on their ground
+    CHECK_NEAR((balls[1].transform().position - b).toMeters().y, 0.5, 0.02);
+    CHECK_NEAR((balls[1].transform().position - b).toMeters().x, 0.0, 1e-3);
+    // Queries go to the region around their origin.
+    auto hit = scene.raycast(b + glm::vec3(0, 10, 0), {0, -1, 0}, 50.0f);
+    CHECK(hit && hit->entity == balls[1]);
+
+    // The players meet: the regions merge into one, and nothing jumps.
+    const GlobalPosition restB = balls[1].transform().position;
+    scene.setPhysicsFoci({a + glm::vec3(0, 2, 5), a + glm::vec3(3000, 2, 5)});
+    scene.update(Duration::perSecond(60));
+    CHECK(scene.physicsRegionCount() == 1);
+    CHECK(scene.isPhysicsDormant(balls[1])); // 50 km from both players now: frozen
+    CHECK(balls[1].transform().position == restB);
+    CHECK(!scene.isPhysicsDormant(balls[0]));
+}
+
+void dormancy() {
+    const GlobalPosition base = GlobalPosition::fromUnits({200, 0, 0}, LengthUnit::Kilometer);
+    Scene scene("dormant");
+    Entity ball = scene.createEntity("Ball");
+    ball.transform().position = base;
+    auto& rb = ball.add<RigidBodyComponent>();
+    rb.gravityFactor = 0.0f;
+    rb.linearDamping = 0.0f;
+    ball.add<SphereColliderComponent>();
+    scene.setPhysicsFocus(base + glm::vec3(0, 0, 10));
+    scene.startSimulation();
+    scene.setLinearVelocity(ball, {2.0f, 0.0f, 0.0f});
+    scene.update(Duration::perSecond(60));
+
+    // The focus leaves: the ball freezes where it is, keeping its velocity...
+    scene.setPhysicsFocus(base + glm::vec3(20'000.0f, 0.0f, 0.0f));
+    scene.update(Duration::perSecond(60));
+    CHECK(scene.isPhysicsDormant(ball) && !ball.get<RigidBodyComponent>().body.valid());
+    const GlobalPosition frozen = ball.transform().position;
+    for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
+    CHECK(ball.transform().position == frozen);
+    CHECK_NEAR(scene.linearVelocity(ball).x, 2.0f, 1e-4f);
+    // ...and resumes with it when the focus comes back.
+    scene.setPhysicsFocus(base + glm::vec3(0, 0, 10));
+    for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
+    CHECK(!scene.isPhysicsDormant(ball));
+    CHECK_NEAR((ball.transform().position - frozen).toMeters().x, 2.0, 0.05);
+}
+
+void determinism() {
+    // A pile of boxes and balls, saved once and loaded twice: the two simulations must agree
+    // bit for bit at every step (lockstep / replays), rebases included.
+    Scene source("source");
+    Entity ground = source.createEntity("Ground");
+    ground.transform().position = {0.0, -0.5, 0.0};
+    ground.transform().scale = {60, 1, 60};
+    ground.add<RigidBodyComponent>(BodyType::Static);
+    for (int i = 0; i < 24; ++i) {
+        Entity e = source.createEntity("Body " + std::to_string(i));
+        e.transform().position = {static_cast<f64>(i % 4) * 0.9 - 1.3, 0.6 + (i / 4) * 1.05, static_cast<f64>(i % 3) * 0.3};
+        e.transform().rotation = {0.1f * i, 0.2f * i, 0.0f};
+        e.add<RigidBodyComponent>();
+        if (i % 2) e.add<SphereColliderComponent>();
+    }
+    const std::string json = serializeScene(source);
+
+    Scene a("a"), b("b");
+    CHECK(deserializeScene(a, json) && deserializeScene(b, json));
+    CHECK(a.stateHash() == b.stateHash());
+    a.startSimulation();
+    b.startSimulation();
+    bool same = true;
+    for (int i = 0; i < 240; ++i) {
+        if (i == 120) { // the focus jumps: both rebase at the same step
+            a.setPhysicsFocus({2000.0, 0.0, 0.0});
+            b.setPhysicsFocus({2000.0, 0.0, 0.0});
+            a.physicsRegionRadius = b.physicsRegionRadius = 0.0;
+        }
+        a.update(Duration::perSecond(60));
+        b.update(Duration::perSecond(60));
+        same &= a.stateHash() == b.stateHash();
+    }
+    CHECK(same);
+    // And the hash does notice a difference.
+    b.setLinearVelocity(b.findEntity("Body 5"), {0.0f, 1e-3f, 0.0f});
+    b.update(Duration::perSecond(60));
+    a.update(Duration::perSecond(60));
+    CHECK(a.stateHash() != b.stateHash());
+}
+
 } // namespace
 
 int main() {
@@ -612,6 +723,9 @@ int main() {
         {"floating origin: rebase keeps positions and velocities", rebase},
         {"barrier edges are walls (onWorldBoundary)", barrierWalls},
         {"wrap seam: neighbours across it collide", wrapSeam},
+        {"physics regions: far-apart foci, merging", twoRegions},
+        {"physics regions: dormant bodies keep their velocity", dormancy},
+        {"determinism: two runs agree bit for bit", determinism},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

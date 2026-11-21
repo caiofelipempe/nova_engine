@@ -9,6 +9,7 @@
 #include "nova/scene/Script.h"
 
 #include <optional>
+#include <unordered_map>
 #include <string>
 
 namespace nova {
@@ -84,9 +85,9 @@ public:
     /// @brief Destroys the physics world. Transforms keep their simulated values.
     void stopSimulation();
     /// @brief True between startSimulation() and stopSimulation().
-    bool isSimulating() const { return m_physics != nullptr; }
-    /// @brief The underlying physics world, or `nullptr` when not simulating.
-    physics::PhysicsWorld* physics() { return m_physics.get(); }
+    bool isSimulating() const { return m_simulating; }
+    /// @brief The physics world of the first region, or `nullptr` when not simulating.
+    physics::PhysicsWorld* physics() { return m_regions.empty() ? nullptr : m_regions.front().world.get(); }
     /// @brief Physics step length (at most 4 steps run per update). Exact: the accumulator counts
     ///        whole flicks, so the simulation never drifts from the scene clock.
     Duration fixedTimeStep = Duration::perSecond(60);
@@ -103,17 +104,41 @@ public:
     ///        (e.g. after moving it with an editor gizmo).
     void syncTransformToPhysics(Entity e);
 
-    /// @brief Floating origin of the simulation. The physics engine works in floats around it;
-    ///        bodies are converted to and from GlobalPosition at that boundary.
-    const GlobalPosition& physicsOrigin() const { return m_physicsOrigin; }
-    /// @brief The point the physics origin follows (e.g. the player). Without one it follows the
-    ///        primary camera, or stays where it is if there is none.
-    void setPhysicsFocus(const GlobalPosition& focus) { m_physicsFocus = focus; m_hasPhysicsFocus = true; }
+    /// @brief Where the simulation happens: one or more **foci** (e.g. one per player).
+    ///
+    /// Foci closer than 2 × physicsRegionRadius share a **region**: one physics world whose floating
+    /// origin follows the centroid of its foci. Far-apart foci get separate regions, each precise
+    /// around its own players. Without foci, the primary camera is the focus.
+    void setPhysicsFoci(std::vector<GlobalPosition> foci) {
+        m_physicsFoci = std::move(foci);
+        m_hasPhysicsFocus = true;
+    }
+    /// @brief A single focus (e.g. the player).
+    void setPhysicsFocus(const GlobalPosition& focus) { setPhysicsFoci({focus}); }
     /// @brief Goes back to following the primary camera.
-    void clearPhysicsFocus() { m_hasPhysicsFocus = false; }
-    /// @brief When the focus gets farther than this (meters) from the physics origin, every body is
-    ///        shifted so the origin is at the focus again. Precision is best within this radius.
+    void clearPhysicsFocus() {
+        m_physicsFoci.clear();
+        m_hasPhysicsFocus = false;
+    }
+    /// @brief Simulation distance (meters): dynamic bodies farther than this from every focus are
+    ///        **dormant** (frozen, velocity kept) until a focus comes near; static bodies join every
+    ///        region they reach. 0 = unlimited: one region holds everything (no dormancy).
+    f64 physicsRegionRadius = 4096.0;
+    /// @brief When a region's foci move farther than this (meters) from its origin, its bodies are
+    ///        shifted so the origin is back at the foci. Precision is best within this radius.
     f64 physicsRebaseDistance = 1024.0;
+    /// @brief Number of physics regions (0 when not simulating).
+    u32 physicsRegionCount() const { return static_cast<u32>(m_regions.size()); }
+    /// @brief Floating origin of a region: the physics engine works in floats around it.
+    const GlobalPosition& physicsOrigin(u32 region = 0) const;
+    /// @brief Bodies in every region (barrier walls included).
+    u32 physicsBodyCount() const;
+    /// @brief True if the entity has a rigid body that is currently outside every region (not simulated).
+    bool isPhysicsDormant(Entity e) const;
+    /// @brief Hash of the simulation state: every entity's exact position, rotation, scale and body
+    ///        velocities, in UUID order. Two runs of the same scene with the same inputs give the same
+    ///        hash step after step (lockstep / replay desync checks).
+    u64 stateHash();
     /// @brief Barrier edges closer than this (meters) to the physics origin become static walls.
     f64 barrierWallRange = 8192.0;
     /// @}
@@ -188,27 +213,62 @@ public:
     /// @}
 
 private:
+    struct PhysicsRegion {
+        u32 id = 0;
+        Scope<physics::PhysicsWorld> world;
+        GlobalPosition origin;
+        std::vector<GlobalPosition> foci;
+        std::vector<physics::BodyId> walls;
+        glm::vec3 toPhysics(const GlobalPosition& p) const { return (p - origin).toVec3(); }
+        GlobalPosition fromPhysics(const glm::vec3& p) const { return origin + p; }
+    };
+    struct BodyInstance {
+        u32 region = 0;
+        physics::BodyId body;
+    };
+    // Where an entity's rigid body lives: one region (dynamic/kinematic) or several (static).
+    struct PhysicsBinding {
+        std::vector<BodyInstance> instances;
+        glm::vec3 savedLinear{0.0f};  // velocity kept while dormant / moving between regions
+        glm::vec3 savedAngular{0.0f};
+    };
+    struct BodyRef {
+        PhysicsRegion* region = nullptr;
+        physics::BodyId body;
+        explicit operator bool() const { return region && body; }
+    };
+
     void stepPhysics(Duration dt);
-    void updatePhysicsOrigin();
-    void rebuildBarrierWalls();
-    glm::vec3 toPhysics(const GlobalPosition& p) const { return (p - m_physicsOrigin).toVec3(); }
-    GlobalPosition fromPhysics(const glm::vec3& p) const { return m_physicsOrigin + p; }
-    void createBody(entt::entity e);
+    std::vector<GlobalPosition> currentFoci();
+    void updatePhysicsRegions();
+    PhysicsRegion& createRegion(const GlobalPosition& origin);
+    void destroyRegion(size_t index);
+    void rebaseRegion(PhysicsRegion& region, const GlobalPosition& target);
+    void rebuildBarrierWalls(PhysicsRegion& region);
+    PhysicsRegion* findRegion(u32 id);
+    PhysicsRegion* regionAt(const GlobalPosition& p);
+    void assignBody(entt::entity e);
+    void removeInstance(entt::entity e, PhysicsBinding& binding, size_t index);
+    void createBodyIn(entt::entity e, PhysicsRegion& region, PhysicsBinding& binding);
     void onRigidBodyDestroyed(entt::registry& registry, entt::entity e);
     void connectSignals();
-    physics::BodyId bodyOf(Entity e);
-    physics::QueryFilter filterIgnoring(Entity e);
-    SceneHit toSceneHit(const physics::QueryHit& hit, const GlobalPosition& queryOrigin);
+    BodyRef bodyOf(Entity e);
+    physics::QueryFilter filterIgnoring(Entity e, const PhysicsRegion& region);
+    SceneHit toSceneHit(const physics::QueryHit& hit, const GlobalPosition& queryOrigin, const PhysicsRegion& region);
 
     std::string m_name;
     WorldSpaceDesc m_worldSpace;
     entt::registry m_registry;
-    Scope<physics::PhysicsWorld> m_physics; // declared after the registry: destroyed first
+    // Physics (declared after the registry: destroyed first).
+    std::vector<PhysicsRegion> m_regions;
+    std::unordered_map<entt::entity, PhysicsBinding> m_bindings;
+    physics::Backend m_backend = physics::Backend::Jolt;
+    bool m_simulating = false;
+    bool m_regionsBounded = false;
+    u32 m_nextRegionId = 1;
     TimePoint m_time;
-    GlobalPosition m_physicsOrigin;
-    GlobalPosition m_physicsFocus;
+    std::vector<GlobalPosition> m_physicsFoci;
     bool m_hasPhysicsFocus = false;
-    std::vector<physics::BodyId> m_barrierWalls;
     Duration m_physicsAccumulator;
 };
 

@@ -154,6 +154,8 @@ public:
     virtual glm::vec3 linearVelocity(BodyId body) const = 0;
     /// @brief Sets the linear velocity (m/s).
     virtual void setLinearVelocity(BodyId body, const glm::vec3& velocity) = 0;
+    /// @brief Angular velocity in rad/s (world space).
+    virtual glm::vec3 angularVelocity(BodyId body) const = 0;
     /// @brief Sets the angular velocity (rad/s, world space).
     virtual void setAngularVelocity(BodyId body, const glm::vec3& velocity) = 0;
     /// @brief Applies a force (N) at the center of mass during the next step.

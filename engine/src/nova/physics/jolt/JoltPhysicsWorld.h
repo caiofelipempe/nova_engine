@@ -29,6 +29,7 @@ public:
     void moveKinematic(BodyId body, const glm::vec3& position, const glm::quat& rotation, f32 dt) override;
 
     glm::vec3 linearVelocity(BodyId body) const override;
+    glm::vec3 angularVelocity(BodyId body) const override;
     void setLinearVelocity(BodyId body, const glm::vec3& velocity) override;
     void setAngularVelocity(BodyId body, const glm::vec3& velocity) override;
     void addForce(BodyId body, const glm::vec3& force) override;

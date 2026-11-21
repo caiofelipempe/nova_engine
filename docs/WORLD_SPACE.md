@@ -124,6 +124,31 @@ scene.setWorldSpace(nova::WorldSpaceDesc::withMaxSize(10, nova::LengthUnit::Kilo
   contínuo através dela (coberto pelos testes do editor).
 - A posição da câmera aparece no canto da viewport, na unidade mais legível.
 
+## Regiões de física e determinismo (fase 6)
+
+- **Focos:** `scene.setPhysicsFoci({p1, p2, ...})` (ex.: um por jogador); sem focos, a câmera principal.
+- **Regiões:** focos a menos de `2 × physicsRegionRadius` (padrão 4 km) formam uma região — um mundo
+  Jolt próprio com origem flutuante no **centróide** dos seus focos. Focos distantes viram regiões
+  separadas, cada uma precisa em volta dos seus jogadores; quando eles se aproximam, as regiões se
+  fundem (e se separam de novo ao se afastarem).
+- **Corpos:** um corpo dinâmico/kinematic pertence à região do foco mais próximo, se estiver a menos
+  de `physicsRegionRadius` (+ o tamanho do collider); fora disso fica **dormente** — congelado, sem
+  corpo no Jolt, com a velocidade guardada (`setLinearVelocity`/`addImpulse` num corpo dormente
+  atualizam essa velocidade) — e volta a simular, com a mesma velocidade, quando um foco se aproxima.
+  Corpos estáticos entram em todas as regiões que alcançam. `scene.isPhysicsDormant(e)`.
+- `physicsRegionRadius = 0` → alcance ilimitado: uma região só com tudo (o comportamento da fase 4).
+- Consultas vão para a região em volta da origem da consulta; `physicsRegionCount()`,
+  `physicsOrigin(i)`, `physicsBodyCount()`. O painel World mostra as regiões e edita a distância de
+  simulação; o painel Renderer conta corpos e regiões.
+- **Determinismo:** mesmo build + mesma cena + mesmas entradas → mesmo resultado, bit a bit,
+  passo a passo (inclusive com rebases e troca de região: tudo é decidido em ordem determinística, a
+  aritmética de posição/tempo é inteira e o Jolt é determinístico mesmo com várias threads).
+  `scene.stateHash()` resume posições exatas, rotações, escalas e velocidades em ordem de UUID — para
+  detectar dessincronização em lockstep ou validar replays.
+- **Entre plataformas/compiladores** o Jolt precisa ser compilado com `CROSS_PLATFORM_DETERMINISTIC=ON`
+  (o port do vcpkg fixa `OFF`; um overlay port resolve, com algum custo de desempenho). A parte da
+  engine já é inteira/IEEE estrita; não há `fast-math`.
+
 ## Tempo exato
 
 O tempo segue o mesmo modelo das posições (`nova/math/Time.h`):
@@ -146,7 +171,7 @@ Vetores e quaternions continuam sendo os do glm (genérico por tipo em tempo de 
 `glm::vec3`, `glm::dvec3`, `glm::i64vec3`...). `GlobalPosition::raw()` e `GlobalOffset::raw()`
 devolvem os passos como `glm::i64vec3`.
 
-Status: **Fases 1 a 5 concluídas** (a 6 — várias regiões de física e determinismo — fica para depois) (`engine/src/nova/math/`, testes em `tests/WorldSpaceTests.cpp`).
+Status: **Fases 1 a 6 concluídas.** (`engine/src/nova/math/`, testes em `tests/WorldSpaceTests.cpp`).
 
 ## Fases
 
@@ -164,4 +189,5 @@ Status: **Fases 1 a 5 concluídas** (a 6 — várias regiões de física e deter
    `Script::onWorldBoundary`.
 5. **Editor** — painel de configurações do mundo, desenho das barreiras e emendas, câmera do editor
    atravessando a emenda sem pulo.
-6. **Depois** — várias regiões de física (jogadores distantes em multiplayer), determinismo.
+6. **Regiões de física e determinismo** — vários focos (jogadores distantes), cada grupo com seu
+   mundo físico; corpos dormentes fora do alcance; hash de estado para lockstep/replay.
