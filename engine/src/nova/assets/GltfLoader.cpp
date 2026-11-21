@@ -226,7 +226,7 @@ std::vector<Entity> instantiateModel(Scene& scene, const ModelData& model, const
         Entity e = scene.createEntity(n.name);
         auto& t = e.transform();
         t.position = position + n.position;
-        t.rotation = n.rotation;
+        t.setRotation(n.rotation);
         t.scale = n.scale;
         e.add<MeshComponent>(model.meshes[n.mesh], n.material, true);
         out.push_back(e);

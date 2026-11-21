@@ -44,11 +44,15 @@ struct TransformComponent {
     /// @brief World position: exact integer fixed point (see WorldSpace). Assign meters directly
     ///        (`position = {0, 3, 10}`), move with offsets (`position += velocity * dt`).
     GlobalPosition position;
-    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; ///< World rotation (unit quaternion).
+    /// @brief World rotation, a **unit** quaternion. The helpers below keep it unit; when assigning
+    ///        one computed elsewhere, prefer setRotation() (it renormalizes cheaply).
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 scale{1.0f};                      ///< Per-axis scale (also scales colliders).
 
     /// @brief The rotation (same as `rotation`; kept for readability at call sites).
     glm::quat orientation() const { return rotation; }
+    /// @brief Sets the rotation, bringing it back to unit length if needed (cheap when it already is).
+    void setRotation(const glm::quat& q) { rotation = renormalize(q); }
 
     /// @name Euler angles (a view of `rotation`)
     /// `x` = pitch (around X), `y` = yaw (around Y), `z` = roll (around Z), applied in `order`
@@ -68,11 +72,23 @@ struct TransformComponent {
 
     /// @brief Rotates around a world axis (radians).
     void rotate(f32 angle, const glm::vec3& worldAxis) {
-        rotation = glm::normalize(glm::angleAxis(angle, glm::normalize(worldAxis)) * rotation);
+        rotation = renormalize(glm::angleAxis(angle, glm::normalize(worldAxis)) * rotation);
     }
     /// @brief Rotates around one of the entity's own axes (radians), e.g. `rotateLocal(dt, {0, 1, 0})`.
     void rotateLocal(f32 angle, const glm::vec3& localAxis) {
-        rotation = glm::normalize(rotation * glm::angleAxis(angle, glm::normalize(localAxis)));
+        rotation = renormalize(rotation * glm::angleAxis(angle, glm::normalize(localAxis)));
+    }
+    /// @brief Turns towards `target` by at most `maxAngle` radians.
+    void rotateTowards(const glm::quat& target, f32 maxAngle) { rotation = nova::rotateTowards(rotation, target, maxAngle); }
+
+    /// @brief Interpolates two transforms: exact position (shortest way, wrap seams included),
+    ///        rotation by slerp, scale linearly. `t` in [0, 1].
+    static TransformComponent lerp(const TransformComponent& a, const TransformComponent& b, f32 t) {
+        TransformComponent out;
+        out.position = nova::lerp(a.position, b.position, t);
+        out.rotation = slerp(a.rotation, b.rotation, t);
+        out.scale = glm::mix(a.scale, b.scale, t);
+        return out;
     }
 
     /// @brief Object-to-world matrix (translate · rotate · scale), in float meters from the world origin.

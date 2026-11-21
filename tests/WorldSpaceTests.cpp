@@ -460,6 +460,52 @@ void rotations() {
     CHECK(sameRotation(old.findEntity("Old").transform().rotation, glm::quat(glm::vec3(0.3f, -1.2f, 0.1f))));
 }
 
+void quaternionUnitAndInterpolation() {
+    // renormalize: free for unit quaternions, fixes drift, rescues degenerate input.
+    const glm::quat q = quatFromEulerDegrees({20, 40, 60});
+    const glm::quat same = renormalize(q);
+    CHECK(same.x == q.x && same.y == q.y && same.z == q.z && same.w == q.w);
+    CHECK(std::abs(glm::length(renormalize(q * 1.0004f)) - 1.0f) < 1e-6f); // Newton step
+    CHECK(std::abs(glm::length(renormalize(q * 1.003f)) - 1.0f) < 1e-6f);  // larger drift: full normalization
+    CHECK(std::abs(glm::length(renormalize(q * 3.0f)) - 1.0f) < 1e-6f);   // full normalization
+    CHECK(renormalize(glm::quat(0, 0, 0, 0)) == glm::quat(1, 0, 0, 0));
+
+    // A million small rotations stay unit length.
+    TransformComponent t;
+    for (int i = 0; i < 1'000'000; ++i) t.rotateLocal(1e-3f, {0.3f, 1.0f, 0.2f});
+    CHECK(std::abs(glm::length(t.rotation) - 1.0f) < 1e-5f);
+    t.setRotation(glm::quat(2, 0, 0, 0));
+    CHECK(std::abs(glm::length(t.rotation) - 1.0f) < 1e-6f);
+
+    // slerp: endpoints, constant angular speed, shortest arc whatever the sign.
+    const glm::quat a = quatFromEulerDegrees({0, 0, 0});
+    const glm::quat b = quatFromEulerDegrees({0, 120, 0});
+    CHECK(sameRotation(slerp(a, b, 0.0f), a) && sameRotation(slerp(a, b, 1.0f), b));
+    CHECK(std::abs(angleBetween(a, slerp(a, b, 0.25f)) - glm::radians(30.0f)) < 1e-4f);
+    CHECK(std::abs(angleBetween(a, slerp(a, b, 0.5f)) - glm::radians(60.0f)) < 1e-4f);
+    CHECK(sameRotation(slerp(a, -b, 0.5f), slerp(a, b, 0.5f)));
+    CHECK(std::abs(glm::length(slerp(a, b, 0.37f)) - 1.0f) < 1e-6f);
+    // nlerp: same path and endpoints, unit length, not constant speed.
+    CHECK(sameRotation(nlerp(a, b, 1.0f), b) && std::abs(glm::length(nlerp(a, b, 0.5f)) - 1.0f) < 1e-6f);
+    CHECK(sameRotation(nlerp(a, b, 0.5f), slerp(a, b, 0.5f))); // the midpoint coincides
+    // rotateTowards: limited steps, then exactly the target.
+    const glm::quat step = rotateTowards(a, b, glm::radians(10.0f));
+    CHECK(std::abs(angleBetween(a, step) - glm::radians(10.0f)) < 1e-4f);
+    CHECK(rotateTowards(a, b, glm::radians(200.0f)) == b);
+
+    // Interpolating whole transforms: exact position, slerped rotation, mixed scale.
+    TransformComponent from, to;
+    from.position = GlobalPosition::fromUnits({1000, 0, 0}, LengthUnit::Kilometer);
+    to.position = from.position + GlobalOffset::fromMeters(glm::dvec3(10.0, 0.0, 0.002));
+    to.rotation = b;
+    to.scale = glm::vec3(3.0f);
+    const TransformComponent mid = TransformComponent::lerp(from, to, 0.5f);
+    const GlobalOffset half = (mid.position - from.position) - GlobalOffset::fromMeters(glm::dvec3(5.0, 0.0, 0.001));
+    CHECK(std::abs(half.x) <= 1 && half.y == 0 && std::abs(half.z) <= 1); // within one 32.32 step (rounding of the half)
+    CHECK(std::abs(angleBetween(mid.rotation, a) - glm::radians(60.0f)) < 1e-4f);
+    CHECK(mid.scale == glm::vec3(2.0f));
+}
+
 } // namespace
 
 int main() {
@@ -480,6 +526,7 @@ int main() {
         {"scenes: world settings, files, prefabs, relative matrices", sceneIntegration},
         {"camera-relative rendering 10,000 km away", cameraRelativeRendering},
         {"rotations: quaternions, Euler in six orders", rotations},
+        {"rotations: always unit, slerp / nlerp / rotateTowards", quaternionUnitAndInterpolation},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

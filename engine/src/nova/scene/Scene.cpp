@@ -473,7 +473,7 @@ void Scene::stepPhysics(Duration dt) {
         glm::vec3 p;
         b.region->world->getTransform(b.body, p, q);
         t.position = b.region->fromPhysics(p);
-        t.rotation = q; // quaternion in, quaternion out: no Euler round trip
+        t.setRotation(q); // quaternion in, quaternion out: no Euler round trip
     }
 
     // Collision callbacks for scripts on both entities, each seen from its own side.
