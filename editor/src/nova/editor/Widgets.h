@@ -3,6 +3,7 @@
 /// @file
 /// @brief Reusable ImGui widgets with the editor's look, for built-in and game panels.
 
+#include "nova/math/Fixed.h"
 #include "nova/math/GlobalPosition.h"
 #include "nova/math/Rotation.h"
 #include "nova/renderer/Mesh.h"
@@ -51,6 +52,8 @@ extern EulerOrder rotationDisplayOrder;
 /// like 180° yaw does not flip to an equivalent triple after the round trip.
 /// @return True if the rotation changed.
 bool rotation(const char* label, glm::quat& value, float speed = 0.5f);
+/// @brief Same, for a fixed-point rotation (quantized back when edited).
+bool rotation(const char* label, FixedQuat& value, float speed = 0.5f);
 
 /// @brief X/Y/Z editor for a world position, in meters (hover an axis for its readable unit and raw steps).
 /// @return True if the value changed.

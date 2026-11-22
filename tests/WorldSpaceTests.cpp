@@ -288,7 +288,7 @@ void rotations() {
     t.setEulerDegrees({10, 20, 30}, EulerOrder::ZXY);
     const glm::vec3 d = t.eulerDegrees(EulerOrder::ZXY);
     CHECK(glm::length(d - glm::vec3(10, 20, 30)) < 1e-3f);
-    CHECK(sameRotation(t.rotation, quatFromEulerDegrees({10, 20, 30}, EulerOrder::ZXY)));
+    CHECK(sameRotation(t.orientation(), quatFromEulerDegrees({10, 20, 30}, EulerOrder::ZXY)));
     t.rotation = glm::quat(1, 0, 0, 0);
     t.rotate(glm::radians(90.0f), {0, 1, 0});
     t.rotateLocal(glm::radians(90.0f), {1, 0, 0}); // then pitch up around its own X
@@ -304,12 +304,12 @@ void rotations() {
     const std::string json = serializeScene(scene);
     Scene back;
     CHECK(deserializeScene(back, json));
-    CHECK(sameRotation(back.findEntity("Rot").transform().rotation, e.transform().rotation, 1e-6f));
+    CHECK(sameRotation(back.findEntity("Rot").transform().orientation(), e.transform().orientation(), 1e-6f));
     Scene old;
     const char* legacyFile = R"({"format": "nova.scene", "version": 1, "entities": [
         {"components": {"Name": {"name": "Old"}, "Transform": {"position": [0, 0, 0], "rotation": [0.3, -1.2, 0.1], "scale": [1, 1, 1]}}}]})";
     CHECK(deserializeScene(old, legacyFile));
-    CHECK(sameRotation(old.findEntity("Old").transform().rotation, glm::quat(glm::vec3(0.3f, -1.2f, 0.1f))));
+    CHECK(sameRotation(old.findEntity("Old").transform().orientation(), glm::quat(glm::vec3(0.3f, -1.2f, 0.1f))));
 }
 
 void quaternionUnitAndInterpolation() {
@@ -325,9 +325,9 @@ void quaternionUnitAndInterpolation() {
     // A million small rotations stay unit length.
     TransformComponent t;
     for (int i = 0; i < 1'000'000; ++i) t.rotateLocal(1e-3f, {0.3f, 1.0f, 0.2f});
-    CHECK(std::abs(glm::length(t.rotation) - 1.0f) < 1e-5f);
+    CHECK(std::abs(glm::length(t.rotation.toDouble()) - 1.0) < 1e-6);
     t.setRotation(glm::quat(2, 0, 0, 0));
-    CHECK(std::abs(glm::length(t.rotation) - 1.0f) < 1e-6f);
+    CHECK(std::abs(glm::length(t.rotation.toDouble()) - 1.0) < 1e-6);
 
     // slerp: endpoints, constant angular speed, shortest arc whatever the sign.
     const glm::quat a = quatFromEulerDegrees({0, 0, 0});
@@ -354,7 +354,7 @@ void quaternionUnitAndInterpolation() {
     const TransformComponent mid = TransformComponent::lerp(from, to, 0.5f);
     const GlobalOffset half = (mid.position - from.position) - GlobalOffset::fromMeters(glm::dvec3(5.0, 0.0, 0.001));
     CHECK(std::abs(half.x) <= 1 && half.y == 0 && std::abs(half.z) <= 1); // within one step (rounding of the half)
-    CHECK(std::abs(angleBetween(mid.rotation, a) - glm::radians(60.0f)) < 1e-4f);
+    CHECK(std::abs(angleBetween(mid.orientation(), a) - glm::radians(60.0f)) < 1e-4f);
     CHECK(mid.scale == glm::vec3(2.0f));
 }
 

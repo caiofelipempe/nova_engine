@@ -80,17 +80,18 @@ void drawWorldBounds(DebugDraw& dd, const GlobalPosition& camera) {
 void drawCollider(DebugDraw& dd, Entity e, const glm::vec4& color) {
     // Same sizing rules as Scene::createBody: sizes scaled by the transform, offset in local space.
     const auto& t = e.transform();
-    const glm::vec3 s = glm::abs(t.scale);
+    const glm::vec3 s = glm::abs(t.scaleF());
     const glm::quat q = t.orientation();
     if (auto* box = e.tryGet<BoxColliderComponent>()) {
-        dd.box(t.position + q * (box->offset * s), box->halfExtents * s, q, color);
+        dd.box(t.position + q * (box->offset.toGlm() * s), box->halfExtents.toGlm() * s, q, color);
     } else if (auto* sphere = e.tryGet<SphereColliderComponent>()) {
-        dd.sphere(t.position + q * (sphere->offset * s), sphere->radius * std::max({s.x, s.y, s.z}), color);
+        dd.sphere(t.position + q * (sphere->offset.toGlm() * s), toFloat(sphere->radius) * std::max({s.x, s.y, s.z}), color);
     } else if (auto* cap = e.tryGet<CapsuleColliderComponent>()) {
-        dd.capsule(t.position + q * (cap->offset * s), q, cap->radius * std::max(s.x, s.z), cap->halfHeight * s.y, color);
+        dd.capsule(t.position + q * (cap->offset.toGlm() * s), q, toFloat(cap->radius) * std::max(s.x, s.z),
+                   toFloat(cap->halfHeight) * s.y, color);
     } else if (auto* cyl = e.tryGet<CylinderColliderComponent>()) {
-        const GlobalPosition c = t.position + q * (cyl->offset * s);
-        const f32 r = cyl->radius * std::max(s.x, s.z), h = cyl->halfHeight * s.y;
+        const GlobalPosition c = t.position + q * (cyl->offset.toGlm() * s);
+        const f32 r = toFloat(cyl->radius) * std::max(s.x, s.z), h = toFloat(cyl->halfHeight) * s.y;
         const glm::vec3 up = q * glm::vec3(0, h, 0);
         dd.circle(c + up, q * glm::vec3(0, 1, 0), r, color);
         dd.circle(c - up, q * glm::vec3(0, 1, 0), r, color);
@@ -104,7 +105,7 @@ void drawCollider(DebugDraw& dd, Entity e, const glm::vec4& color) {
             if (const auto* m = e.tryGet<MeshComponent>()) mesh = m->mesh;
         const MeshData* data = mesh ? Application::get().renderer().meshData(mesh) : nullptr;
         if (!data) return;
-        const glm::vec3 shift = hull ? q * (hull->offset * s) : glm::vec3(0.0f);
+        const glm::vec3 shift = hull ? q * (hull->offset.toGlm() * s) : glm::vec3(0.0f);
         auto corner = [&](u32 i) { return t.position + (shift + q * (data->vertices[i].position * s)); };
         const size_t maxTriangles = 20000; // keep huge meshes affordable
         for (size_t i = 0; i + 2 < data->indices.size() && i / 3 < maxTriangles; i += 3) {

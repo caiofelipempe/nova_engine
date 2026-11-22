@@ -1,6 +1,8 @@
 // Scene <-> physics (frontend): turns physics components into bodies of a physics::PhysicsWorld,
 // steps it, writes results back into the ECS and exposes queries in entities. Talks to physics
-// only through the global contract; backends (floating origin, Jolt) live in physics/backend.
+// only through the global contract; backends (the torus adapter, Jolt) live in physics/backend.
+// Components hold fixed point (the simulation state); this is where it becomes the engine's floats
+// (fl()) and where the engine's results are quantized back.
 #include "nova/scene/Scene.h"
 
 #include "nova/core/Log.h"
@@ -16,12 +18,21 @@ namespace nova {
 namespace {
 u64 toUserData(entt::entity e) { return static_cast<u64>(entt::to_integral(e)); }
 entt::entity fromUserData(u64 v) { return static_cast<entt::entity>(static_cast<entt::id_type>(v)); }
+
+// Fixed point → the physics engine's floats.
+template <unsigned F>
+f32 fl(Fixed<F> v) { return toFloat(v); }
+template <typename T>
+glm::vec3 fl(const FixedVec3<T>& v) { return v.toGlm(); }
+glm::quat fl(const FixedQuat& q) { return q.toGlm(); }
+// An offset in Q13.18 is a whole number of world steps: added to a position exactly.
+GlobalOffset steps(const LengthVec& v) { return GlobalOffset::fromFixed(v); }
 } // namespace
 
 void Scene::startSimulation(physics::Backend backend) {
     if (m_physics) return;
     physics::WorldDesc desc;
-    desc.gravity = m_physicsSettings.gravity;
+    desc.gravity = fl(m_physicsSettings.gravity);
     desc.layers = m_physicsSettings.layers;
     startSimulation(physics::PhysicsWorld::create(backend, desc));
 }
@@ -29,14 +40,14 @@ void Scene::startSimulation(physics::Backend backend) {
 void Scene::setPhysicsSettings(const PhysicsSettings& settings) {
     m_physicsSettings = settings;
     if (!m_physics) return;
-    m_physics->setGravity(settings.gravity);
+    m_physics->setGravity(fl(settings.gravity));
     m_physics->setCollisionLayers(settings.layers);
 }
 
 void Scene::startSimulation(Scope<physics::PhysicsWorld> world) {
     if (m_physics || !world) return;
     m_physics = std::move(world);
-    m_physics->setGravity(m_physicsSettings.gravity); // a world made elsewhere follows the scene too
+    m_physics->setGravity(fl(m_physicsSettings.gravity)); // a world made elsewhere follows the scene too
     m_physics->setCollisionLayers(m_physicsSettings.layers);
     m_physicsAccumulator = Duration();
     pushPhysicsFocus(); // before the bodies: they are placed where the action is
@@ -105,7 +116,7 @@ void Scene::pushPhysicsFocus() { m_physics->setFocus(currentFocus()); }
 physics::BodyDesc Scene::bodyDescFor(entt::entity e) {
     auto& rb = m_registry.get<RigidBodyComponent>(e);
     auto& t = m_registry.get<TransformComponent>(e);
-    const glm::vec3 s = glm::abs(t.scale);
+    const glm::vec3 s = glm::abs(t.scaleF());
 
     // Every collider on the entity is a part; several make one compound shape. Sizes and offsets
     // follow the scale along the collider's own axes (exact unless rotated and scaled unevenly).
@@ -113,34 +124,34 @@ physics::BodyDesc Scene::bodyDescFor(entt::entity e) {
     if (auto* box = m_registry.try_get<BoxColliderComponent>(e)) {
         physics::ShapeDesc p;
         p.type = physics::ShapeType::Box;
-        p.halfExtents = box->halfExtents * s;
-        p.offset = box->offset * s;
-        p.rotation = box->rotation;
+        p.halfExtents = fl(box->halfExtents) * s;
+        p.offset = fl(box->offset) * s;
+        p.rotation = fl(box->rotation);
         parts.push_back(p);
     }
     if (auto* sphere = m_registry.try_get<SphereColliderComponent>(e)) {
         physics::ShapeDesc p;
         p.type = physics::ShapeType::Sphere;
-        p.radius = sphere->radius * std::max({s.x, s.y, s.z});
-        p.offset = sphere->offset * s;
+        p.radius = fl(sphere->radius) * std::max({s.x, s.y, s.z});
+        p.offset = fl(sphere->offset) * s;
         parts.push_back(p);
     }
     if (auto* capsule = m_registry.try_get<CapsuleColliderComponent>(e)) {
         physics::ShapeDesc p;
         p.type = physics::ShapeType::Capsule;
-        p.radius = capsule->radius * std::max(s.x, s.z);
-        p.halfHeight = capsule->halfHeight * s.y;
-        p.offset = capsule->offset * s;
-        p.rotation = capsule->rotation;
+        p.radius = fl(capsule->radius) * std::max(s.x, s.z);
+        p.halfHeight = fl(capsule->halfHeight) * s.y;
+        p.offset = fl(capsule->offset) * s;
+        p.rotation = fl(capsule->rotation);
         parts.push_back(p);
     }
     if (auto* cylinder = m_registry.try_get<CylinderColliderComponent>(e)) {
         physics::ShapeDesc p;
         p.type = physics::ShapeType::Cylinder;
-        p.radius = cylinder->radius * std::max(s.x, s.z);
-        p.halfHeight = cylinder->halfHeight * s.y;
-        p.offset = cylinder->offset * s;
-        p.rotation = cylinder->rotation;
+        p.radius = fl(cylinder->radius) * std::max(s.x, s.z);
+        p.halfHeight = fl(cylinder->halfHeight) * s.y;
+        p.offset = fl(cylinder->offset) * s;
+        p.rotation = fl(cylinder->rotation);
         parts.push_back(p);
     }
     if (m_registry.any_of<ConvexHullColliderComponent, MeshColliderComponent>(e)) {
@@ -161,8 +172,8 @@ physics::BodyDesc Scene::bodyDescFor(entt::entity e) {
         p.type = triangles ? physics::ShapeType::Mesh : physics::ShapeType::ConvexHull;
         p.geometry = meshGeometry(mesh, s, triangles);
         if (hull) {
-            p.offset = hull->offset * s;
-            p.rotation = hull->rotation;
+            p.offset = fl(hull->offset) * s;
+            p.rotation = fl(hull->rotation);
         }
         if (p.geometry) {
             parts.push_back(p);
@@ -184,13 +195,13 @@ physics::BodyDesc Scene::bodyDescFor(entt::entity e) {
     }
     desc.type = rb.type;
     desc.position = t.position; // global: the backend decides how to get there
-    desc.rotation = t.rotation;
-    desc.mass = rb.mass;
-    desc.friction = rb.friction;
-    desc.restitution = rb.restitution;
-    desc.linearDamping = rb.linearDamping;
-    desc.angularDamping = rb.angularDamping;
-    desc.gravityFactor = rb.gravityFactor;
+    desc.rotation = fl(t.rotation);
+    desc.mass = fl(rb.mass);
+    desc.friction = fl(rb.friction);
+    desc.restitution = fl(rb.restitution);
+    desc.linearDamping = fl(rb.linearDamping);
+    desc.angularDamping = fl(rb.angularDamping);
+    desc.gravityFactor = fl(rb.gravityFactor);
     desc.isSensor = rb.isSensor;
     desc.layer = std::min(rb.layer, physics::kCollisionLayerCount - 1);
     desc.continuousCollision = rb.continuousCollision;
@@ -293,7 +304,7 @@ void Scene::syncBodies() {
         }
         if (rb.type == physics::BodyType::Static)
             if (const u64 key = poseKey(t); key != rb.appliedPose) {
-                m_physics->setTransform(rb.body, t.position, t.rotation);
+                m_physics->setTransform(rb.body, t.position, fl(t.rotation));
                 rb.appliedPose = key;
             }
     }
@@ -348,20 +359,20 @@ void Scene::createCharacter(entt::entity e) {
     auto& cc = m_registry.get<CharacterControllerComponent>(e);
     const auto& t = m_registry.get<TransformComponent>(e);
     physics::CharacterDesc d;
-    d.radius = std::max(cc.radius, 0.01f);
-    d.halfHeight = std::max(cc.height * 0.5f - d.radius, 0.0f);
-    d.position = t.position + cc.offset;
-    d.rotation = t.rotation;
-    d.maxSlopeAngle = glm::radians(cc.maxSlope);
-    d.stepHeight = cc.stepHeight;
-    d.stickToFloor = cc.stickToFloor;
-    d.mass = cc.mass;
-    d.maxPushForce = cc.maxPushForce;
-    d.gravityFactor = cc.gravityFactor;
+    d.radius = std::max(fl(cc.radius), 0.01f);
+    d.halfHeight = std::max(fl(cc.height) * 0.5f - d.radius, 0.0f);
+    d.position = t.position + steps(cc.offset);
+    d.rotation = fl(t.rotation);
+    d.maxSlopeAngle = glm::radians(fl(cc.maxSlope));
+    d.stepHeight = fl(cc.stepHeight);
+    d.stickToFloor = fl(cc.stickToFloor);
+    d.mass = fl(cc.mass);
+    d.maxPushForce = fl(cc.maxPushForce);
+    d.gravityFactor = fl(cc.gravityFactor);
     d.layer = std::min(cc.layer, physics::kCollisionLayerCount - 1);
     d.userData = toUserData(e);
     cc.character = m_physics->createCharacter(d);
-    m_physics->setCharacterVelocity(cc.character, cc.velocity);
+    m_physics->setCharacterVelocity(cc.character, fl(cc.velocity));
     cc.appliedKey = characterKey(cc);
     cc.appliedPose = positionKey(t.position);
 }
@@ -385,10 +396,10 @@ void Scene::syncCharacters() {
             continue;
         }
         if (positionKey(t.position) != cc.appliedPose) { // moved by code or the editor: a teleport
-            m_physics->setCharacterTransform(cc.character, t.position + cc.offset, t.rotation);
+            m_physics->setCharacterTransform(cc.character, t.position + steps(cc.offset), fl(t.rotation));
             cc.appliedPose = positionKey(t.position);
         }
-        m_physics->setCharacterVelocity(cc.character, cc.velocity);
+        m_physics->setCharacterVelocity(cc.character, fl(cc.velocity));
     }
 }
 
@@ -397,7 +408,7 @@ void Scene::readCharacters() {
     for (auto [e, cc, t] : m_registry.view<CharacterControllerComponent, TransformComponent>().each()) {
         if (!cc.character) continue;
         const physics::CharacterState s = m_physics->characterState(cc.character);
-        t.position = s.position - cc.offset;
+        t.position = s.position - steps(cc.offset);
         cc.appliedPose = positionKey(t.position);
         cc.velocity = s.velocity;
         cc.groundState = s.ground;
@@ -443,8 +454,8 @@ physics::JointMotor motorOf(const JointComponent& j) {
     physics::JointMotor m;
     m.mode = j.motorMode;
     // Hinges are edited in degrees, the physics works in radians.
-    m.target = j.type == physics::JointType::Hinge ? glm::radians(j.motorTarget) : j.motorTarget;
-    m.maxForce = j.motorMaxForce;
+    m.target = j.type == physics::JointType::Hinge ? glm::radians(fl(j.motorTarget)) : fl(j.motorTarget);
+    m.maxForce = fl(j.motorMaxForce);
     return m;
 }
 
@@ -476,25 +487,25 @@ void Scene::createJoint(entt::entity e) {
     d.type = jc.type;
     d.bodyA = rb->body;
     d.bodyB = other;
-    d.anchor = t.position + t.rotation * (jc.anchor * t.scale);
-    d.axis = t.rotation * jc.axis;
+    d.anchor = t.position + t.orientation() * (fl(jc.anchor) * t.scaleF());
+    d.axis = t.orientation() * fl(jc.axis);
     if (target.valid()) {
         const auto& tb = target.transform();
-        d.anchorB = tb.position + tb.rotation * (jc.connectedAnchor * tb.scale);
+        d.anchorB = tb.position + tb.orientation() * (fl(jc.connectedAnchor) * tb.scaleF());
     } else {
-        d.anchorB = t.position + jc.connectedAnchor;
+        d.anchorB = t.position + steps(jc.connectedAnchor);
     }
     const bool hinge = jc.type == physics::JointType::Hinge;
     d.limitsEnabled = jc.limitsEnabled;
-    d.limitMin = hinge ? glm::radians(jc.limitMin) : jc.limitMin;
-    d.limitMax = hinge ? glm::radians(jc.limitMax) : jc.limitMax;
-    d.minDistance = jc.minDistance;
-    d.maxDistance = jc.maxDistance;
-    d.springFrequency = jc.springFrequency;
-    d.springDamping = jc.springDamping;
+    d.limitMin = hinge ? glm::radians(fl(jc.limitMin)) : fl(jc.limitMin);
+    d.limitMax = hinge ? glm::radians(fl(jc.limitMax)) : fl(jc.limitMax);
+    d.minDistance = fl(jc.minDistance);
+    d.maxDistance = fl(jc.maxDistance);
+    d.springFrequency = fl(jc.springFrequency);
+    d.springDamping = fl(jc.springDamping);
     d.motor = motorOf(jc);
-    d.breakForce = jc.breakForce;
-    d.breakTorque = jc.breakTorque;
+    d.breakForce = fl(jc.breakForce);
+    d.breakTorque = fl(jc.breakTorque);
     d.userData = toUserData(e);
     jc.joint = m_physics->createJoint(d);
     jc.connectedBody = other;
@@ -544,7 +555,7 @@ void Scene::stepPhysics(Duration dt) {
     while (fixedTimeStep > Duration() && m_physicsAccumulator >= fixedTimeStep && steps < kMaxSteps) {
         for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each())
             if (rb.type == physics::BodyType::Kinematic && rb.body)
-                m_physics->moveKinematic(rb.body, t.position, t.rotation, fixedTimeStep);
+                m_physics->moveKinematic(rb.body, t.position, fl(t.rotation), fixedTimeStep);
         m_physics->step(fixedTimeStep);
         m_physicsAccumulator -= fixedTimeStep;
         ++steps;
@@ -620,23 +631,23 @@ physics::BodyId Scene::bodyOf(Entity e) {
     return rb->body;
 }
 
-void Scene::addForce(Entity e, const glm::vec3& force) {
-    if (auto b = bodyOf(e)) m_physics->addForce(b, force);
+void Scene::addForce(Entity e, const ForceVec& force) {
+    if (auto b = bodyOf(e)) m_physics->addForce(b, force.toGlm());
 }
-void Scene::addImpulse(Entity e, const glm::vec3& impulse) {
-    if (auto b = bodyOf(e)) m_physics->addImpulse(b, impulse);
+void Scene::addImpulse(Entity e, const ForceVec& impulse) {
+    if (auto b = bodyOf(e)) m_physics->addImpulse(b, impulse.toGlm());
 }
-void Scene::setLinearVelocity(Entity e, const glm::vec3& velocity) {
-    if (auto b = bodyOf(e)) m_physics->setLinearVelocity(b, velocity);
+void Scene::setLinearVelocity(Entity e, const SpeedVec& velocity) {
+    if (auto b = bodyOf(e)) m_physics->setLinearVelocity(b, velocity.toGlm());
 }
-glm::vec3 Scene::linearVelocity(Entity e) {
+SpeedVec Scene::linearVelocity(Entity e) {
     auto b = bodyOf(e);
-    return b ? m_physics->linearVelocity(b) : glm::vec3(0.0f);
+    return b ? SpeedVec(m_physics->linearVelocity(b)) : SpeedVec();
 }
 void Scene::syncTransformToPhysics(Entity e) {
     if (auto b = bodyOf(e)) {
         auto& t = e.transform();
-        m_physics->setTransform(b, t.position, t.rotation);
+        m_physics->setTransform(b, t.position, fl(t.rotation));
         m_physics->setLinearVelocity(b, glm::vec3(0.0f));
         m_physics->setAngularVelocity(b, glm::vec3(0.0f));
     }
@@ -663,7 +674,7 @@ u64 Scene::stateHash() {
             mix(&t->scale, sizeof(t->scale));
         }
         if (m_registry.all_of<RigidBodyComponent>(e)) {
-            const glm::vec3 v = linearVelocity({e, this});
+            const SpeedVec v = linearVelocity({e, this});
             mix(&v, sizeof(v));
         }
     }

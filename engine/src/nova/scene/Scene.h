@@ -110,13 +110,13 @@ public:
     Duration fixedTimeStep = Duration::perSecond(60);
 
     /// @brief Applies a force (N) to the entity's body during the next step. No-op without a body.
-    void addForce(Entity e, const glm::vec3& force);
+    void addForce(Entity e, const ForceVec& force);
     /// @brief Applies an instantaneous impulse (N·s) to the entity's body. No-op without a body.
-    void addImpulse(Entity e, const glm::vec3& impulse);
+    void addImpulse(Entity e, const ForceVec& impulse);
     /// @brief Sets the linear velocity (m/s) of the entity's body. No-op without a body.
-    void setLinearVelocity(Entity e, const glm::vec3& velocity);
+    void setLinearVelocity(Entity e, const SpeedVec& velocity);
     /// @brief Linear velocity (m/s) of the entity's body; zero without a body.
-    glm::vec3 linearVelocity(Entity e);
+    SpeedVec linearVelocity(Entity e);
     /// @brief Teleports the body to the entity's current transform and zeroes its velocity
     ///        (e.g. after moving it with an editor gizmo).
     void syncTransformToPhysics(Entity e);

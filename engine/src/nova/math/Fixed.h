@@ -24,6 +24,11 @@
 ///
 /// Overflow of a signed value is undefined behavior in C++: values must stay in range (world
 /// positions that wrap around do their wrapping arithmetic in unsigned integers, see GlobalPosition).
+///
+/// Conversions: a value is quantized where it enters (`Scalar(0.5)`, `toFixed<T>(v)`, and vectors
+/// and quaternions straight from glm: `scale = glm::vec3(2.0f)`, `rotation = glm::angleAxis(...)`);
+/// it leaves as float only explicitly (`toFloat(v)`, `v.toGlm()`), at the GPU, ImGui and the
+/// physics engine.
 
 #include "nova/core/Base.h"
 
@@ -33,12 +38,78 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
+#include <cstdint>
+#include <type_traits>
 
 namespace nova {
 
-/// @brief A 32-bit fixed-point number with `F` fraction bits.
+/// @brief The nearest raw value with `fraction` bits to `v` (rounded half away from zero;
+///        saturates outside the range, NaN gives 0).
+inline i32 toRaw(f64 v, unsigned fraction) {
+    const f64 r = std::round(v * static_cast<f64>(1ll << fraction));
+    if (r != r) return 0;
+    if (r <= -2147483648.0) return INT32_MIN;
+    if (r >= 2147483647.0) return INT32_MAX;
+    return static_cast<i32>(r);
+}
+/// @brief Exact value of a raw number with `fraction` bits.
+constexpr f64 fromRawValue(i32 raw, unsigned fraction) { return static_cast<f64>(raw) / static_cast<f64>(1ll << fraction); }
+
+/// @brief A 32-bit fixed-point number with `F` fraction bits: an `fpm::fixed` (all of fpm works on
+///        it: `fpm::sin`, `fpm::sqrt`...) that is zero by default and takes plain numbers.
+///
+/// A number becomes fixed point implicitly (`mass = 2.5f`, `limit = -45`), rounded to the nearest
+/// step; arithmetic and comparisons with numbers convert them the same way, so `mass * 2` and
+/// `friction > 0.5f` work and stay exact integer math. Formats never mix implicitly (Length +
+/// Scalar does not compile: use mul<R>(), convert<R>()); back to float only explicitly (toFloat()).
 template <unsigned F>
-using Fixed = fpm::fixed<i32, i64, F>;
+class Fixed : public fpm::fixed<i32, i64, F> {
+public:
+    using Base = fpm::fixed<i32, i64, F>; ///< The fpm type.
+
+    /// @brief Zero.
+    constexpr Fixed() noexcept : Base(Base::from_raw_value(0)) {}
+    /// @brief From the fpm type (results of fpm functions and operators).
+    constexpr Fixed(Base v) noexcept : Base(v) {}
+    /// @brief The nearest value to a number (saturates outside the range).
+    template <typename T, std::enable_if_t<std::is_arithmetic_v<T>, int> = 0>
+    Fixed(T v) noexcept : Base(Base::from_raw_value(toRaw(static_cast<f64>(v), F))) {}
+
+    /// @brief A value from its raw integer.
+    static constexpr Fixed from_raw_value(i32 raw) noexcept { return Fixed(Base::from_raw_value(raw)); }
+
+    friend constexpr Fixed operator-(Fixed a) noexcept { return Fixed(-Base(a)); }
+    friend constexpr Fixed operator+(Fixed a, Fixed b) noexcept { return Fixed(Base(a) + Base(b)); }
+    friend constexpr Fixed operator-(Fixed a, Fixed b) noexcept { return Fixed(Base(a) - Base(b)); }
+    friend constexpr Fixed operator*(Fixed a, Fixed b) noexcept { return Fixed(Base(a) * Base(b)); }
+    friend constexpr Fixed operator/(Fixed a, Fixed b) noexcept { return Fixed(Base(a) / Base(b)); }
+    friend constexpr bool operator==(Fixed a, Fixed b) noexcept { return a.raw_value() == b.raw_value(); }
+    friend constexpr bool operator<(Fixed a, Fixed b) noexcept { return a.raw_value() < b.raw_value(); }
+    friend constexpr bool operator>(Fixed a, Fixed b) noexcept { return a.raw_value() > b.raw_value(); }
+    friend constexpr bool operator<=(Fixed a, Fixed b) noexcept { return a.raw_value() <= b.raw_value(); }
+    friend constexpr bool operator>=(Fixed a, Fixed b) noexcept { return a.raw_value() >= b.raw_value(); }
+
+#define NOVA_FIXED_MIXED(op, R)                                                                              \
+    template <typename T, std::enable_if_t<std::is_arithmetic_v<T>, int> = 0>                                \
+    friend R operator op(Fixed a, T b) noexcept { return a op Fixed(b); }                                    \
+    template <typename T, std::enable_if_t<std::is_arithmetic_v<T>, int> = 0>                                \
+    friend R operator op(T a, Fixed b) noexcept { return Fixed(a) op b; }
+    NOVA_FIXED_MIXED(+, Fixed)
+    NOVA_FIXED_MIXED(-, Fixed)
+    NOVA_FIXED_MIXED(*, Fixed)
+    NOVA_FIXED_MIXED(/, Fixed)
+    NOVA_FIXED_MIXED(==, bool)
+    NOVA_FIXED_MIXED(<, bool)
+    NOVA_FIXED_MIXED(>, bool)
+    NOVA_FIXED_MIXED(<=, bool)
+    NOVA_FIXED_MIXED(>=, bool)
+#undef NOVA_FIXED_MIXED
+
+    Fixed& operator+=(Fixed o) noexcept { return *this = *this + o; }
+    Fixed& operator-=(Fixed o) noexcept { return *this = *this - o; }
+    Fixed& operator*=(Fixed o) noexcept { return *this = *this * o; }
+    Fixed& operator/=(Fixed o) noexcept { return *this = *this / o; }
+};
 
 using Fx13_18 = Fixed<18>; ///< Q13.18.
 using Fx14_17 = Fixed<17>; ///< Q14.17.
@@ -55,11 +126,15 @@ using Angle = Fx3_28;     ///< Radians, |a| < 8.
 using Unit = Fx1_30;      ///< Quaternion components and unit directions, |u| < 2.
 using Force = Fx23_8;     ///< N, N·s or N·m.
 
-/// @brief Fraction bits of a Fixed type.
+/// @brief Fraction bits of a Fixed type (or of its fpm base).
 template <typename T>
 struct FixedTraits;
 template <unsigned F>
 struct FixedTraits<Fixed<F>> {
+    static constexpr unsigned fraction = F; ///< Fraction bits.
+};
+template <unsigned F>
+struct FixedTraits<fpm::fixed<i32, i64, F>> {
     static constexpr unsigned fraction = F; ///< Fraction bits.
 };
 /// @brief Fraction bits of a Fixed type.
@@ -72,10 +147,10 @@ constexpr T fromRaw(i32 raw) { return T::from_raw_value(raw); }
 /// @brief Zero of a Fixed type (fpm leaves default-constructed values uninitialized).
 template <typename T>
 constexpr T zero() { return T::from_raw_value(0); }
-/// @brief The nearest value of `T` to `v` (rounded, not truncated).
+/// @brief The nearest value of `T` to `v` (rounded, not truncated; saturates outside the range).
 template <typename T>
 inline T toFixed(f64 v) {
-    return T::from_raw_value(static_cast<i32>(std::llround(v * static_cast<f64>(1ll << fractionBits<T>))));
+    return T::from_raw_value(toRaw(v, fractionBits<T>));
 }
 /// @brief Exact value as a double.
 template <typename T>
@@ -146,12 +221,22 @@ struct FixedVec3 {
 
     constexpr FixedVec3() = default;
     constexpr FixedVec3(T x_, T y_, T z_) : x(x_), y(y_), z(z_) {}
+    /// @brief The nearest vector to (x, y, z), e.g. `offset = {0, 0.9, 0}`.
+    FixedVec3(f64 x_, f64 y_, f64 z_) : x(toFixed<T>(x_)), y(toFixed<T>(y_)), z(toFixed<T>(z_)) {}
+    /// @brief The nearest vector to `v` (implicit: this is where a float vector is quantized).
+    FixedVec3(const glm::vec3& v) : FixedVec3(f64(v.x), f64(v.y), f64(v.z)) {}
     /// @brief The nearest vector to `v`.
-    static FixedVec3 fromGlm(const glm::dvec3& v) { return {toFixed<T>(v.x), toFixed<T>(v.y), toFixed<T>(v.z)}; }
+    FixedVec3(const glm::dvec3& v) : FixedVec3(v.x, v.y, v.z) {}
     /// @brief The nearest vector to `v`.
-    static FixedVec3 fromGlm(const glm::vec3& v) { return fromGlm(glm::dvec3(v)); }
+    static FixedVec3 fromGlm(const glm::dvec3& v) { return FixedVec3(v); }
+    /// @brief The nearest vector to `v`.
+    static FixedVec3 fromGlm(const glm::vec3& v) { return FixedVec3(v); }
+    /// @brief The same value in every component.
+    static FixedVec3 splat(T v) { return {v, v, v}; }
     /// @brief As floats (GPU, physics engine).
     glm::vec3 toGlm() const { return {toFloat(x), toFloat(y), toFloat(z)}; }
+    /// @brief As floats.
+    explicit operator glm::vec3() const { return toGlm(); }
     /// @brief Exact, as doubles.
     glm::dvec3 toDouble() const { return {nova::toDouble(x), nova::toDouble(y), nova::toDouble(z)}; }
     /// @brief The same vector in another format.
@@ -231,19 +316,32 @@ struct FixedQuat {
     Unit w = fromRaw<Unit>(1 << 30), x = zero<Unit>(), y = zero<Unit>(), z = zero<Unit>();
 
     /// @brief The identity rotation.
+    constexpr FixedQuat() = default;
+    /// @brief The nearest unit quaternion to `q` (implicit: this is where a float rotation is quantized).
+    FixedQuat(const glm::quat& q) : FixedQuat(glm::dquat(q)) {}
+    /// @brief The nearest unit quaternion to `q`.
+    FixedQuat(const glm::dquat& q) {
+        const f64 len = glm::length(q);
+        if (!(len > 1e-12)) return; // identity
+        const glm::dquat n = q / len;
+        w = toFixed<Unit>(n.w);
+        x = toFixed<Unit>(n.x);
+        y = toFixed<Unit>(n.y);
+        z = toFixed<Unit>(n.z);
+    }
+
+    /// @brief The identity rotation.
     static constexpr FixedQuat identity() { return {}; }
     /// @brief The nearest quaternion to `q` (normalized).
-    static FixedQuat fromGlm(const glm::quat& q) {
-        const glm::dquat n = glm::normalize(glm::dquat(q));
-        FixedQuat r;
-        r.w = toFixed<Unit>(n.w);
-        r.x = toFixed<Unit>(n.x);
-        r.y = toFixed<Unit>(n.y);
-        r.z = toFixed<Unit>(n.z);
-        return r;
-    }
+    static FixedQuat fromGlm(const glm::quat& q) { return FixedQuat(q); }
     /// @brief As floats (GPU, physics engine).
     glm::quat toGlm() const { return glm::quat(toFloat(w), toFloat(x), toFloat(y), toFloat(z)); }
+    /// @brief Exact, as doubles.
+    glm::dquat toDouble() const {
+        return glm::dquat(nova::toDouble(w), nova::toDouble(x), nova::toDouble(y), nova::toDouble(z));
+    }
+    /// @brief As floats.
+    explicit operator glm::quat() const { return toGlm(); }
     /// @brief Rotation of `angle` around unit `axis` (deterministic sin/cos of fpm).
     static FixedQuat fromAxisAngle(const UnitVec& axis, Angle angle) {
         const Angle half = Angle::from_raw_value(angle.raw_value() / 2);

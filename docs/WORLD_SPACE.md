@@ -1,11 +1,11 @@
 # Espaço do mundo: posições globais em inteiros
 
-> **Estado:** o mundo já é o **toro de 16 km em Q13.18** (etapas 1–4 da seção
+> **Estado:** o mundo já é o **toro de 16 km em Q13.18** (etapas 1–5 da seção
 > [Próxima reformulação](#próxima-reformulação-ponto-fixo-e-mundo-de-16-km-planejado)): `math/Fixed.h`
 > (lib `fpm`), `GlobalPosition`/`GlobalOffset` em `int32` com a volta pelo estouro, `WorldSpace` só com
 > constantes, sem `Integer.h`. As seções de "Modelo" a "Fases" descrevem o modelo anterior (`int64`,
 > unidade e bordas configuráveis), mantidas como histórico. A física é o Jolt direto, pelo `TorusWorld`
-> (sem regiões, dormência nem paredes).
+> (sem regiões, dormência nem paredes), e o estado da simulação é todo em ponto fixo.
 
 Objetivo: mundos grandes sem perda de precisão, com escala ajustável e bordas que dão a volta ou
 são barreiras.
@@ -423,8 +423,21 @@ Para um mundo contínuo maior que 16 km, sem tela de carregamento.
 4. ✅ Física direta no Jolt, saindo o `FloatingOriginWorld`: `physics/backend/TorusWorld` (um mundo Jolt,
    janela que segue o foco, volta mais próxima, juntas ao mundo recolocadas), contrato com
    `setFocus(GlobalPosition)` e `origin()`, sem regiões, dormência nem `onWorldBoundary`.
-5. Atributos de simulação em ponto fixo, com reflexão, serialização, widgets e as APIs de física e de
-   scripts.
+5. ✅ Atributos de simulação em ponto fixo, com reflexão, serialização, widgets e as APIs de física e de
+   scripts:
+   - `Fixed<F>` virou uma classe fina sobre `fpm::fixed` (zero por padrão, números entram implicitamente
+     e arredondados, contas e comparações com números, formatos que não se misturam, `float` só
+     explícito);
+   - transform (rotação `FixedQuat`, escala `ScalarVec`), componentes de física, juntas, personagem e
+     `PhysicsSettings::gravity`; `Scene::addForce`/`addImpulse` em `ForceVec`, `setLinearVelocity`/
+     `linearVelocity` em `SpeedVec`; `rotate`/`rotateLocal` em ponto fixo (seno e cosseno do `fpm`);
+   - reflexão `FieldKind::Fixed`/`FixedVec3`/`FixedQuat` com `fracBits` e acesso ao valor bruto;
+     arquivos com o decimal mais curto que volta aos mesmos bits; widgets que só gravam o que foi
+     editado;
+   - `Script::onUpdate(Duration)`, com `onUpdate(float)` como atalho;
+   - a conversão para `float` fica no `ScenePhysics.cpp` (o contrato `physics::PhysicsWorld` continua
+     em `float` fora das posições: é a fronteira com o motor), no renderer e no ImGui. As consultas
+     (raycast, sweep, overlap) recebem direções e distâncias em `float`: não são estado.
 6. Jolt determinístico: overlay port do vcpkg com `CROSS_PLATFORM_DETERMINISTIC=ON`.
 7. Modo grande (`NOVA_LARGE_WORLDS`): blocos, janela, histerese, eventos e um preset de build próprio.
    Os testes rodam nos dois modos.

@@ -96,7 +96,7 @@ void reflection() {
     // Engine types are registered on first access.
     const reflect::TypeInfo* rb = reflect::types().find("RigidBody");
     CHECK(rb && rb->isComponent && rb->field("body")->attrs.transient);
-    CHECK(reflect::types().find("Transform")->field("rotation")->kind == reflect::FieldKind::Quat); // edited as Euler degrees
+    CHECK(reflect::types().find("Transform")->field("rotation")->kind == reflect::FieldKind::FixedQuat); // edited as Euler degrees
 
     // Script reflection.
     const reflect::TypeInfo* patrol = reflect::types().find<Patrol>();
@@ -147,7 +147,7 @@ void roundTrip() {
     CHECK(h.valid() && h.name() == "Hero");
     if (!h.valid()) return;
     CHECK(h.transform().position == glm::vec3(1, 2, 3));
-    CHECK(h.transform().rotation == e.transform().rotation); // quaternion stored exactly
+    CHECK(h.transform().rotation == e.transform().rotation); // Q1.30 quaternion stored bit for bit
     CHECK(h.get<MeshComponent>().mesh.id == 4 && !h.get<MeshComponent>().castShadows);
     CHECK(h.get<MeshComponent>().material.baseColor == glm::vec4(0.1f, 0.2f, 0.3f, 0.4f));
     CHECK(h.get<MeshComponent>().material.metallic == 0.7f);
@@ -266,6 +266,82 @@ void floatsShortAndExact() {
     CHECK(json.find("0.5500000") == std::string::npos);
 }
 
+// Simulation attributes are fixed point: reflected with their format, written as the shortest
+// decimal that reads back to the same bits, edited state survives bit for bit.
+void fixedPointFields() {
+    const reflect::TypeInfo* rb = reflect::types().find("RigidBody");
+    CHECK(rb->field("mass")->kind == reflect::FieldKind::Fixed && rb->field("mass")->fracBits == 16);
+    const reflect::TypeInfo* box = reflect::types().find("BoxCollider");
+    CHECK(box->field("halfExtents")->kind == reflect::FieldKind::FixedVec3 && box->field("halfExtents")->fracBits == 18);
+    CHECK(box->field("rotation")->kind == reflect::FieldKind::FixedQuat);
+    CHECK(reflect::types().find("Transform")->field("scale")->kind == reflect::FieldKind::FixedVec3);
+    CHECK(reflect::types().find("Joint")->field("breakForce")->fracBits == 8);
+    CHECK(reflect::types().find("CharacterController")->field("velocity")->fracBits == 16);
+
+    // Generic access through the reflection: exact values, nearest on write.
+    RigidBodyComponent body;
+    const reflect::FieldInfo& mass = *rb->field("mass");
+    reflect::setFixedValue(mass, mass.in(&body), 12.3);
+    CHECK(body.mass == Scalar(12.3) && reflect::fixedValue(mass, mass.in(&body)) == toDouble(body.mass));
+
+    Scene a;
+    Entity e = a.createEntity("Fx");
+    auto& r = e.add<RigidBodyComponent>();
+    r.friction = 0.05f;  // raw 3277: 0.0500030517578125
+    r.mass = 1.0 / 3.0;
+    auto& b = e.add<BoxColliderComponent>();
+    b.halfExtents = {0.1, 2.75, 1e-5};
+    b.rotation = glm::angleAxis(0.7f, glm::normalize(glm::vec3(1, 2, 3)));
+    e.transform().scale = {1.5, 0.2, 3};
+    e.transform().rotate(0.4f, {0, 1, 0});
+    PhysicsSettings ps;
+    ps.gravity = {0.0, -1.62, 0.0};
+    a.setPhysicsSettings(ps);
+    const std::string json = serializeScene(a);
+    CHECK(json.find("\"friction\": 0.05") != std::string::npos); // short, not 0.0500030517578125
+    CHECK(json.find("0.050003") == std::string::npos);
+    Scene c;
+    CHECK(deserializeScene(c, json));
+    Entity h = c.findEntity("Fx");
+    CHECK(h.get<RigidBodyComponent>().friction == r.friction && h.get<RigidBodyComponent>().mass == r.mass);
+    CHECK(h.get<BoxColliderComponent>().halfExtents == b.halfExtents);
+    CHECK(h.get<BoxColliderComponent>().rotation == b.rotation);
+    CHECK(h.transform().scale == e.transform().scale && h.transform().rotation == e.transform().rotation);
+    CHECK(c.physicsSettings().gravity == ps.gravity);
+    CHECK(serializeScene(c) == json);
+
+    // Every raw value of a format survives a file (a sample across the whole range).
+    u32 seed = 12345;
+    for (int i = 0; i < 2000; ++i) {
+        seed = seed * 1664525u + 1013904223u;
+        r.mass = Scalar::from_raw_value(static_cast<i32>(seed));
+        b.offset.x = Length::from_raw_value(static_cast<i32>(seed * 2654435761u));
+        Scene d;
+        CHECK(deserializeScene(d, serializeScene(a)));
+        CHECK(d.findEntity("Fx").get<RigidBodyComponent>().mass.raw_value() == r.mass.raw_value());
+        CHECK(d.findEntity("Fx").get<BoxColliderComponent>().offset.x.raw_value() == b.offset.x.raw_value());
+    }
+}
+
+// Scripts get the exact frame time (onUpdate(Duration)); onUpdate(float) stays as the shortcut.
+void scriptTime() {
+    struct Exact : Script {
+        Duration total;
+        void onUpdate(Duration dt) override { total += dt; }
+    };
+    struct Seconds : Script {
+        f32 total = 0.0f;
+        void onUpdate(f32 dt) override { total += dt; }
+    };
+    Scene s;
+    Entity e = s.createEntity("S");
+    auto& exact = e.addScript<Exact>();
+    auto& seconds = e.addScript<Seconds>();
+    for (int i = 0; i < 600; ++i) s.update(Duration::perSecond(60));
+    CHECK(exact.total == Duration::fromSeconds(10)); // 600 × 1/60 s: exact in flicks
+    CHECK(std::abs(seconds.total - 10.0f) < 1e-3f);
+}
+
 void meshRaycast() {
     const MeshData cube = MeshData::cube(); // unit cube centered at origin
     // Scaled ×2 and moved to x = 10: faces at x = 9 and 11.
@@ -362,6 +438,8 @@ int main() {
         {"files", files},
         {"duplication", duplication},
         {"floats are short and exact", floatsShortAndExact},
+        {"fixed-point fields: reflection, short decimals, exact round trips", fixedPointFields},
+        {"scripts: exact frame time", scriptTime},
         {"mesh raycast", meshRaycast},
         {"debug draw", debugDraw},
         {"entity restore in place", entityRestoreInPlace},

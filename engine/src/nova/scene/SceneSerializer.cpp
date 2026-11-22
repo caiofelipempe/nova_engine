@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -51,6 +52,37 @@ Json writeOffset(const GlobalOffset& o) {
     return Json::array({m.x, m.y, m.z});
 }
 
+// A fixed-point value as the shortest decimal that reads back to the same raw integer ("0.05",
+// not "0.0500030517578125"): files stay readable and round trips are exact.
+Json writeFixed(i32 raw, u32 fraction) {
+    const f64 exact = fromRawValue(raw, fraction);
+    char buf[40];
+    for (int digits = 1; digits <= 17; ++digits) {
+        std::snprintf(buf, sizeof(buf), "%.*g", digits, exact);
+        const f64 v = std::strtod(buf, nullptr);
+        if (toRaw(v, fraction) == raw) return v;
+    }
+    return exact;
+}
+
+Json writeFixedVec(const reflect::FieldInfo& f, const void* p) {
+    Json a = Json::array();
+    for (int i = 0; i < 3; ++i) a.push_back(writeFixed(reflect::fixedRaw(f, p, i), f.fracBits));
+    return a;
+}
+
+Json writeFixedQuat(const FixedQuat& q) {
+    constexpr u32 kBits = fractionBits<Unit>;
+    return Json::array({writeFixed(q.x.raw_value(), kBits), writeFixed(q.y.raw_value(), kBits),
+                        writeFixed(q.z.raw_value(), kBits), writeFixed(q.w.raw_value(), kBits)});
+}
+
+Json writeSpeedVec(const SpeedVec& v) {
+    constexpr u32 kBits = fractionBits<Speed>;
+    return Json::array({writeFixed(v.x.raw_value(), kBits), writeFixed(v.y.raw_value(), kBits),
+                        writeFixed(v.z.raw_value(), kBits)});
+}
+
 // The world block: informative (the world is always the 16 km torus of WorldSpace).
 Json writeWorld() { return Json{{"step", WorldSpace::kUnit}, {"lap", WorldSpace::kLap}}; }
 
@@ -63,7 +95,7 @@ Json writeVec(const f32* v, int n) {
 // Physics settings: gravity, named layers and (when not the default) the collision matrix.
 Json writePhysics(const PhysicsSettings& s) {
     Json j = Json::object();
-    j["gravity"] = writeVec(&s.gravity.x, 3);
+    j["gravity"] = writeSpeedVec(s.gravity);
     Json names = Json::object();
     for (u32 i = 0; i < physics::kCollisionLayerCount; ++i)
         if (!s.layerNames[i].empty()) names[std::to_string(i)] = s.layerNames[i];
@@ -128,6 +160,9 @@ Json writeField(const reflect::FieldInfo& f, void* p, const SerializeOptions& op
             return sh.id;
         }
         case K::Entity: return static_cast<EntityRef*>(p)->uuid;
+        case K::Fixed: return writeFixed(reflect::fixedRaw(f, p), f.fracBits);
+        case K::FixedVec3: return writeFixedVec(f, p);
+        case K::FixedQuat: return writeFixedQuat(*static_cast<FixedQuat*>(p));
         case K::Struct: {
             const reflect::TypeInfo* t = f.nestedType();
             if (!t) return nullptr; // unregistered struct
@@ -206,10 +241,45 @@ void readVec(f32* out, const Json& j) {
         if (j[i].is_number()) out[i] = j[i].get<f32>();
 }
 
+// Numbers → the nearest fixed-point values (exact for what writeFixed wrote).
+void readFixedVec(const reflect::FieldInfo& f, void* p, const Json& j) {
+    if (!j.is_array()) return;
+    for (int i = 0; i < 3 && i < static_cast<int>(j.size()); ++i)
+        if (j[i].is_number()) reflect::setFixedValue(f, p, j[i].get<f64>(), i);
+}
+
+void readSpeedVec(SpeedVec& v, const Json& j) {
+    if (!j.is_array()) return;
+    for (int i = 0; i < 3 && i < static_cast<int>(j.size()); ++i)
+        if (j[i].is_number()) v[i] = toFixed<Speed>(j[i].get<f64>());
+}
+
+// [x, y, z, w]: kept bit for bit when already unit (what writeFixedQuat wrote), normalized
+// otherwise; older files with 3 numbers hold Euler radians (glm::quat(vec3) convention, ZYX).
+void readFixedQuat(FixedQuat& q, const Json& j) {
+    if (!j.is_array()) return;
+    if (j.size() == 4) {
+        f64 v[4] = {0, 0, 0, 1};
+        for (int i = 0; i < 4; ++i)
+            if (j[i].is_number()) v[i] = j[i].get<f64>();
+        FixedQuat r;
+        r.x = toFixed<Unit>(v[0]);
+        r.y = toFixed<Unit>(v[1]);
+        r.z = toFixed<Unit>(v[2]);
+        r.w = toFixed<Unit>(v[3]);
+        const f64 len2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + v[3] * v[3];
+        q = std::abs(len2 - 1.0) < 1e-6 ? r : FixedQuat(glm::dquat(v[3], v[0], v[1], v[2]));
+    } else if (j.size() == 3) {
+        glm::vec3 e(0.0f);
+        readVec<3>(&e.x, j);
+        q = quatFromEuler(e, EulerOrder::ZYX);
+    }
+}
+
 PhysicsSettings readPhysics(const Json& j) {
     PhysicsSettings s;
     if (!j.is_object()) return s;
-    if (j.contains("gravity")) readVec<3>(&s.gravity.x, j["gravity"]);
+    if (j.contains("gravity")) readSpeedVec(s.gravity, j["gravity"]);
     if (j.contains("layerNames") && j["layerNames"].is_object())
         for (auto it = j["layerNames"].begin(); it != j["layerNames"].end(); ++it) {
             const int i = std::atoi(it.key().c_str());
@@ -297,6 +367,9 @@ void readField(const reflect::FieldInfo& f, void* p, const Json& j, const Serial
             if (j.is_number_unsigned() || j.is_number_integer()) static_cast<EntityRef*>(p)->uuid = j.get<u64>();
             else if (j.is_null()) *static_cast<EntityRef*>(p) = {};
             break;
+        case K::Fixed: if (j.is_number()) reflect::setFixedValue(f, p, j.get<f64>()); break;
+        case K::FixedVec3: readFixedVec(f, p, j); break;
+        case K::FixedQuat: readFixedQuat(*static_cast<FixedQuat*>(p), j); break;
         case K::Struct:
             if (const reflect::TypeInfo* t = f.nestedType(); t && j.is_object()) readObject(*t, p, j, opt);
             break;

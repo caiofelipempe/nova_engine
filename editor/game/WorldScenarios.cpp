@@ -30,7 +30,7 @@ void Mover::onUpdate(float dt) {
         direction = {std::cos(angle), 0.0f, std::sin(angle)};
     }
     const glm::vec3 d = glm::normalize(direction);
-    const glm::vec3 v = scene().linearVelocity(entity());
+    const glm::vec3 v = scene().linearVelocity(entity()).toGlm();
     const float along = glm::dot(v, d);
     if (along < speed) scene().setLinearVelocity(entity(), v + d * (speed - along)); // keep its vertical motion
 }

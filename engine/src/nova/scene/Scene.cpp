@@ -101,7 +101,7 @@ void Scene::update(Duration frame) {
                 s.m_created = true;
                 s.onCreate();
             }
-            s.onUpdate(dt);
+            s.onUpdate(frame);
             if (!m_registry.valid(e)) break;
         }
     }

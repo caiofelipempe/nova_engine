@@ -3,6 +3,7 @@
 /// @file
 /// @brief Native C++ gameplay scripts.
 
+#include "nova/math/Time.h"
 #include "nova/scene/Entity.h"
 
 #include <vector>
@@ -36,8 +37,10 @@ public:
     virtual ~Script() = default;
     /// @brief Called once, on the first Scene::update() after the script was added.
     virtual void onCreate() {}
-    /// @brief Called every Scene::update(), before built-in systems and physics.
-    /// @param dt Seconds since the previous update.
+    /// @brief Called every Scene::update(), before built-in systems and physics, with the exact
+    ///        time since the previous update. By default it calls onUpdate(f32).
+    virtual void onUpdate(Duration dt) { onUpdate(dt.secondsF()); }
+    /// @brief Shortcut of onUpdate(Duration): seconds since the previous update, as a float.
     virtual void onUpdate(f32 /*dt*/) {}
     /// @brief Called when the entity is destroyed or the scene is cleared (only if onCreate ran).
     virtual void onDestroy() {}

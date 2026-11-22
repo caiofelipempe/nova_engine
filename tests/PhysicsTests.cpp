@@ -494,7 +494,7 @@ void rebase() {
     // floats are 0.5 mm apart: the shift itself rounds by up to half of that.
     CHECK_NEAR(moved, 3.0 / 60.0, 5e-4);
     CHECK(f.ground.transform().position == groundBefore); // static: exactly where it was
-    CHECK_NEAR(f.scene.linearVelocity(f.ball).x, 3.0f, 1e-4f);
+    CHECK_NEAR(f.scene.linearVelocity(f.ball).toGlm().x, 3.0f, 1e-4f);
 
     // Far from the focus, precision drops (a 5 cm step rounds to 102 float steps of 0.49 mm)...
     GlobalPosition mark = f.ball.transform().position;
@@ -812,7 +812,7 @@ void nativeIntegerBackend() {
     for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
     // The scene's gravity (−9.81, not the backend's own −10) applies; fell g/2 · t² · (1 + 1/60)
     // (semi-implicit Euler), written back exactly from the backend.
-    CHECK(raw->g == glm::vec3(0.0f, -9.81f, 0.0f));
+    CHECK(raw->g == SpeedVec(0.0, -9.81, 0.0).toGlm()); // the Q15.16 gravity, as the engine's float
     const f64 fallen = (ball.transform().position - base).toMeters().y;
     CHECK_NEAR(fallen, -9.81 / 2.0 * (61.0 / 60.0), 1e-3);
     CHECK(ball.transform().position == raw->bodies[0].desc.position);

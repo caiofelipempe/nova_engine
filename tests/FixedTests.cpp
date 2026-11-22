@@ -6,6 +6,7 @@
 #include <functional>
 #include <limits>
 #include <random>
+#include <type_traits>
 #include <vector>
 
 using namespace nova;
@@ -179,6 +180,42 @@ void determinism() {
     CHECK(a.y.raw_value() == py);
 }
 
+// The Fixed type itself: zero by default, numbers in, floats only out, formats kept apart.
+void numbers() {
+    Scalar s;
+    CHECK(s.raw_value() == 0);                                // fpm leaves it uninitialized; Fixed does not
+    s = 2.5f;                                                 // a number becomes fixed point implicitly
+    CHECK(s.raw_value() == 5 << 15);
+    CHECK(s == 2.5 && s > 2 && s < 2.6f && 2 < s && s >= 2.5f && s <= 2.5);
+    CHECK(s * 2 == 5 && s + 0.5f == 3 && s - 1 == 1.5 && s / 2 == 1.25 && -s == -2.5);
+    s += 0.5f;
+    s *= 2;
+    CHECK(s == 6);
+    const Length l = -45;                                     // integers too
+    CHECK(toDouble(l) == -45.0);
+    CHECK(Scalar(1e9).raw_value() == INT32_MAX && Scalar(-1e9).raw_value() == INT32_MIN); // saturates
+    CHECK(Scalar(std::nan("")).raw_value() == 0);
+    // fpm functions still work on it, and their results come back as Fixed.
+    const Scalar r = fpm::sqrt(Scalar(9));
+    CHECK(std::abs(toDouble(r) - 3.0) < 1e-4);
+    // Formats never mix implicitly; floats only leave explicitly.
+    static_assert(!std::is_convertible_v<Scalar, Length>);
+    static_assert(!std::is_convertible_v<Length, Scalar>);
+    static_assert(!std::is_convertible_v<Scalar, f32>);
+    static_assert(std::is_convertible_v<f32, Scalar>);
+    static_assert(sizeof(Length) == 4 && sizeof(LengthVec) == 12 && sizeof(FixedQuat) == 16);
+    CHECK(static_cast<f32>(Scalar(0.5)) == 0.5f && toFloat(Scalar(0.5)) == 0.5f);
+    // Vectors and quaternions are quantized from glm where they are assigned.
+    LengthVec v = glm::vec3(1.0f, 2.0f, 3.0f);
+    CHECK(v == LengthVec(1.0, 2.0, 3.0) && v.toGlm() == glm::vec3(1, 2, 3));
+    v = {0, 0.5, -1};
+    CHECK(v.y.raw_value() == 1 << 17 && toDouble(v.z) == -1.0);
+    const FixedQuat q = glm::angleAxis(1.0f, glm::vec3(0, 1, 0));
+    CHECK(std::abs(glm::length(q.toDouble()) - 1.0) < 1e-8);
+    const FixedQuat unnormalized = glm::quat(2, 0, 0, 0);
+    CHECK(unnormalized == FixedQuat::identity());
+}
+
 } // namespace
 
 int main() {
@@ -190,6 +227,7 @@ int main() {
         {"vectors: torus diagonals, lengths, units, dot, cross", vectors},
         {"quaternions: rotation, composition, renormalization", quaternions},
         {"determinism: integer-only results", determinism},
+        {"the Fixed type: numbers in, floats out, formats apart", numbers},
     };
     for (auto& [name, fn] : tests) {
         const int before = g_failures;

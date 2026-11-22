@@ -274,10 +274,10 @@ void runtimeProperties() {
     // Gravity off mid-flight: the fall goes on at the speed it had.
     ball.get<RigidBodyComponent>().gravityFactor = 0.0f;
     run(scene, 1);
-    const f32 vy = scene.linearVelocity(ball).y;
+    const f32 vy = scene.linearVelocity(ball).toGlm().y;
     run(scene, 30);
     CHECK(vy < -4.0f);
-    CHECK_NEAR(scene.linearVelocity(ball).y, vy, 1e-3f);
+    CHECK_NEAR(scene.linearVelocity(ball).toGlm().y, vy, 1e-3f);
 
     // Friction on mid-slide: the crate stops.
     Entity crate = scene.createEntity("Crate");
@@ -289,11 +289,11 @@ void runtimeProperties() {
     run(scene, 2);
     scene.setLinearVelocity(crate, {4, 0, 0});
     run(scene, 30);
-    CHECK_NEAR(scene.linearVelocity(crate).x, 4.0f, 0.05f); // ice
+    CHECK_NEAR(scene.linearVelocity(crate).toGlm().x, 4.0f, 0.05f); // ice
     crb.friction = 1.0f;
     ground.get<RigidBodyComponent>().friction = 1.0f;
     run(scene, 60);
-    CHECK(std::abs(scene.linearVelocity(crate).x) < 0.05f);
+    CHECK(std::abs(scene.linearVelocity(crate).toGlm().x) < 0.05f);
 
     // A solid floor turned into a sensor: what rests on it falls through.
     Entity shelf = scene.createEntity("Shelf");
@@ -326,7 +326,7 @@ void rebuildOnShapeChange() {
     run(scene, 2);
     ball.get<RigidBodyComponent>().mass = 5.0f; // a rebuild
     run(scene, 2);
-    CHECK_NEAR(scene.linearVelocity(ball).x, 3.0f, 1e-3f);
+    CHECK_NEAR(scene.linearVelocity(ball).toGlm().x, 3.0f, 1e-3f);
     CHECK_NEAR(ball.transform().position.toMeters().y, 10.0, 1e-3);
     // Scaling the entity rebuilds it too.
     ball.transform().scale = glm::vec3(0.25f);
@@ -387,7 +387,7 @@ void axisLocks() {
     scene.physics()->addImpulse(rb.body, {2, 0, 2});
     scene.physics()->addTorque(rb.body, {0, 50, 50});
     run(scene, 30);
-    CHECK(std::abs(glm::dot(crate.transform().rotation * glm::vec3(0, 1, 0), glm::vec3(0, 1, 0)) - 1.0f) < 1e-4f);
+    CHECK(std::abs(glm::dot(crate.transform().orientation() * glm::vec3(0, 1, 0), glm::vec3(0, 1, 0)) - 1.0f) < 1e-4f);
     CHECK(glm::length(scene.physics()->angularVelocity(rb.body)) < 1e-4f);
     CHECK(crate.transform().position.toMeters().x > 0.1);
     CHECK(std::abs(crate.transform().position.toMeters().z) < 1e-4);
@@ -434,7 +434,7 @@ Entity addBox(Scene& s, const std::string& name, const GlobalPosition& p, const 
 }
 
 f32 yawOf(Entity e) { // rotation about +Y
-    const glm::vec3 x = e.transform().rotation * glm::vec3(1, 0, 0);
+    const glm::vec3 x = e.transform().orientation() * glm::vec3(1, 0, 0);
     return std::atan2(-x.z, x.x);
 }
 
@@ -456,13 +456,13 @@ void hingeDoor() {
     scene.physics()->addImpulse(door.get<RigidBodyComponent>().body, {0, 0, -3}); // push the free edge
     run(scene, 60);
     // It turned around the hinge, which did not move, and stopped at the limit.
-    const GlobalPosition hinge = door.transform().position + door.transform().rotation * glm::vec3(-1.0f, 0.0f, 0.0f);
+    const GlobalPosition hinge = door.transform().position + door.transform().orientation() * glm::vec3(-1.0f, 0.0f, 0.0f);
     CHECK(isWithin(hinge, GlobalPosition(0.0, 1.0, 0.0), 0.01));
     // Swung to the limit (it may rebound a little from it), never past it.
     const f32 angle = std::abs(scene.physics()->jointPosition(j.joint));
     CHECK(angle > glm::radians(35.0f) && angle < glm::radians(45.5f));
     CHECK_NEAR(std::abs(yawOf(door)), angle, 1e-3f);
-    CHECK_VEC(door.transform().rotation * glm::vec3(0, 1, 0), glm::vec3(0, 1, 0), 1e-3f); // only around Y
+    CHECK_VEC(door.transform().orientation() * glm::vec3(0, 1, 0), glm::vec3(0, 1, 0), 1e-3f); // only around Y
 }
 
 void hingeMotor() {
@@ -513,9 +513,9 @@ void fixedJoint() {
     b.add<JointComponent>(JointType::Fixed, Scene::refOf(a));
     scene.startSimulation();
     run(scene, 120); // they fall and land together, as one rigid piece
-    const glm::vec3 rel = glm::conjugate(a.transform().rotation) * (b.transform().position - a.transform().position).toVec3();
+    const glm::vec3 rel = glm::conjugate(a.transform().orientation()) * (b.transform().position - a.transform().position).toVec3();
     CHECK_VEC(rel, glm::vec3(1.0f, 0.5f, 0.0f), 0.02f); // same place in A's frame
-    CHECK(std::abs(glm::dot(a.transform().rotation, b.transform().rotation)) > 0.9999f); // same turn
+    CHECK(std::abs(glm::dot(a.transform().orientation(), b.transform().orientation())) > 0.9999f); // same turn
     CHECK(a.transform().position.toMeters().y < 1.5);
 }
 
