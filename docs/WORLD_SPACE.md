@@ -306,3 +306,114 @@ Status: **Fases 1 a 6 concluídas.** (`engine/src/nova/math/`, testes em `tests/
      quickhull, para SAT e recorte de contatos; o GJK só precisa dos vértices).
    - O que falta para o motor próprio: o próprio motor (envoltória/half-edge, colisão por par em
      referencial local, solver em ponto fixo).
+
+## Próxima reformulação: ponto fixo e mundo de 16 km (planejado)
+
+Ainda não implementado. Substitui o modelo atual (posição `int64` com unidade configurável, origem
+flutuante, regiões e dormência) por um mais simples e determinístico.
+
+### Motivação
+- **Determinismo:** estado do mundo inteiro em ponto fixo, com soma exata e volta exata, sem depender
+  da ordem das operações em `float`. A física usa o Jolt compilado com `CROSS_PLATFORM_DETERMINISTIC`:
+  mesmo resultado bit a bit entre plataformas, com custo de cerca de 8%.
+- **Simplicidade:** o mundo cabe na faixa em que o `float32` do Jolt é preciso, então a física recebe
+  as posições direto, sem origem flutuante.
+- **Sem 128 bits:** diferenças cabem em `i32`, quadrados em `i64`, e a soma dos três em `u64`
+  (3 · 2⁶² < 2⁶⁴).
+
+### O mundo: toro de 16 km
+- A posição é `i32` em **Q13.18** (passo 2⁻¹⁸ m ≈ 3,8 µm, ±8.192 m).
+- O mundo é **sempre circular**: a volta é o próprio estouro do `int32`, um toro de 16.384 m por eixo.
+  Sem barreiras e sem tamanho ou unidade configuráveis.
+- A conta é feita em `uint32` e convertida, porque estouro de inteiro com sinal é comportamento
+  indefinido em C++. A diferença pelo caminho mais curto sai sozinha: `int32(a − b)`.
+- Na física, fica só uma camada fina para a emenda do toro: a janela de uma volta acompanha o foco, e
+  os corpos são levados para a volta mais próxima dele.
+
+### Tipos e pontos (lib `fpm`, `fpm::fixed<int32_t, int64_t, F>`)
+O ponto de cada tipo foi escolhido para cobrir a menor variação que o Jolt 5.5 resolve:
+- tolerância de colisão: 0,1 mm;
+- manifold: 1 mm;
+- limiar de sono: 0,03 m/s, que a 60 Hz dá 0,5 mm por passo;
+- restituição: só a partir de 1 m/s.
+
+**Regra:** o passo de cada tipo produz, em 1/60 s, uma variação de no máximo 3,8 µm, abaixo de 1/25
+da tolerância de colisão. Por exemplo, para a força: 4 mN em 1 kg por (1/60 s)² dá 1,1 µm.
+
+| Atributo | Tipo | Passo | Faixa |
+|---|---|---|---|
+| Posição, tamanhos, offsets, âncoras | Q13.18 | 3,8 µm | ±8.192 m (volta de 16.384 m) |
+| Velocidade, aceleração, gravidade, velocidade angular | Q15.16 | 15 µm/s · 1,5×10⁻⁵ rad/s | ±32.768 |
+| Ângulos | Q3.28 | 3,7×10⁻⁹ rad | ±8 rad |
+| Quaternion | Q1.30 | 9,3×10⁻¹⁰ | ±2 |
+| Escala, coeficientes, massa | Q15.16 | 1,5×10⁻⁵ | ±32.768 |
+| Força, impulso, torque | Q23.8 | 4 mN | ±8,4 MN |
+| Posição global no modo grande | `i64` Q45.18 | 3,8 µm | ±3,5×10¹³ m |
+| Tempo | `Duration` (flicks em `i64`, como hoje) | — | — |
+
+Entram em ponto fixo os atributos de **simulação**:
+- transform: posição, rotação, escala;
+- componentes de física, joints e personagem;
+- gravidade;
+- a API de física e de scripts.
+
+O rendering (câmera, luzes, materiais) continua em `float`. A conversão acontece só nas fronteiras:
+Jolt, renderer e ImGui.
+
+### O que sai
+- `math/Integer.h` (`UInt128` e as operações saturadas). O `Duration` ganha as suas próprias
+  operações saturadas em `i64`.
+- `FloatingOriginWorld`, com as regiões, o rebase, a dormência e as paredes nas barreiras.
+- Os ajustes de cena que dependiam disso: `physicsRegionRadius`, `physicsRebaseDistance`,
+  `barrierWallRange`, `isPhysicsDormant`, `physicsOrigin`, `physicsRegionCount`.
+- Unidade e tamanhos configuráveis do mundo, e a borda `Barrier`.
+- Os cenários Small World de 60 m deixam de existir como mundos próprios. Os testes passam a ficar
+  dentro de ±8 km.
+
+### O que muda
+- **`GlobalPosition`/`WorldSpace`:** `i32` Q13.18, com a volta pelo estouro.
+- **Reflexão:** `FieldKind::Fixed`, `FixedVec3` e `FixedQuat`, com os `fracBits` no `FieldInfo`.
+- **Serialização:** em metros, com `raw` em `i32` quando a conversão não for exata. Arquivos antigos
+  com `raw` em `i64` são lidos pelos metros.
+- **Editor:** o painel World só mostra o toro, e os widgets de ponto fixo convertem para `float` só
+  para exibir.
+- **Renderer:** o `tiledOrigin` e o `kWorldTile` são ajustados à volta de 16 km.
+- **Física:** `PhysicsWorld::create` devolve um adaptador direto sobre o Jolt (local = global, em
+  metros). O contrato frontend/backend é mantido, para o adaptador de blocos do modo grande entrar no
+  mesmo lugar.
+- **Scripts:** `onUpdate(Duration)`, mantendo o atalho em `float`.
+
+### Mundo grande por blocos (opção de compilação `NOVA_LARGE_WORLDS`)
+Para um mundo contínuo maior que 16 km, sem tela de carregamento.
+
+- **Posição global** em `i64` **Q45.18**, com a mesma fração. Mundos que cabem em ±8 km têm os mesmos
+  valores brutos nos dois modos, então os arquivos são compatíveis.
+- **Blocos de 4096 m** (2³⁰ passos). A física roda numa **janela 3×3** em volta do foco, em
+  coordenadas `i32` locais ao bloco do meio. Isso garante pelo menos um bloco inteiro simulado em
+  volta do jogador e cabe em ±6.144 m.
+- **Recentrar é exato:** a origem anda um bloco, uma potência de 2, então o deslocamento é exato em
+  inteiro e em `float`. O bloco do meio só troca quando o foco passa da divisa por 1/8 de bloco.
+  Corpos fora da janela ficam dormentes, com o estado guardado.
+- **Streaming com histerese:**
+  - carrega o que entra no **5×5**;
+  - descarrega só o que sai do **7×7**, depois de N segundos fora (ou por LRU, com orçamento de
+    memória);
+  - fila de carregamento por prioridade (o mais perto primeiro), com cancelamento do que deixou de
+    ser necessário.
+
+  Andar de um lado para o outro numa divisa não carrega nem descarrega nada.
+- **Divisão de responsabilidades:** o mecanismo (janela, recentrar, dormência, fila, eventos
+  `onChunkLoad`/`onChunkUnload`) fica na engine, porque precisa manter física, renderização e consultas
+  consistentes. O **conteúdo** de cada bloco (entidades, terreno, de onde vem) é do jogo.
+
+### Etapas de implementação
+1. Ponto fixo: `fpm` via `FetchContent`, `math/Fixed.h` (aliases, `FixedVec3`, `FixedQuat`), testes de
+   exatidão e de limites.
+2. Fim do `Integer.h`.
+3. Posição Q13.18 circular: `GlobalPosition`, `WorldSpace`, serialização, painel World, renderer e testes.
+4. Física direta no Jolt, saindo o `FloatingOriginWorld`.
+5. Atributos de simulação em ponto fixo, com reflexão, serialização, widgets e as APIs de física e de
+   scripts.
+6. Jolt determinístico: overlay port do vcpkg com `CROSS_PLATFORM_DETERMINISTIC=ON`.
+7. Modo grande (`NOVA_LARGE_WORLDS`): blocos, janela, histerese, eventos e um preset de build próprio.
+   Os testes rodam nos dois modos.
