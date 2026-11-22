@@ -19,6 +19,7 @@ file(GLOB_RECURSE NOVA_CORE_SOURCES CONFIGURE_DEPENDS
     ${SRC}/renderer/*.cpp  ${SRC}/renderer/*.h
     ${SRC}/scene/*.cpp     ${SRC}/scene/*.h
     ${SRC}/physics/*.cpp   ${SRC}/physics/*.h
+    ${SRC}/physics/backend/*.cpp ${SRC}/physics/backend/*.h
     ${SRC}/reflect/*.cpp   ${SRC}/reflect/*.h
     ${SRC}/assets/*.cpp    ${SRC}/assets/*.h
     ${SRC}/math/*.cpp      ${SRC}/math/*.h
@@ -94,7 +95,7 @@ endif()
 
 if(NOVA_PHYSICS_JOLT)
     find_package(Jolt CONFIG REQUIRED)
-    file(GLOB NOVA_JOLT_SOURCES CONFIGURE_DEPENDS ${SRC}/physics/jolt/*.cpp ${SRC}/physics/jolt/*.h)
+    file(GLOB NOVA_JOLT_SOURCES CONFIGURE_DEPENDS ${SRC}/physics/backend/jolt/*.cpp ${SRC}/physics/backend/jolt/*.h)
     target_sources(NovaEngine PRIVATE ${NOVA_JOLT_SOURCES})
     target_link_libraries(NovaEngine PRIVATE Jolt::Jolt)
     target_compile_definitions(NovaEngine PUBLIC NOVA_PHYSICS_JOLT=1)

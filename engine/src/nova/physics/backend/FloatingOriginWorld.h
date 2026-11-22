@@ -3,7 +3,7 @@
 /// @file
 /// @brief Global-position physics on top of float engines: floating origins, regions, dormancy.
 
-#include "nova/physics/LocalPhysicsWorld.h"
+#include "nova/physics/backend/LocalPhysicsWorld.h"
 #include "nova/physics/PhysicsWorld.h"
 
 #include <vector>
@@ -106,7 +106,8 @@ private:
     Body* body(BodyId id);
     const Instance* home(const Body& b) const { return b.instances.empty() ? nullptr : &b.instances.front(); }
     GlobalPosition currentPosition(u32 index) const;
-    QueryHit toGlobal(const local::QueryHit& hit, const Region& region, const GlobalPosition& queryOrigin) const;
+    QueryHit toGlobal(const local::QueryHit& hit, const Region& region, const GlobalPosition& queryOrigin,
+                      bool ray) const;
     QueryFilter toLocal(const QueryFilter& filter, const Region& region) const;
 
     Backend m_backend;

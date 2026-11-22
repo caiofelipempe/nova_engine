@@ -3,7 +3,7 @@
 /// @file
 /// @brief Jolt Physics implementation of physics::local::World (float, origin-relative).
 
-#include "nova/physics/LocalPhysicsWorld.h"
+#include "nova/physics/backend/LocalPhysicsWorld.h"
 
 namespace nova::physics::local {
 

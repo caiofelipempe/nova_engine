@@ -1,6 +1,6 @@
 // Headless physics tests (no window / GPU). Run: ctest --preset ... or NovaTests.exe
 #include <nova/Nova.h>
-#include <nova/physics/LocalPhysicsWorld.h> // backend-level float contract (Jolt)
+#include <nova/physics/backend/LocalPhysicsWorld.h> // backend-level float contract (Jolt)
 
 #include <cmath>
 #include <cstdio>
@@ -854,6 +854,37 @@ public:
     std::vector<ContactEvent> drainContactEvents() override { return {}; }
 };
 
+void adapterRegressions() {
+    // Invalid shapes are refused up front (they used to get an id and fail later, in a region).
+    auto w = PhysicsWorld::create(Backend::Jolt);
+    SimulationFocus focus;
+    focus.foci = {GlobalPosition()};
+    w->setFocus(focus);
+    BodyDesc bad;
+    bad.shape.type = ShapeType::Sphere;
+    bad.shape.radius = 0.0f;
+    CHECK(!w->createBody(bad).valid());
+    BodyDesc noPoints;
+    noPoints.shape.type = ShapeType::ConvexHull;
+    CHECK(!w->createBody(noPoints).valid());
+    CHECK(w->bodyCount() == 0);
+
+    // A sweep whose contact lands exactly on the region origin still reports it (it used to be
+    // replaced by the query origin, as if it were a raycast).
+    BodyDesc ground;
+    ground.type = BodyType::Static;
+    ground.shape.halfExtents = {50.0f, 0.5f, 50.0f};
+    ground.position = GlobalPosition(0.0, -0.5, 0.0);
+    CHECK(w->createBody(ground).valid());
+    SweepHit hit;
+    CHECK(w->sweep(sphere(0.5f), GlobalPosition(0.0, 5.0, 0.0), kIdentity, kDown, 10.0f, hit));
+    CHECK_NEAR(hit.sweptPoint.toMeters().y, 0.0, 0.02);
+    CHECK_NEAR(hit.point.toMeters().y, 0.0, 0.02);
+    RaycastHit ray;
+    CHECK(w->raycast(GlobalPosition(0.0, 5.0, 0.0), kDown, 10.0f, ray));
+    CHECK(ray.sweptPoint == GlobalPosition(0.0, 5.0, 0.0)); // rays: the origin
+}
+
 void nativeIntegerBackend() {
     // The scene feeds a custom backend global positions only — 10,000 km out, exactly.
     const GlobalPosition base = GlobalPosition::fromUnits({10'000, 1, -10'000}, LengthUnit::Kilometer);
@@ -916,6 +947,7 @@ int main() {
         {"physics regions: dormant bodies keep their velocity", dormancy},
         {"determinism: two runs agree bit for bit", determinism},
         {"global contract: a native integer backend plugs in directly", nativeIntegerBackend},
+        {"adapter: invalid shapes refused, sweptPoint on the region origin", adapterRegressions},
         {"shapes: cylinder, convex hull, triangle mesh", moreShapes},
         {"shapes: mesh ground and hull 10,000 km away", meshShapesFarAway},
     };

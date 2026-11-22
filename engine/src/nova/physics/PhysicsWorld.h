@@ -95,10 +95,14 @@ public:
     static Scope<PhysicsWorld> create(Backend backend, const WorldDesc& desc = {});
     virtual ~PhysicsWorld() = default;
 
+    /// @brief True if `desc` describes a body every backend accepts: positive sizes, points for a
+    ///        hull, triangles for a mesh, no dynamic mesh. Logs why when it is not.
+    static bool isValidBody(const BodyDesc& desc);
+
     /// @name Bodies
     /// @{
     /// @brief Creates a body (dynamic/kinematic ones start active).
-    /// @return The new body, or an invalid id if the shape is invalid or the world is full.
+    /// @return The new body, or an invalid id if the shape is invalid (isValidBody) or the world is full.
     virtual BodyId createBody(const BodyDesc& desc) = 0;
     /// @brief Removes and destroys a body. Invalid or already destroyed ids are ignored.
     virtual void destroyBody(BodyId body) = 0;

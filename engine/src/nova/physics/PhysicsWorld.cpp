@@ -1,33 +1,31 @@
 #include "nova/physics/PhysicsWorld.h"
 
 #include "nova/core/Log.h"
-#include "nova/physics/FloatingOriginWorld.h"
 
-#if NOVA_PHYSICS_JOLT
-    #include "nova/physics/jolt/JoltPhysicsWorld.h"
-#endif
+// Frontend side of the contract. Creating worlds binds it to a backend: backend/Backends.cpp.
 
 namespace nova::physics {
 
-Scope<local::World> local::World::create(Backend backend, const WorldDesc& desc) {
-    switch (backend) {
-#if NOVA_PHYSICS_JOLT
-        case Backend::Jolt: return makeScope<JoltPhysicsWorld>(desc);
-#endif
-        default: break;
+bool PhysicsWorld::isValidBody(const BodyDesc& desc) {
+    const ShapeDesc& s = desc.shape;
+    bool ok = false;
+    switch (s.type) {
+        case ShapeType::Box: ok = s.halfExtents.x > 0 && s.halfExtents.y > 0 && s.halfExtents.z > 0; break;
+        case ShapeType::Sphere: ok = s.radius > 0; break;
+        case ShapeType::Capsule:
+        case ShapeType::Cylinder: ok = s.radius > 0 && s.halfHeight >= 0; break;
+        case ShapeType::ConvexHull: ok = s.geometry && !s.geometry->points.empty(); break;
+        case ShapeType::Mesh:
+            if (desc.type == BodyType::Dynamic) {
+                NOVA_CORE_ERROR("[physics] mesh shapes cannot be dynamic (use a convex hull)");
+                return false;
+            }
+            ok = s.geometry && !s.geometry->points.empty() && !s.geometry->indices.empty() &&
+                 s.geometry->indices.size() % 3 == 0;
+            break;
     }
-    NOVA_VERIFY(false, "Requested physics backend is not compiled in");
-    return nullptr;
-}
-
-Scope<PhysicsWorld> PhysicsWorld::create(Backend backend, const WorldDesc& desc) {
-    switch (backend) {
-        // Float engines get a floating origin; a backend working in global positions natively would
-        // be returned here directly (makeScope<MyIntegerWorld>(desc)).
-        case Backend::Jolt: return makeScope<FloatingOriginWorld>(backend, desc);
-    }
-    NOVA_VERIFY(false, "Unknown physics backend");
-    return nullptr;
+    if (!ok) NOVA_CORE_ERROR("[physics] invalid collision shape (type {})", static_cast<int>(s.type));
+    return ok;
 }
 
 } // namespace nova::physics
