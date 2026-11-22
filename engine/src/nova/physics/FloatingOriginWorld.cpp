@@ -81,6 +81,21 @@ FloatingOriginWorld::FloatingOriginWorld(Backend backend, const WorldDesc& desc)
 
 FloatingOriginWorld::~FloatingOriginWorld() = default;
 
+PhysicsCaps FloatingOriginWorld::caps() const {
+    PhysicsCaps c;
+    c.name = m_backend == Backend::Jolt ? "Jolt" : "float backend";
+    c.regions = true;
+    c.dormancy = true;
+    c.angularMotion = true;
+    c.friction = true;
+    for (u32& mask : c.collides) mask = kAllShapes;
+    c.collides[static_cast<u32>(ShapeType::Mesh)] &= ~shapeBit(ShapeType::Mesh); // meshes are never dynamic
+    c.raycastShapes = kAllShapes;
+    c.sweepShapes = kAllShapes & ~shapeBit(ShapeType::Mesh); // a triangle soup has no inside to sweep
+    c.sweepTargets = kAllShapes;
+    return c;
+}
+
 // ----------------------------------------------------------------- regions --
 FloatingOriginWorld::Region* FloatingOriginWorld::findRegion(u32 id) {
     for (Region& r : m_regions)
@@ -344,6 +359,7 @@ void FloatingOriginWorld::createInstance(u32 index, Region& region) {
 }
 
 BodyId FloatingOriginWorld::createBody(const BodyDesc& desc) {
+    if (!isValidBody(desc)) return {}; // refused now, not later in whichever region it lands
     if (m_regions.empty()) updateRegions();
     u32 index;
     if (!m_freeBodies.empty()) {
@@ -519,7 +535,7 @@ QueryFilter FloatingOriginWorld::toLocal(const QueryFilter& filter, const Region
 }
 
 QueryHit FloatingOriginWorld::toGlobal(const local::QueryHit& hit, const Region& region,
-                                       const GlobalPosition& queryOrigin) const {
+                                       const GlobalPosition& queryOrigin, bool ray) const {
     QueryHit out;
     if (isWorldBoundary(hit.userData)) {
         out.userData = hit.userData;
@@ -530,7 +546,7 @@ QueryHit FloatingOriginWorld::toGlobal(const local::QueryHit& hit, const Region&
     out.point = region.toGlobal(hit.point);
     out.normal = hit.normal;
     out.hitSurfaceNormal = hit.hitSurfaceNormal;
-    out.sweptPoint = hit.sweptPoint == glm::vec3(0.0f) ? queryOrigin : region.toGlobal(hit.sweptPoint);
+    out.sweptPoint = ray ? queryOrigin : region.toGlobal(hit.sweptPoint); // rays: the origin, exactly
     out.sweptSurfaceNormal = hit.sweptSurfaceNormal;
     out.distance = hit.distance;
     out.fraction = hit.fraction;
@@ -542,7 +558,7 @@ bool FloatingOriginWorld::raycast(const GlobalPosition& origin, const glm::vec3&
     const Region* r = regionAt(origin);
     local::RaycastHit h;
     if (!r || !r->world->raycast(r->toLocal(origin), direction, maxDistance, h, toLocal(filter, *r))) return false;
-    hit = toGlobal(h, *r, origin);
+    hit = toGlobal(h, *r, origin, true);
     return true;
 }
 
@@ -553,7 +569,7 @@ bool FloatingOriginWorld::sweep(const ShapeDesc& shape, const GlobalPosition& po
     local::SweepHit h;
     if (!r || !r->world->sweep(shape, r->toLocal(position), rotation, direction, maxDistance, h, toLocal(filter, *r)))
         return false;
-    hit = toGlobal(h, *r, position);
+    hit = toGlobal(h, *r, position, false);
     return true;
 }
 
@@ -565,7 +581,7 @@ std::vector<SweepHit> FloatingOriginWorld::sweepAll(const ShapeDesc& shape, cons
     if (!r) return out;
     for (const local::SweepHit& h :
          r->world->sweepAll(shape, r->toLocal(position), rotation, direction, maxDistance, toLocal(filter, *r)))
-        out.push_back(toGlobal(h, *r, position));
+        out.push_back(toGlobal(h, *r, position, false));
     return out;
 }
 
@@ -580,7 +596,7 @@ bool FloatingOriginWorld::sweepBody(BodyId id, const glm::vec3& direction, f32 m
     GlobalPosition start;
     glm::quat q;
     getTransform(id, start, q);
-    hit = toGlobal(lh, *r, start);
+    hit = toGlobal(lh, *r, start, false);
     return true;
 }
 

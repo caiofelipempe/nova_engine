@@ -84,7 +84,11 @@ public:
     ///
     /// While simulating, bodies are also created for entities that gain a RigidBodyComponent and
     /// removed when the component or entity goes away.
-    void startSimulation(physics::Backend backend = physics::Backend::Jolt);
+    void startSimulation() { startSimulation(physicsBackend); }
+    /// @brief Same, with a given backend (see physics::Backend).
+    void startSimulation(physics::Backend backend);
+    /// @brief Backend used by startSimulation() (the editor's Play button, GameLayer).
+    physics::Backend physicsBackend = physics::Backend::Jolt;
     /// @brief Where mesh colliders (convex hull, triangle mesh) read vertices from.
     using MeshSource = std::function<const MeshData*(MeshHandle)>;
     /// @brief Sets this scene's mesh source (falls back to the default one when unset).
@@ -139,6 +143,8 @@ public:
     /// @brief When a region's foci move farther than this (meters) from its origin, its bodies are
     ///        shifted so the origin is back at the foci. Precision is best within this radius.
     f64 physicsRebaseDistance = 1024.0;
+    /// @brief What the running physics backend supports (all false/empty when not simulating).
+    physics::PhysicsCaps physicsCaps() const { return m_physics ? m_physics->caps() : physics::PhysicsCaps{}; }
     /// @brief Number of physics regions (0 when not simulating).
     u32 physicsRegionCount() const { return m_physics ? m_physics->regionCount() : 0; }
     /// @brief Floating origin of a region: the physics engine works in floats around it.

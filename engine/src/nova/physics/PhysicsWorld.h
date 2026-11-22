@@ -19,7 +19,8 @@
 /// - float engines (Jolt) implement local::World and are wrapped by FloatingOriginWorld, which
 ///   keeps their origin near the action (regions, rebasing, dormant bodies, barrier walls);
 /// - an engine that works in integers natively (a custom one, or a third-party one) implements
-///   PhysicsWorld directly, without any floating origin.
+///   PhysicsWorld directly, without any floating origin, and says so in `caps().globalPositions`.
+///   SkeletonPhysicsWorld is a minimal one to start from.
 ///
 /// Games normally use it through Scene (RigidBodyComponent, colliders, Scene::raycast...).
 namespace nova::physics {
@@ -95,10 +96,17 @@ public:
     static Scope<PhysicsWorld> create(Backend backend, const WorldDesc& desc = {});
     virtual ~PhysicsWorld() = default;
 
+    /// @brief True if `desc` describes a body any backend must accept: positive sizes, points for
+    ///        a hull, triangles for a mesh, and no dynamic mesh. Logs why when it is not.
+    static bool isValidBody(const BodyDesc& desc);
+
+    /// @brief What this backend supports.
+    virtual PhysicsCaps caps() const = 0;
+
     /// @name Bodies
     /// @{
     /// @brief Creates a body (dynamic/kinematic ones start active).
-    /// @return The new body, or an invalid id if the shape is invalid or the world is full.
+    /// @return The new body, or an invalid id if the shape is invalid (isValidBody) or the world is full.
     virtual BodyId createBody(const BodyDesc& desc) = 0;
     /// @brief Removes and destroys a body. Invalid or already destroyed ids are ignored.
     virtual void destroyBody(BodyId body) = 0;

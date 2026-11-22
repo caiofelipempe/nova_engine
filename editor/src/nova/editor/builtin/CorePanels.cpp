@@ -327,8 +327,11 @@ void RendererPanel::onImGui(EditorContext& ctx) {
                         caps.rayTracingPipeline ? " + pipeline" : "");
     ImGui::Text("Draws %u | Tris %llu | TLAS inst %u", st.drawCalls, static_cast<unsigned long long>(st.triangles),
                 st.tlasInstances);
-    ImGui::Text("Physics: %s (%u bodies, %u regions)", ctx.scene().isSimulating() ? "Jolt, running" : "stopped",
-                ctx.scene().physicsBodyCount(), ctx.scene().physicsRegionCount());
+    if (ctx.scene().isSimulating())
+        ImGui::Text("Physics: %s, running (%u bodies, %u regions)", ctx.scene().physicsCaps().name,
+                    ctx.scene().physicsBodyCount(), ctx.scene().physicsRegionCount());
+    else
+        ImGui::Text("Physics: stopped");
     ImGui::Separator();
 
     ImGui::BeginDisabled(!caps.rayQuery);
@@ -505,7 +508,18 @@ void WorldPanel::onImGui(EditorContext& ctx) {
     ImGui::Separator();
     const glm::dvec3 cam = ctx.camera().position.toMeters();
     ImGui::Text("Camera  %s, %s, %s", readable(cam.x).c_str(), readable(cam.y).c_str(), readable(cam.z).c_str());
-    if (scene.isSimulating()) {
+    ImGui::BeginDisabled(ctx.isPlaying());
+    int backend = static_cast<int>(scene.physicsBackend);
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::Combo("Physics backend", &backend, "Jolt (floating origin)\0Skeleton (native integer)\0"))
+        scene.physicsBackend = static_cast<physics::Backend>(backend);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Used when Play starts the simulation. Skeleton: the minimal native-integer backend\n"
+                          "(spheres and boxes collide; a starting point for a custom engine)");
+    if (scene.isSimulating() && scene.physicsCaps().globalPositions) {
+        ImGui::Text("Physics in native global positions (no floating origin)");
+    } else if (scene.isSimulating()) {
         for (u32 i = 0; i < scene.physicsRegionCount(); ++i) {
             const glm::dvec3 o = scene.physicsOrigin(i).toMeters();
             ImGui::Text("Physics region %u origin  %s, %s, %s", i, readable(o.x).c_str(), readable(o.y).c_str(),

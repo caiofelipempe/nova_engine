@@ -56,7 +56,7 @@
 /// - **core** — Application, Layer, logging (Log, `NOVA_*` macros).
 /// - **platform** (nova::platform) — Window and Input, GLFW backend.
 /// - **rhi** (nova::rhi) — graphics API abstraction (Device, CommandList), Vulkan backend.
-/// - **physics** (nova::physics) — PhysicsWorld, Jolt backend.
+/// - **physics** (nova::physics) — PhysicsWorld; Jolt (floating origin) and Skeleton (native integer) backends.
 /// - **renderer** — Renderer, RenderView, meshes and materials (talks only to the RHI).
 /// - **scene** — Scene (EnTT), Entity, components, Script, GameLayer.
 namespace nova {}

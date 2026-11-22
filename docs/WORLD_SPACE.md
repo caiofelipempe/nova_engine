@@ -244,8 +244,9 @@ Status: **Fases 1 a 6 concluídas.** (`engine/src/nova/math/`, testes em `tests/
    atravessando a emenda sem pulo.
 6. **Regiões de física e determinismo** — vários focos (jogadores distantes), cada grupo com seu
    mundo físico; corpos dormentes fora do alcance; hash de estado para lockstep/replay.
-7. **Futuro: backend de física com posições inteiras nativas** — para um motor de física próprio
-   em ponto fixo:
+7. **Backend de física com posições inteiras nativas** — para um motor de física próprio
+   em ponto fixo. **Lado da engine concluído** (contrato global, capacidades, backend esqueleto,
+   testes de contrato; ver "Capacidades e backend esqueleto" abaixo). Plano original:
    - capacidade declarada pelo backend (ex.: `caps().globalPositions`);
    - variante inteira do contrato do `PhysicsWorld`: criação de corpos, transforms, consultas e
      eventos de contato em `GlobalPosition`/`GlobalOffset`, e `step(Duration)` em vez de `f32`;
@@ -289,6 +290,31 @@ Status: **Fases 1 a 6 concluídas.** (`engine/src/nova/math/`, testes em `tests/
    - Tipos glm: `GlobalPosition` guarda `glm::i64vec3`; `GlobalOffset` *é* um `glm::i64vec3`
      (operadores exatos/saturados próprios); formas e vértices locais são `glm::vec3`; um motor
      inteiro usaria `glm::i32vec3` em 16.16 para o local.
+
+   **Capacidades e backend esqueleto (feito):**
+   - `PhysicsWorld::caps()` → `PhysicsCaps`: `globalPositions`, `crossPlatformDeterministic`,
+     `regions`, `dormancy`, `angularMotion`, `friction`, pares de formas que colidem
+     (`collidesWith(a, b)`) e formas aceitas por raycasts/sweeps. `Scene::physicsCaps()` o expõe;
+     `Scene::physicsBackend` escolhe o backend de `startSimulation()` (painel World no editor).
+   - `PhysicsWorld::isValidBody` é a validação comum de corpos (formas com tamanho, hull com
+     pontos, malha com triângulos, malha nunca dinâmica): todo backend recusa o mesmo.
+   - `Backend::Skeleton` (`physics/skeleton/SkeletonPhysicsWorld`): implementa `PhysicsWorld`
+     direto, sem origem flutuante. Velocidades em ponto fixo (passos do mundo · 2⁻¹⁶ por segundo;
+     ±32 km/s com a unidade padrão), passo em Q32 de segundo derivado dos flicks, posição avançada
+     pelo produto exato de 128 bits (`detail::mulShift`). Fase ampla exata em `int64` (esferas
+     envolventes); fase estreita num referencial ancorado num corpo do par (esfera–esfera,
+     esfera–caixa, bordas `Barrier` como planos); contatos especulativos + impulsos sequenciais;
+     eventos de contato; raycast (esfera, caixa, bordas) e sweep de esfera; dormência por foco.
+     Emendas `Wrap` funcionam sozinhas: os offsets entre corpos já são pelo caminho mais curto.
+   - `tests/PhysicsContractTests.cpp` roda o mesmo contrato (corpos, poses exatas a 10.000 km,
+     queda livre, forças/impulsos, kinematic, contatos, sensores, consultas, barreiras, emenda,
+     dormência, determinismo) no Jolt e no Skeleton; o que `caps()` não declara é pulado.
+   - Achados pelo contrato no adaptador do Jolt (corrigidos): formas inválidas recebiam um id
+     válido; o `sweptPoint` de um sweep virava a origem da consulta quando o contato caía
+     exatamente na origem da região.
+   - Falta (o motor em si, `TODO(engine)` no Skeleton): rotações, velocidade angular e solver em
+     ponto fixo (`crossPlatformDeterministic`), GJK/EPA ou SAT para os outros pares, atrito e
+     resposta angular, sleeping, sort-and-sweep/grade, tipo local 16.16 e corpos fatiados.
 
    **Estado atual da estrutura em relação a essa diretriz:**
    - Já segue: posição da entidade é `GlobalPosition`; colliders (`halfExtents`, `radius`,
