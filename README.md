@@ -57,7 +57,7 @@ cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
 build\bin\Debug\Sandbox.exe
-ctest --preset debug              # testes headless (física, contrato da física nos dois backends, cenas, assets, shaders, espaço do mundo, tempo, cenários, input, editor, hot reload)
+ctest --preset debug              # testes headless (física, cenas, assets, shaders, espaço do mundo, tempo, cenários, input, editor, hot reload)
 doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
 
@@ -80,7 +80,7 @@ engine/src/nova/
   rhi/        Device, CommandList (interfaces)  → vulkan/ (backend Vulkan)
   renderer/   Renderer, RenderView, Mesh (+ raycast CPU), DebugDraw, ShaderLibrary — só fala com o RHI
   scene/      Scene (EnTT), Entity, Components, Script, GameLayer, SceneSerializer (JSON)
-  physics/    PhysicsWorld (interface, caps)    → jolt/ (Jolt, via FloatingOriginWorld), skeleton/ (inteiro nativo)
+  physics/    PhysicsWorld (interface)          → jolt/ (backend Jolt)
   reflect/    reflexão de tipos (componentes, scripts, structs, enums)
   assets/     AssetDatabase (GUIDs em .meta, importadores), glTF (cgltf), imagens (stb_image)
   ui/         tema/fontes do ImGui
@@ -217,9 +217,6 @@ Em superfícies lisas (esfera numa face) as três coincidem; em arestas e vérti
 - Corpos **Static**, **Kinematic** (seguem o transform do ECS e empurram os dinâmicos) e **Dynamic**; colliders Box, Sphere, Capsule e Cylinder com offset, **ConvexHull** (poliedro: envoltória convexa dos vértices de uma malha, qualquer tipo de corpo) e **MeshCollider** (malha de triângulos exata, para cenário estático/kinematic — num corpo dinâmico vira a envoltória); tamanhos multiplicados pelo scale. Malhas vazias usam a `MeshComponent` da entidade.
 - Passo fixo exato (`Duration`, 60 Hz) com acumulador; transforms dos dinâmicos são escritos de volta no ECS.
 - **Contrato global:** a engine fala com a física só em `GlobalPosition` (`physics::PhysicsWorld`); o Jolt implementa um contrato `float` local e é envolvido pelo `FloatingOriginWorld`, o único lugar onde posições viram `float`. Um motor que trabalhe em inteiros implementa `PhysicsWorld` direto: `scene().startSimulation(makeScope<MeuMundo>())`.
-- **Capacidades:** `PhysicsWorld::caps()` (`scene().physicsCaps()`) diz o que o backend faz: posições globais nativas, determinismo entre plataformas, regiões, dormência, pares de formas que colidem, formas de consultas. O editor mostra o nome do backend e, no painel **World**, escolhe qual o Play usa (`Scene::physicsBackend`).
-- **Backend `Skeleton`** (`physics::Backend::Skeleton`, [SkeletonPhysicsWorld](engine/src/nova/physics/skeleton/SkeletonPhysicsWorld.h)): ponto de partida para um motor próprio em inteiros, já encaixado. Posições `GlobalPosition` sem origem flutuante (uma região, na origem); movimento linear exato em ponto fixo (velocidade em passos·2⁻¹⁶/s, passo em Q32 a partir dos flicks); fase ampla em `int64` e colisão num referencial local ao par (esfera–esfera, esfera–caixa, bordas `Barrier`); consultas (raycast em esferas/caixas/bordas, sweep de esfera); dormência. O que falta para um motor completo está marcado `TODO(engine)` no código.
-- **Testes de contrato** ([tests/PhysicsContractTests.cpp](tests/PhysicsContractTests.cpp)): o mesmo conjunto roda no Jolt e no Skeleton, só pela interface global; o que um backend não declara em `caps()` é pulado — um backend novo passa desde o primeiro dia e ganha verificações conforme declara mais.
 - **Origem flutuante:** o Jolt simula em `float` em torno da câmera (ou de `scene().setPhysicsFocus(p)`), com rebase automático; consultas e colisões usam `GlobalPosition`, e bordas `Barrier` do mundo viram paredes (`Script::onWorldBoundary`). Veja [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md).
 - `GameLayer` liga a simulação sozinho. No editor: **Play / Pause / Stop** (Stop restaura os transforms), gizmo arrasta corpos durante o Play.
 - Próximos passos: character controller, joints, interpolação de transforms na renderização.
@@ -301,7 +298,7 @@ Próximos passos (a estrutura já está preparada):
 ## Roadmap geral
 
 - **Mundos grandes** com posições globais inteiras (ponto fixo em `int64`, escala ajustável, bordas com volta ou barreira): plano e status em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md); fases 1 (tipos e aritmética), 2 (cena: `TransformComponent::position` é um `GlobalPosition`, mundo salvo na cena) 3 (renderização relativa à câmera) 4 (física com origem flutuante, paredes nas barreiras) 5 (editor: painel World, bordas visíveis, câmera atravessando a emenda) e 6 (regiões de física por foco, corpos dormentes, determinismo com `stateHash`) concluídas.
-- **Motor de física próprio em inteiros** — a parte da engine está pronta (contrato global, `caps()`, backend `Skeleton`, testes de contrato nos dois backends). Falta o motor em si, crescendo a partir do `Skeleton`: rotações e solver em ponto fixo (para `crossPlatformDeterministic`), GJK/EPA ou SAT para os demais pares de formas, atrito e resposta angular, sleeping, fase ampla por sort-and-sweep ou grade, corpos gigantes fatiados. Detalhes em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md).
+- **Física com posições inteiras nativas** (para um motor de física próprio): capacidade declarada pelo backend (`caps().globalPositions`); variante inteira do contrato do `PhysicsWorld` (corpos, transforms, consultas e contatos em `GlobalPosition`/`GlobalOffset`, `step(Duration)`); com um backend inteiro a cena usa uma região só, sem origem flutuante nem `float` no caminho — determinismo entre plataformas. O Jolt continua pelo caminho atual. Inclui um backend esqueleto validado pelos testes de interface. Detalhes em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md).
 - **Renderização circular em mundos que dão a volta** (opcional: desligada por padrão; em modo automático só roda quando o alcance da câmera passa de meia volta do mundo): hoje a física é circular mas cada objeto é desenhado uma vez (na cópia mais próxima da câmera); desenhar as cópias por volta dentro do alcance da câmera (instâncias extras com frustum culling por cópia, sem saltos na fronteira), incluindo luzes, TLAS das sombras, DebugDraw e picking. Plano em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md).
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).

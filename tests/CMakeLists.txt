@@ -3,12 +3,6 @@ target_link_libraries(NovaTests PRIVATE Nova::Engine)
 set_target_properties(NovaTests PROPERTIES FOLDER "Tests")
 add_test(NAME physics COMMAND NovaTests)
 
-# The PhysicsWorld contract, run against every backend (Jolt, Skeleton).
-add_executable(NovaPhysicsContractTests PhysicsContractTests.cpp)
-target_link_libraries(NovaPhysicsContractTests PRIVATE Nova::Engine)
-set_target_properties(NovaPhysicsContractTests PROPERTIES FOLDER "Tests")
-add_test(NAME physics_contract COMMAND NovaPhysicsContractTests)
-
 add_executable(NovaSceneTests SceneTests.cpp)
 target_link_libraries(NovaSceneTests PRIVATE Nova::Engine)
 set_target_properties(NovaSceneTests PROPERTIES FOLDER "Tests")

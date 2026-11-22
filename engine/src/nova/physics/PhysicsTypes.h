@@ -16,8 +16,7 @@ namespace nova::physics {
 
 /// @brief Available physics backends.
 enum class Backend {
-    Jolt,     ///< Jolt Physics (multi-threaded, float; used through FloatingOriginWorld).
-    Skeleton, ///< SkeletonPhysicsWorld: native integer positions, minimal collision (starting point for a custom engine).
+    Jolt ///< Jolt Physics (multi-threaded, float; used through FloatingOriginWorld).
 };
 
 /// @brief How a body moves.
@@ -58,40 +57,6 @@ struct ShapeDesc {
     f32 halfHeight = 0.5f;           ///< Capsule: half length of the cylindrical part (along local Y).
     glm::vec3 offset{0.0f};          ///< Shape center relative to the body origin (local space).
     std::shared_ptr<const ShapeGeometry> geometry; ///< ConvexHull / Mesh vertices (already scaled).
-};
-
-/// @brief Bit of a ShapeType in a shape mask (PhysicsCaps).
-constexpr u32 shapeBit(ShapeType t) { return 1u << static_cast<u32>(t); }
-/// @brief Mask with every shape type.
-constexpr u32 kAllShapes = (1u << 6) - 1;
-
-/// @brief What a physics backend supports (PhysicsWorld::caps()).
-///
-/// The engine and the contract tests use it to pick code paths and to skip what a backend does
-/// not do yet; games can show it or refuse a backend that lacks something they need.
-struct PhysicsCaps {
-    const char* name = "";                   ///< Backend name, for logs and UI.
-    /// @brief Works in GlobalPosition natively: no floating origin, a single region at the world
-    ///        origin, no float positions anywhere between the scene and the simulation.
-    bool globalPositions = false;
-    /// @brief Same inputs give bit-identical results on every platform/compiler (integer or
-    ///        fixed-point math only). Every backend must at least be deterministic on one build.
-    bool crossPlatformDeterministic = false;
-    bool regions = false;                    ///< May split the simulation in several regions (regionCount() > 1).
-    bool dormancy = false;                   ///< Honours SimulationFocus::radius (far bodies become dormant).
-    bool angularMotion = false;              ///< Contacts make bodies spin (torques, friction, off-center hits).
-    bool friction = false;                   ///< Contacts apply friction.
-    /// @brief `collides[a]`: mask of the shapes (shapeBit) a body of shape `a` collides with and
-    ///        reports contacts against. Bodies of other shapes are still created and moved.
-    u32 collides[6] = {};
-    u32 raycastShapes = 0;                   ///< Shapes raycasts can hit.
-    u32 sweepShapes = 0;                     ///< Shapes the sweep queries accept as the moving shape.
-    u32 sweepTargets = 0;                    ///< Shapes sweeps can hit.
-
-    /// @brief True if bodies of shapes `a` and `b` collide.
-    bool collidesWith(ShapeType a, ShapeType b) const {
-        return (collides[static_cast<u32>(a)] & shapeBit(b)) != 0;
-    }
 };
 
 /// @brief Identifier of a body inside a world.

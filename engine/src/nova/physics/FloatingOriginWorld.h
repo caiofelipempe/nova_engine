@@ -32,8 +32,6 @@ public:
     FloatingOriginWorld(Backend backend, const WorldDesc& desc);
     ~FloatingOriginWorld() override;
 
-    PhysicsCaps caps() const override;
-
     BodyId createBody(const BodyDesc& desc) override;
     void destroyBody(BodyId body) override;
     u32 bodyCount() const override;
@@ -108,8 +106,7 @@ private:
     Body* body(BodyId id);
     const Instance* home(const Body& b) const { return b.instances.empty() ? nullptr : &b.instances.front(); }
     GlobalPosition currentPosition(u32 index) const;
-    QueryHit toGlobal(const local::QueryHit& hit, const Region& region, const GlobalPosition& queryOrigin,
-                      bool ray) const;
+    QueryHit toGlobal(const local::QueryHit& hit, const Region& region, const GlobalPosition& queryOrigin) const;
     QueryFilter toLocal(const QueryFilter& filter, const Region& region) const;
 
     Backend m_backend;

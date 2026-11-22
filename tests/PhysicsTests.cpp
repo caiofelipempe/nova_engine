@@ -811,12 +811,6 @@ public:
     SimulationFocus lastFocus;
     glm::vec3 g{0.0f, -10.0f, 0.0f};
 
-    PhysicsCaps caps() const override {
-        PhysicsCaps c;
-        c.name = "IntegerTest";
-        c.globalPositions = true;
-        return c;
-    }
     BodyId createBody(const BodyDesc& d) override {
         bodies.push_back({d, d.linearVelocity});
         return {static_cast<u32>(bodies.size() - 1)};
@@ -887,24 +881,6 @@ void nativeIntegerBackend() {
     CHECK(ball.transform().position == raw->bodies[0].desc.position);
     CHECK((ball.transform().position - base).x == 0 && (ball.transform().position - base).z == 0); // no drift sideways
     CHECK(scene.physicsRegionCount() == 1 && scene.physicsOrigin() == GlobalPosition()); // no floating origin
-    CHECK(scene.physicsCaps().globalPositions && std::string(scene.physicsCaps().name) == "IntegerTest");
-}
-
-void sceneBackendChoice() {
-    // Scene::physicsBackend picks what startSimulation() (Play, GameLayer) creates.
-    Scene scene("choice");
-    CHECK(!scene.physicsCaps().globalPositions && scene.physicsCaps().collides[0] == 0); // not simulating
-    scene.physicsBackend = Backend::Skeleton;
-    FarScene f(GlobalPosition::fromUnits({10'000, 0, -10'000}, LengthUnit::Kilometer));
-    f.scene.physicsBackend = Backend::Skeleton;
-    f.scene.startSimulation();
-    CHECK(f.scene.physicsCaps().globalPositions && std::string(f.scene.physicsCaps().name) == "Skeleton");
-    CHECK(f.scene.physicsRegionCount() == 1 && f.scene.physicsOrigin() == GlobalPosition());
-    for (int i = 0; i < 180; ++i) f.scene.update(Duration::perSecond(60));
-    // The ball lands on the box ground 10,000 km out, as with Jolt.
-    const glm::dvec3 rest = (f.ball.transform().position - GlobalPosition::fromUnits({10'000, 0, -10'000}, LengthUnit::Kilometer)).toMeters();
-    CHECK_NEAR(rest.y, 0.5, 0.02);
-    CHECK(rest.x == 0.0 && rest.z == 0.0); // exactly: integer motion, nothing sideways
 }
 
 } // namespace
@@ -940,7 +916,6 @@ int main() {
         {"physics regions: dormant bodies keep their velocity", dormancy},
         {"determinism: two runs agree bit for bit", determinism},
         {"global contract: a native integer backend plugs in directly", nativeIntegerBackend},
-        {"scene: physicsBackend selects the Skeleton backend", sceneBackendChoice},
         {"shapes: cylinder, convex hull, triangle mesh", moreShapes},
         {"shapes: mesh ground and hull 10,000 km away", meshShapesFarAway},
     };

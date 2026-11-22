@@ -61,23 +61,6 @@ constexpr i64 saturatingMul(i64 a, i64 b) {
     if (p.hi != 0 || p.lo > limit) return negative ? kI64Min : kI64Max;
     return negative ? static_cast<i64>(0 - p.lo) : static_cast<i64>(p.lo);
 }
-/// @brief `(a * b) / 2^shift` from the exact 128-bit product, rounded to nearest (ties away from
-///        zero), saturating. Fixed-point multiply: e.g. a velocity times a Q32 duration.
-constexpr i64 mulShift(i64 a, i64 b, int shift) {
-    const bool negative = (a < 0) != (b < 0);
-    UInt128 p = UInt128::mul(magnitude(a), magnitude(b));
-    if (shift > 0) {
-        // Round half up on the magnitude: add 2^(shift-1) before shifting.
-        if (shift <= 64) p = p + UInt128{0, 1ull << (shift - 1)};
-        else if (shift < 128) p = p + UInt128{1ull << (shift - 65), 0};
-        if (shift >= 128) p = {};
-        else if (shift >= 64) p = {0, p.hi >> (shift - 64)};
-        else p = {p.hi >> shift, (p.lo >> shift) | (p.hi << (64 - shift))};
-    }
-    const u64 limit = negative ? (u64(1) << 63) : static_cast<u64>(kI64Max);
-    if (p.hi != 0 || p.lo > limit) return negative ? kI64Min : kI64Max;
-    return negative ? static_cast<i64>(0 - p.lo) : static_cast<i64>(p.lo);
-}
 
 } // namespace detail
 

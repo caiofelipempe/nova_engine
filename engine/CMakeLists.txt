@@ -19,7 +19,6 @@ file(GLOB_RECURSE NOVA_CORE_SOURCES CONFIGURE_DEPENDS
     ${SRC}/renderer/*.cpp  ${SRC}/renderer/*.h
     ${SRC}/scene/*.cpp     ${SRC}/scene/*.h
     ${SRC}/physics/*.cpp   ${SRC}/physics/*.h
-    ${SRC}/physics/skeleton/*.cpp ${SRC}/physics/skeleton/*.h
     ${SRC}/reflect/*.cpp   ${SRC}/reflect/*.h
     ${SRC}/assets/*.cpp    ${SRC}/assets/*.h
     ${SRC}/math/*.cpp      ${SRC}/math/*.h

@@ -190,19 +190,6 @@ void offsets() {
     CHECK(std::abs(half.x - (huge.x / 2)) <= 1 && std::abs(half.y - (huge.y / 2)) <= 1 && half.z == 500);
     CHECK(huge.scaled(1.0) == huge && huge.scaled(0.0) == GlobalOffset());
     CHECK(GlobalOffset(kMax, 0, 0).scaled(4.0).x == kMax);
-
-    // Fixed-point multiply from the exact 128-bit product: round to nearest, ties away from zero.
-    using detail::mulShift;
-    CHECK(mulShift(3, 5, 0) == 15 && mulShift(-3, 5, 0) == -15);
-    CHECK(mulShift(5, 1, 1) == 3 && mulShift(-5, 1, 1) == -3 && mulShift(4, 1, 1) == 2); // 2.5 -> 3
-    CHECK(mulShift(kMax, kMax, 64) == (i64(1) << 62) - 1);                             // product beyond int64
-    CHECK(mulShift(i64(1) << 40, i64(1) << 40, 18) == (i64(1) << 62));
-    CHECK(mulShift(i64(1) << 40, i64(1) << 40, 16) == kMax); // 2^64: saturates
-    CHECK(mulShift(kMax, 4, 1) == kMax && mulShift(kMin, 4, 1) == kMin);                // saturates
-    CHECK(mulShift(kMin, 1, 0) == kMin && mulShift(7, 7, 127) == 0);
-    CHECK(mulShift(3, i64(1) << 62, 63) == 2 && mulShift(-3, i64(1) << 62, 63) == -2); // 1.5 -> 2
-    CHECK(mulShift(i64(3) << 32, i64(1) << 31, 64) == 2);                                // 1.5 -> 2, shift 64
-    CHECK(mulShift(i64(3) << 32, i64(1) << 32, 65) == 2);                                // and above 64
 }
 
 void units() {
