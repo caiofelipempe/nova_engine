@@ -133,6 +133,38 @@ struct JointComponent {
     u64 appliedMotor = 0;            ///< Runtime: the motor last applied.
 };
 
+/// @brief A walking character (player, NPC): an upright capsule moved by velocity, not by forces.
+///
+/// Scripts set `velocity` every frame (typically: keep its vertical part, replace the horizontal
+/// part with the input, add a jump); the scene moves the character with it plus gravity while it is
+/// in the air, sliding along walls, walking up steps and slopes, sticking to the floor going down
+/// and riding moving platforms. After the update `velocity` holds what it really moved with, and
+/// `grounded` / `groundNormal` / `ground` say what it stands on. It pushes dynamic bodies, and
+/// queries and sensors see it. Do not put a RigidBodyComponent on the same entity.
+///
+/// The entity's origin is at the character's feet: `offset` goes from there to the capsule's center.
+struct CharacterControllerComponent {
+    f32 radius = 0.3f;                       ///< Capsule radius (m).
+    f32 height = 1.8f;                       ///< Total height (m), radius included.
+    glm::vec3 offset{0.0f, 0.9f, 0.0f};      ///< Capsule center relative to the entity origin (world axes).
+    f32 maxSlope = 50.0f;                    ///< Steepest walkable slope (degrees).
+    f32 stepHeight = 0.3f;                   ///< Highest step it walks up (m).
+    f32 stickToFloor = 0.5f;                 ///< Down steps it follows instead of flying off (m).
+    f32 mass = 70.0f;                        ///< Kg (pushing and being pushed).
+    f32 maxPushForce = 100.0f;               ///< Strongest push on dynamic bodies (N).
+    f32 gravityFactor = 1.0f;                ///< Gravity multiplier.
+    u32 layer = 0;                           ///< Collision layer.
+    glm::vec3 velocity{0.0f};                ///< In: what to move with; out: what it moved with (m/s).
+
+    bool grounded = false;                   ///< Runtime: standing on walkable ground.
+    physics::GroundState groundState = physics::GroundState::InAir; ///< Runtime: what it stands on.
+    glm::vec3 groundNormal{0.0f, 1.0f, 0.0f}; ///< Runtime: normal of the ground below.
+    EntityRef ground;                        ///< Runtime: the entity below (none: in the air or not an entity).
+    physics::CharacterId character;          ///< Runtime character. Managed by Scene.
+    u64 appliedKey = 0;                      ///< Runtime: what it was built from.
+    u64 appliedPose = 0;                     ///< Runtime: the position last written (teleports are detected).
+};
+
 /// @brief Scene-wide physics settings (saved with the scene).
 struct PhysicsSettings {
     glm::vec3 gravity{0.0f, -9.81f, 0.0f}; ///< Gravity acceleration (m/s²).

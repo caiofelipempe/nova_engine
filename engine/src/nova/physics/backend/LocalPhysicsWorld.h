@@ -71,6 +71,10 @@ struct ContactEvent {
 ///        by the caller with jointLoad().
 using JointDesc = JointDescT<glm::vec3>;
 
+/// @brief Character parameters / state (position relative to the world's origin).
+using CharacterDesc = CharacterDescT<glm::vec3>;
+using CharacterState = CharacterStateT<glm::vec3>;
+
 /// @brief What a joint held during the last step.
 struct JointLoad {
     f32 force = 0.0f;  ///< N.
@@ -146,6 +150,15 @@ public:
     virtual f32 jointPosition(JointId joint) const = 0;
     /// @brief Force and torque the joint applied during the last step.
     virtual JointLoad jointLoad(JointId joint) const = 0;
+    /// @}
+
+    /// @name Character controllers (see PhysicsWorld); shiftOrigin() moves them too.
+    /// @{
+    virtual CharacterId createCharacter(const CharacterDesc& desc) = 0;
+    virtual void destroyCharacter(CharacterId character) = 0;
+    virtual void setCharacterVelocity(CharacterId character, const glm::vec3& velocity) = 0;
+    virtual void setCharacterTransform(CharacterId character, const glm::vec3& position, const glm::quat& rotation) = 0;
+    virtual CharacterState characterState(CharacterId character) const = 0;
     /// @}
 
     /// @brief Sets the world gravity (m/s²).

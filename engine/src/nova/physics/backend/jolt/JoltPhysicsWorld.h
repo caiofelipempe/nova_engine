@@ -38,6 +38,12 @@ public:
     void addTorque(BodyId body, const glm::vec3& torque) override;
     bool isActive(BodyId body) const override;
 
+    CharacterId createCharacter(const CharacterDesc& desc) override;
+    void destroyCharacter(CharacterId character) override;
+    void setCharacterVelocity(CharacterId character, const glm::vec3& velocity) override;
+    void setCharacterTransform(CharacterId character, const glm::vec3& position, const glm::quat& rotation) override;
+    CharacterState characterState(CharacterId character) const override;
+
     JointId createJoint(const JointDesc& desc) override;
     void destroyJoint(JointId joint) override;
     void setJointMotor(JointId joint, const JointMotor& motor) override;
@@ -64,6 +70,7 @@ public:
     std::vector<ContactEvent> drainContactEvents() override;
 
 private:
+    void updateCharacters(f32 dt);
     struct Impl;
     Scope<Impl> m_impl;
 };

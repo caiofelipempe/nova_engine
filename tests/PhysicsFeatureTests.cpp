@@ -677,6 +677,160 @@ void prefabRemapsRefs() {
     CHECK(lb.valid() && loaded.resolve(lb.get<JointComponent>().connected).name() == "A");
 }
 
+// ------------------------------------------------------------ characters --
+Entity addCharacter(Scene& s, const GlobalPosition& feet) {
+    Entity c = s.createEntity("Player");
+    c.transform().position = feet;
+    c.add<CharacterControllerComponent>();
+    return c;
+}
+
+// Holds a horizontal input for some frames, as a player script would.
+void walk(Scene& s, Entity c, const glm::vec3& input, int frames) {
+    for (int i = 0; i < frames; ++i) {
+        auto& cc = c.get<CharacterControllerComponent>();
+        cc.velocity.x = input.x;
+        cc.velocity.z = input.z;
+        s.update(kFrame);
+    }
+}
+
+Entity addStatic(Scene& s, const std::string& name, const GlobalPosition& center, const glm::vec3& size,
+                 const glm::quat& rotation = glm::quat(1, 0, 0, 0)) {
+    Entity e = s.createEntity(name);
+    e.transform().position = center;
+    e.transform().scale = size;
+    e.transform().rotation = rotation;
+    e.add<RigidBodyComponent>(BodyType::Static);
+    return e;
+}
+
+void characterWalks() {
+    Scene scene("walk");
+    Entity ground = addGround(scene);
+    Entity player = addCharacter(scene, {0.0, 1.0, 0.0});
+    scene.startSimulation();
+    run(scene, 60); // falls and lands
+    auto& cc = player.get<CharacterControllerComponent>();
+    CHECK(cc.grounded);
+    CHECK(scene.resolve(cc.ground) == ground);
+    CHECK_NEAR(player.transform().position.toMeters().y, 0.0, 0.03); // feet on the ground
+    walk(scene, player, {2, 0, 0}, 60);
+    CHECK_NEAR(player.transform().position.toMeters().x, 2.0, 0.05);
+    CHECK(cc.grounded);
+    CHECK_NEAR(player.transform().position.toMeters().y, 0.0, 0.03);
+    // Jump: leaves the ground and comes back down.
+    cc.velocity.y = 5.0f;
+    walk(scene, player, {0, 0, 0}, 10);
+    CHECK(!cc.grounded && player.transform().position.toMeters().y > 0.5);
+    walk(scene, player, {0, 0, 0}, 90);
+    CHECK(cc.grounded);
+    CHECK_NEAR(player.transform().position.toMeters().y, 0.0, 0.03);
+}
+
+void characterSlidesAlongWalls() {
+    Scene scene("wall");
+    addGround(scene);
+    addStatic(scene, "Wall", {2.0, 1.0, 0.0}, {1.0f, 2.0f, 20.0f}); // face at x = 1.5
+    Entity player = addCharacter(scene, {0.0, 0.05, 0.0});
+    scene.startSimulation();
+    run(scene, 10);
+    walk(scene, player, {3, 0, 1}, 60); // into the wall, and along it
+    const glm::dvec3 p = player.transform().position.toMeters();
+    CHECK_NEAR(p.x, 1.5 - 0.3, 0.05);       // stopped by the wall (capsule radius 0.3)
+    CHECK_NEAR(p.z, 1.0, 0.1);              // kept going along it
+    CHECK(player.get<CharacterControllerComponent>().grounded);
+}
+
+void characterStairsAndSlopes() {
+    Scene scene("stairs");
+    addGround(scene);
+    // A 0.2 m step (walkable) and, further along Z, a 0.6 m ledge (too high).
+    addStatic(scene, "Step", {3.0, 0.1, 0.0}, {4.0f, 0.2f, 4.0f});
+    addStatic(scene, "Ledge", {3.0, 0.3, 10.0}, {4.0f, 0.6f, 4.0f});
+    Entity a = addCharacter(scene, {0.0, 0.05, 0.0});
+    Entity b = addCharacter(scene, {0.0, 0.05, 10.0});
+    scene.startSimulation();
+    run(scene, 10);
+    for (int i = 0; i < 90; ++i) {
+        a.get<CharacterControllerComponent>().velocity.x = 2.0f;
+        b.get<CharacterControllerComponent>().velocity.x = 2.0f;
+        scene.update(kFrame);
+    }
+    CHECK(a.transform().position.toMeters().x > 1.5);           // up the step...
+    CHECK_NEAR(a.transform().position.toMeters().y, 0.2, 0.03); // ...standing on it
+    CHECK(b.transform().position.toMeters().x < 1.0 - 0.25);    // the ledge stops it
+    // A 60° slope is too steep to stand on.
+    Scene steep("slope");
+    addStatic(steep, "Slope", {0.0, 0.0, 0.0}, {10.0f, 0.2f, 10.0f},
+              glm::angleAxis(glm::radians(60.0f), glm::vec3(0, 0, 1)));
+    Entity c = addCharacter(steep, {0.0, 3.0, 0.0});
+    steep.startSimulation();
+    run(steep, 60);
+    CHECK(!c.get<CharacterControllerComponent>().grounded);
+    CHECK(c.get<CharacterControllerComponent>().groundState == GroundState::OnSteepGround ||
+          c.transform().position.toMeters().y < 2.0); // slid down
+}
+
+void characterPushesAndIsSeen() {
+    Scene scene("push");
+    addGround(scene);
+    Entity crate = scene.createEntity("Crate");
+    crate.transform().position = {1.5, 0.5, 0.0};
+    crate.add<RigidBodyComponent>().mass = 5.0f;
+    Entity zone = scene.createEntity("Zone");
+    zone.transform().position = {0.0, 1.0, 5.0};
+    zone.transform().scale = {2, 2, 2};
+    zone.add<RigidBodyComponent>(BodyType::Static).isSensor = true;
+    auto& rz = zone.addScript<Recorder>();
+    Entity player = addCharacter(scene, {0.0, 0.05, 0.0});
+    scene.startSimulation();
+    run(scene, 10);
+    walk(scene, player, {2, 0, 0}, 90); // into the crate: it gets pushed
+    CHECK(crate.transform().position.toMeters().x > 2.0);
+    // Queries see the character (and can ignore it).
+    auto hit = scene.raycast(player.transform().position + glm::vec3(0, 0.9f, -5), {0, 0, 1}, 10.0f);
+    CHECK(hit && hit->entity == player);
+    auto through = scene.raycast(player.transform().position + glm::vec3(0, 0.9f, -5), {0, 0, 1}, 10.0f, player);
+    CHECK(!through || through->entity != player);
+    // Sensors see it (walking back, then into the zone).
+    walk(scene, player, {-2, 0, 0}, 60);
+    const GlobalPosition start = player.transform().position;
+    for (int i = 0; i < 240; ++i) {
+        auto& cc = player.get<CharacterControllerComponent>();
+        const glm::dvec3 to = (GlobalPosition(0.0, 0.0, 8.0) - player.transform().position).toMeters();
+        cc.velocity.x = static_cast<f32>(glm::clamp(to.x, -2.0, 2.0));
+        cc.velocity.z = static_cast<f32>(glm::clamp(to.z, -2.0, 2.0));
+        scene.update(kFrame);
+    }
+    CHECK(distance(player.transform().position, start) > 5.0);
+    CHECK(rz.count("enter") >= 1);
+    if (!rz.log.empty()) CHECK(rz.log.front().other == player);
+}
+
+void characterTeleportAndFar() {
+    const GlobalPosition base = GlobalPosition::fromUnits({10'000, 0, 0}, LengthUnit::Kilometer);
+    Scene scene("far");
+    addGround(scene, base);
+    Entity player = addCharacter(scene, base + glm::vec3(0.0f, 0.05f, 0.0f));
+    scene.setPhysicsFocus(base);
+    scene.startSimulation();
+    run(scene, 10);
+    walk(scene, player, {1, 0, 0}, 60);
+    CHECK_NEAR((player.transform().position - base).toMeters().x, 1.0, 0.03);
+    CHECK_NEAR((player.transform().position - base).toMeters().y, 0.0, 0.03);
+    // Moved by code: a teleport (the velocity stays: stop it too).
+    player.transform().position = base + glm::vec3(-10.0f, 3.0f, 0.0f);
+    player.get<CharacterControllerComponent>().velocity = glm::vec3(0.0f);
+    run(scene, 60);
+    CHECK_NEAR((player.transform().position - base).toMeters().x, -10.0, 0.03);
+    CHECK_NEAR((player.transform().position - base).toMeters().y, 0.0, 0.03); // fell back down
+    // Removing the component removes the character.
+    player.remove<CharacterControllerComponent>();
+    run(scene, 2);
+    CHECK(!scene.raycast(base + glm::vec3(-10.0f, 5.0f, 0.0f), {0, -1, 0}, 4.0f));
+}
+
 } // namespace
 
 int main() {
@@ -708,6 +862,11 @@ int main() {
         {"joints: 10,000 km out, across a rebase", farJointsAndRebase},
         {"joints: dormant and back", jointsAndDormancy},
         {"joints: prefab references and saving", prefabRemapsRefs},
+        {"characters: walk, land, jump", characterWalks},
+        {"characters: slide along walls", characterSlidesAlongWalls},
+        {"characters: stairs and steep slopes", characterStairsAndSlopes},
+        {"characters: push bodies, seen by queries and sensors", characterPushesAndIsSeen},
+        {"characters: teleport, 10,000 km out, removal", characterTeleportAndFar},
     };
     for (auto& [name, fn] : tests) {
         const int before = g_failures;

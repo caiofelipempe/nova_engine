@@ -51,6 +51,12 @@ public:
     void addTorque(BodyId body, const glm::vec3& torque) override;
     bool isActive(BodyId body) const override;
 
+    CharacterId createCharacter(const CharacterDesc& desc) override;
+    void destroyCharacter(CharacterId character) override;
+    void setCharacterVelocity(CharacterId character, const glm::vec3& velocity) override;
+    void setCharacterTransform(CharacterId character, const GlobalPosition& position, const glm::quat& rotation) override;
+    CharacterState characterState(CharacterId character) const override;
+
     JointId createJoint(const JointDesc& desc) override;
     void destroyJoint(JointId joint) override;
     void setJointMotor(JointId joint, const JointMotor& motor) override;
@@ -135,6 +141,18 @@ private:
         u32 region = 0;                 // where the instance lives
         JointId local;                  // invalid = waiting (a body dormant / elsewhere)
     };
+    // Characters: in the region of their position (dormant outside every region).
+    struct Character {
+        bool alive = false;
+        CharacterDesc desc;      // settings (position: where it was created)
+        CharacterState state;    // last known (kept while dormant)
+        glm::vec3 velocity{0.0f};
+        u32 region = 0;
+        CharacterId local;       // invalid = dormant
+    };
+    void assignCharacter(u32 index);
+    void removeCharacterInstance(u32 index);
+    void readCharacter(u32 index);
     void instantiateJoint(u32 index);
     void uninstantiateJoint(u32 index);
     void jointsOf(u32 body, std::vector<u32>& out) const;
@@ -156,6 +174,8 @@ private:
     using PairKey = std::pair<u64, u64>;
     std::map<std::tuple<u32, u64, u64>, ContactEvent> m_regionPairs;
     std::map<PairKey, u32> m_pairs;
+    std::vector<Character> m_characters;
+    std::vector<u32> m_freeCharacters;
     std::vector<Joint> m_joints;
     std::vector<u32> m_freeJoints;
     std::vector<JointBreakEvent> m_jointBreaks;

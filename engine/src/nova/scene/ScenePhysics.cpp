@@ -43,10 +43,12 @@ void Scene::startSimulation(Scope<physics::PhysicsWorld> world) {
     pushPhysicsFocus(); // before the bodies: they are placed where the action is
     for (auto e : m_registry.view<RigidBodyComponent>()) createBody(e);
     for (auto e : m_registry.view<JointComponent>()) createJoint(e);
+    for (auto e : m_registry.view<CharacterControllerComponent>()) createCharacter(e);
 }
 
 void Scene::stopSimulation() {
     if (!m_physics) return;
+    for (auto [e, cc] : m_registry.view<CharacterControllerComponent>().each()) cc.character = {};
     for (auto [e, jc] : m_registry.view<JointComponent>().each()) {
         jc.joint = {};
         jc.connectedBody = {};
@@ -322,6 +324,105 @@ void Scene::onRigidBodyDestroyed(entt::registry& registry, entt::entity e) {
     rb.body = {};
 }
 
+// -------------------------------------------------------------- characters --
+namespace {
+u64 characterKey(const CharacterControllerComponent& c) {
+    u64 h = 1469598103934665603ull;
+    auto add = [&h](const auto& v) {
+        const auto* b = reinterpret_cast<const unsigned char*>(&v);
+        for (size_t i = 0; i < sizeof(v); ++i) {
+            h ^= b[i];
+            h *= 1099511628211ull;
+        }
+    };
+    add(c.radius);
+    add(c.height);
+    add(c.maxSlope);
+    add(c.stepHeight);
+    add(c.stickToFloor);
+    add(c.mass);
+    add(c.maxPushForce);
+    add(c.gravityFactor);
+    add(c.layer);
+    return h | 1;
+}
+u64 positionKey(const GlobalPosition& p) {
+    u64 h = 1469598103934665603ull;
+    const auto raw = p.raw();
+    const auto* b = reinterpret_cast<const unsigned char*>(&raw);
+    for (size_t i = 0; i < sizeof(raw); ++i) {
+        h ^= b[i];
+        h *= 1099511628211ull;
+    }
+    return h | 1;
+}
+} // namespace
+
+void Scene::createCharacter(entt::entity e) {
+    auto& cc = m_registry.get<CharacterControllerComponent>(e);
+    const auto& t = m_registry.get<TransformComponent>(e);
+    physics::CharacterDesc d;
+    d.radius = std::max(cc.radius, 0.01f);
+    d.halfHeight = std::max(cc.height * 0.5f - d.radius, 0.0f);
+    d.position = t.position + cc.offset;
+    d.rotation = t.rotation;
+    d.maxSlopeAngle = glm::radians(cc.maxSlope);
+    d.stepHeight = cc.stepHeight;
+    d.stickToFloor = cc.stickToFloor;
+    d.mass = cc.mass;
+    d.maxPushForce = cc.maxPushForce;
+    d.gravityFactor = cc.gravityFactor;
+    d.layer = std::min(cc.layer, physics::kCollisionLayerCount - 2);
+    d.userData = toUserData(e);
+    cc.character = m_physics->createCharacter(d);
+    m_physics->setCharacterVelocity(cc.character, cc.velocity);
+    cc.appliedKey = characterKey(cc);
+    cc.appliedPose = positionKey(t.position);
+}
+
+void Scene::onCharacterDestroyed(entt::registry& registry, entt::entity e) {
+    auto& cc = registry.get<CharacterControllerComponent>(e);
+    if (m_physics && cc.character) m_physics->destroyCharacter(cc.character);
+    cc.character = {};
+}
+
+// Before the steps: new characters, rebuilt ones, teleports, and the velocity scripts asked for.
+void Scene::syncCharacters() {
+    for (auto [e, cc, t] : m_registry.view<CharacterControllerComponent, TransformComponent>().each()) {
+        if (!cc.character) {
+            createCharacter(e);
+            continue;
+        }
+        if (characterKey(cc) != cc.appliedKey) {
+            m_physics->destroyCharacter(cc.character);
+            createCharacter(e);
+            continue;
+        }
+        if (positionKey(t.position) != cc.appliedPose) { // moved by code or the editor: a teleport
+            m_physics->setCharacterTransform(cc.character, t.position + cc.offset, t.rotation);
+            cc.appliedPose = positionKey(t.position);
+        }
+        m_physics->setCharacterVelocity(cc.character, cc.velocity);
+    }
+}
+
+// After the steps: where they went and what they stand on.
+void Scene::readCharacters() {
+    for (auto [e, cc, t] : m_registry.view<CharacterControllerComponent, TransformComponent>().each()) {
+        if (!cc.character) continue;
+        const physics::CharacterState s = m_physics->characterState(cc.character);
+        t.position = s.position - cc.offset;
+        cc.appliedPose = positionKey(t.position);
+        cc.velocity = s.velocity;
+        cc.groundState = s.ground;
+        cc.grounded = s.ground == physics::GroundState::OnGround;
+        cc.groundNormal = s.groundNormal;
+        cc.ground = {};
+        if (s.ground != physics::GroundState::InAir && s.groundBody && !physics::isWorldBoundary(s.groundUserData))
+            cc.ground = refOf(Entity{fromUserData(s.groundUserData), this});
+    }
+}
+
 // ------------------------------------------------------------------ joints --
 namespace {
 u64 jointKey(const JointComponent& j, const TransformComponent& t) {
@@ -449,6 +550,7 @@ void Scene::stepPhysics(Duration dt) {
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) // gained a rigid body since last frame
         if (!rb.body) createBody(e);
     syncJoints();
+    syncCharacters();
 
     constexpr int kMaxSteps = 4; // avoid the spiral of death after a hitch
     m_physicsAccumulator += dt;
@@ -472,6 +574,7 @@ void Scene::stepPhysics(Duration dt) {
         t.setRotation(q);
     }
 
+    readCharacters();
     dispatchContacts();
 }
 
@@ -600,8 +703,10 @@ u64 Scene::stateHash() {
 physics::QueryFilter Scene::filterIgnoring(Entity e, u32 layerMask) const {
     physics::QueryFilter f;
     f.layerMask = layerMask;
-    if (e.valid())
+    if (e.valid()) {
         if (auto* rb = e.tryGet<RigidBodyComponent>()) f.ignoreBody = rb->body;
+        if (auto* cc = e.tryGet<CharacterControllerComponent>()) f.ignoreCharacter = cc->character;
+    }
     return f;
 }
 

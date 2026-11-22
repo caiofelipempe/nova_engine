@@ -257,6 +257,10 @@ private:
     physics::BodyDesc bodyDescFor(entt::entity e);
     void syncBodies();
     void syncJoints();
+    void syncCharacters();
+    void readCharacters();
+    void createCharacter(entt::entity e);
+    void onCharacterDestroyed(entt::registry& registry, entt::entity e);
     void createJoint(entt::entity e);
     void destroyJoint(JointComponent& jc);
     void onJointDestroyed(entt::registry& registry, entt::entity e);

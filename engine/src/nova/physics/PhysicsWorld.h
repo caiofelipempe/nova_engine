@@ -83,6 +83,10 @@ struct ContactEvent {
 
 /// @brief Joint creation parameters (see JointDescT).
 using JointDesc = JointDescT<GlobalPosition>;
+/// @brief Character parameters (see CharacterDescT).
+using CharacterDesc = CharacterDescT<GlobalPosition>;
+/// @brief Character state (see CharacterStateT).
+using CharacterState = CharacterStateT<GlobalPosition>;
 
 /// @brief Where and how far the simulation runs (hints; backends may ignore what they do not need).
 struct SimulationFocus {
@@ -169,6 +173,24 @@ public:
     virtual bool isJointBroken(JointId joint) const = 0;
     /// @brief Returns (and clears) the joints that broke since the last call.
     virtual std::vector<JointBreakEvent> drainJointBreaks() = 0;
+    /// @}
+
+    /// @name Character controllers
+    /// An upright capsule that walks: it slides along walls, walks up steps and slopes, sticks to
+    /// the floor going down, stands on moving bodies and pushes dynamic ones. Queries and sensors
+    /// see it (with its user data). Every step it moves with the velocity last set, plus gravity
+    /// while not on the ground.
+    /// @{
+    virtual CharacterId createCharacter(const CharacterDesc& desc) = 0;
+    /// @brief Removes a character. Invalid ids are ignored.
+    virtual void destroyCharacter(CharacterId character) = 0;
+    /// @brief The velocity (m/s) to move with from the next step (typically: last velocity with the
+    ///        horizontal part replaced by the player's input, plus a jump).
+    virtual void setCharacterVelocity(CharacterId character, const glm::vec3& velocity) = 0;
+    /// @brief Teleports a character.
+    virtual void setCharacterTransform(CharacterId character, const GlobalPosition& position, const glm::quat& rotation) = 0;
+    /// @brief Where the character is and what it stands on.
+    virtual CharacterState characterState(CharacterId character) const = 0;
     /// @}
 
     /// @brief Sets the world gravity (m/s²).

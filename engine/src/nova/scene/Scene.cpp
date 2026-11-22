@@ -19,6 +19,7 @@ void Scene::connectSignals() {
     // Removing the component (or destroying the entity) removes the body from the world.
     m_registry.on_destroy<RigidBodyComponent>().connect<&Scene::onRigidBodyDestroyed>(*this);
     m_registry.on_destroy<JointComponent>().connect<&Scene::onJointDestroyed>(*this);
+    m_registry.on_destroy<CharacterControllerComponent>().connect<&Scene::onCharacterDestroyed>(*this);
 }
 
 Scene::~Scene() {

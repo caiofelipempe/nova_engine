@@ -7,6 +7,10 @@ namespace nova::physics {
 
 namespace {
 
+// Local userData of a character's capsule: this bit plus the character's index.
+constexpr u64 kCharacterUserData = 1ull << 62;
+bool isCharacter(u64 localUser) { return !isWorldBoundary(localUser) && (localUser & kCharacterUserData) != 0; }
+
 // Exact centroid: the first point plus the average offset to the others (integer division).
 GlobalPosition centroid(const std::vector<GlobalPosition>& points) {
     if (points.empty()) return {};
@@ -121,6 +125,8 @@ FloatingOriginWorld::Region& FloatingOriginWorld::createRegion(const GlobalPosit
 
 void FloatingOriginWorld::destroyRegion(size_t index) {
     const u32 id = m_regions[index].id;
+    for (u32 i = 0; i < m_characters.size(); ++i) // characters there go dormant
+        if (m_characters[i].alive && m_characters[i].local && m_characters[i].region == id) removeCharacterInstance(i);
     for (u32 i = 0; i < m_bodies.size(); ++i) // bodies leave it (dynamic ones keep their motion)
         for (size_t k = m_bodies[i].instances.size(); k-- > 0;)
             if (m_bodies[i].instances[k].region == id) removeInstance(i, k);
@@ -254,6 +260,8 @@ void FloatingOriginWorld::updateRegions() {
     }
     for (u32 i = 0; i < m_bodies.size(); ++i)
         if (m_bodies[i].alive) assign(i);
+    for (u32 i = 0; i < m_characters.size(); ++i)
+        if (m_characters[i].alive) assignCharacter(i);
     rewrapBodies();
 }
 
@@ -533,7 +541,12 @@ void FloatingOriginWorld::setCollisionLayers(const CollisionLayers& layers) {
 void FloatingOriginWorld::step(Duration dt) {
     if (m_regions.empty()) updateRegions();
     const f32 seconds = dt.secondsF();
+    for (u32 i = 0; i < m_characters.size(); ++i) // the velocity they move with this step
+        if (const Character& c = m_characters[i]; c.alive && c.local)
+            if (Region* r = findRegion(c.region)) r->world->setCharacterVelocity(c.local, c.velocity);
     for (Region& r : m_regions) r.world->step(seconds);
+    for (u32 i = 0; i < m_characters.size(); ++i)
+        if (m_characters[i].alive && m_characters[i].local) readCharacter(i);
     for (Region& r : m_regions)
         for (const local::ContactEvent& c : r.world->drainContactEvents()) onLocalContact(r.id, c);
     // Breakable joints: what they held during the step.
@@ -550,6 +563,116 @@ void FloatingOriginWorld::step(Duration dt) {
         joint.broken = true;
         m_jointBreaks.push_back({JointId{j}, joint.desc.userData});
     }
+}
+
+// -------------------------------------------------------------- characters --
+CharacterId FloatingOriginWorld::createCharacter(const CharacterDesc& d) {
+    if (m_regions.empty()) updateRegions();
+    u32 index;
+    if (!m_freeCharacters.empty()) {
+        index = m_freeCharacters.back();
+        m_freeCharacters.pop_back();
+    } else {
+        index = static_cast<u32>(m_characters.size());
+        m_characters.emplace_back();
+    }
+    Character& c = m_characters[index];
+    c = Character{};
+    c.alive = true;
+    c.desc = d;
+    c.state.position = d.position;
+    assignCharacter(index);
+    return {index};
+}
+
+void FloatingOriginWorld::readCharacter(u32 index) {
+    Character& c = m_characters[index];
+    const Region* r = findRegion(c.region);
+    if (!r) return;
+    const local::CharacterState l = r->world->characterState(c.local);
+    c.state.position = r->toGlobal(l.position);
+    c.state.velocity = l.velocity;
+    c.state.ground = l.ground;
+    c.state.groundNormal = l.groundNormal;
+    c.state.groundVelocity = l.groundVelocity;
+    c.state.groundBody = {};
+    c.state.groundUserData = 0;
+    if (l.ground != GroundState::InAir && l.groundBody) {
+        // The local body's user data is our body index (or a code): back to global.
+        toGlobalIds(l.groundUserData, c.state.groundBody, c.state.groundUserData);
+    }
+    c.velocity = l.velocity;
+}
+
+void FloatingOriginWorld::removeCharacterInstance(u32 index) {
+    Character& c = m_characters[index];
+    if (!c.local) return;
+    readCharacter(index);
+    endPairs(kCharacterUserData | index, c.region, false);
+    if (Region* r = findRegion(c.region)) r->world->destroyCharacter(c.local);
+    c.local = {};
+    c.state.ground = GroundState::InAir; // dormant: not standing on anything simulated
+}
+
+void FloatingOriginWorld::assignCharacter(u32 index) {
+    Character& c = m_characters[index];
+    const Region* wanted = regionAt(c.state.position);
+    if (c.local && wanted && wanted->id == c.region) return;
+    removeCharacterInstance(index);
+    if (!wanted) return; // dormant
+    Region& r = *findRegion(wanted->id);
+    local::CharacterDesc l;
+    l.radius = c.desc.radius;
+    l.halfHeight = c.desc.halfHeight;
+    l.position = r.toLocal(c.state.position);
+    l.rotation = c.desc.rotation;
+    l.maxSlopeAngle = c.desc.maxSlopeAngle;
+    l.stepHeight = c.desc.stepHeight;
+    l.stickToFloor = c.desc.stickToFloor;
+    l.mass = c.desc.mass;
+    l.maxPushForce = c.desc.maxPushForce;
+    l.gravityFactor = c.desc.gravityFactor;
+    l.layer = c.desc.layer;
+    l.userData = kCharacterUserData | index;
+    c.local = r.world->createCharacter(l);
+    c.region = r.id;
+    if (c.local) r.world->setCharacterVelocity(c.local, c.velocity);
+}
+
+void FloatingOriginWorld::destroyCharacter(CharacterId id) {
+    if (!id || id.value >= m_characters.size() || !m_characters[id.value].alive) return;
+    removeCharacterInstance(id.value);
+    endPairs(kCharacterUserData | id.value, 0, true);
+    m_characters[id.value] = Character{};
+    m_freeCharacters.push_back(id.value);
+}
+
+void FloatingOriginWorld::setCharacterVelocity(CharacterId id, const glm::vec3& v) {
+    if (!id || id.value >= m_characters.size() || !m_characters[id.value].alive) return;
+    m_characters[id.value].velocity = v;
+}
+
+void FloatingOriginWorld::setCharacterTransform(CharacterId id, const GlobalPosition& position, const glm::quat& rotation) {
+    if (!id || id.value >= m_characters.size() || !m_characters[id.value].alive) return;
+    Character& c = m_characters[id.value];
+    c.state.position = position;
+    c.desc.rotation = rotation;
+    if (c.local) {
+        const Region* r = findRegion(c.region);
+        if (r && regionAt(position) == r) {
+            r->world->setCharacterTransform(c.local, r->toLocal(position), rotation);
+            readCharacter(id.value);
+            return;
+        }
+    }
+    removeCharacterInstance(id.value); // somewhere else: placed again there
+    c.state.position = position;
+    assignCharacter(id.value);
+}
+
+CharacterState FloatingOriginWorld::characterState(CharacterId id) const {
+    if (!id || id.value >= m_characters.size() || !m_characters[id.value].alive) return {};
+    return m_characters[id.value].state;
 }
 
 // ------------------------------------------------------------------ joints --
@@ -681,6 +804,10 @@ void FloatingOriginWorld::toGlobalIds(u64 localUser, BodyId& id, u64& user) cons
     if (isWorldBoundary(localUser)) {
         id = {};
         user = localUser;
+    } else if (isCharacter(localUser)) { // a character's capsule: no body, the character's user data
+        const u64 index = localUser & ~kCharacterUserData;
+        id = {};
+        user = index < m_characters.size() ? m_characters[index].desc.userData : 0;
     } else {
         id = {static_cast<u32>(localUser)};
         user = localUser < m_bodies.size() ? m_bodies[localUser].desc.userData : 0;
@@ -749,6 +876,10 @@ QueryFilter FloatingOriginWorld::toLocal(const QueryFilter& filter, const Region
     QueryFilter out;
     out.includeSensors = filter.includeSensors;
     out.layerMask = filter.layerMask;
+    if (filter.ignoreCharacter && filter.ignoreCharacter.value < m_characters.size()) {
+        const Character& c = m_characters[filter.ignoreCharacter.value];
+        if (c.alive && c.local && c.region == region.id) out.ignoreCharacter = c.local;
+    }
     if (const Body* b = body(filter.ignoreBody))
         for (const Instance& inst : b->instances)
             if (inst.region == region.id) out.ignoreBody = inst.local;
@@ -758,12 +889,7 @@ QueryFilter FloatingOriginWorld::toLocal(const QueryFilter& filter, const Region
 QueryHit FloatingOriginWorld::toGlobal(const local::QueryHit& hit, const Region& region,
                                        const GlobalPosition& queryOrigin, bool ray) const {
     QueryHit out;
-    if (isWorldBoundary(hit.userData)) {
-        out.userData = hit.userData;
-    } else {
-        out.body = {static_cast<u32>(hit.userData)};
-        out.userData = hit.userData < m_bodies.size() ? m_bodies[hit.userData].desc.userData : 0;
-    }
+    toGlobalIds(hit.userData, out.body, out.userData);
     out.point = region.toGlobal(hit.point);
     out.normal = hit.normal;
     out.hitSurfaceNormal = hit.hitSurfaceNormal;

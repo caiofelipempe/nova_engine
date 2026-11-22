@@ -18,6 +18,11 @@ void registerEngineTypes() {
         .value("Hinge", physics::JointType::Hinge)
         .value("Slider", physics::JointType::Slider)
         .value("Distance", physics::JointType::Distance);
+    enumeration<physics::GroundState>("GroundState")
+        .value("OnGround", physics::GroundState::OnGround)
+        .value("OnSteepGround", physics::GroundState::OnSteepGround)
+        .value("NotSupported", physics::GroundState::NotSupported)
+        .value("InAir", physics::GroundState::InAir);
     enumeration<physics::JointMotorMode>("JointMotorMode")
         .value("Off", physics::JointMotorMode::Off)
         .value("Velocity", physics::JointMotorMode::Velocity)
@@ -150,6 +155,27 @@ void registerEngineTypes() {
         .field("connectedBody", &JointComponent::connectedBody, {.transient = true})
         .field("appliedKey", &JointComponent::appliedKey, {.transient = true})
         .field("appliedMotor", &JointComponent::appliedMotor, {.transient = true})
+        .component();
+
+    type<CharacterControllerComponent>("CharacterController")
+        .field("radius", &CharacterControllerComponent::radius, {.speed = 0.01f})
+        .field("height", &CharacterControllerComponent::height, {.speed = 0.01f, .tooltip = "Total height, radius included"})
+        .field("offset", &CharacterControllerComponent::offset, {.speed = 0.01f, .tooltip = "Capsule center from the entity origin (its feet)"})
+        .field("maxSlope", &CharacterControllerComponent::maxSlope, {.min = 0.0f, .max = 89.0f, .tooltip = "Degrees"})
+        .field("stepHeight", &CharacterControllerComponent::stepHeight, {.speed = 0.01f})
+        .field("stickToFloor", &CharacterControllerComponent::stickToFloor, {.speed = 0.01f})
+        .field("mass", &CharacterControllerComponent::mass, {.speed = 0.5f})
+        .field("maxPushForce", &CharacterControllerComponent::maxPushForce, {.speed = 1.0f, .tooltip = "N"})
+        .field("gravityFactor", &CharacterControllerComponent::gravityFactor, {.speed = 0.01f})
+        .field("layer", &CharacterControllerComponent::layer)
+        .field("velocity", &CharacterControllerComponent::velocity, {.speed = 0.05f})
+        .field("grounded", &CharacterControllerComponent::grounded, {.transient = true})
+        .field("groundState", &CharacterControllerComponent::groundState, {.transient = true})
+        .field("groundNormal", &CharacterControllerComponent::groundNormal, {.transient = true})
+        .field("ground", &CharacterControllerComponent::ground, {.transient = true})
+        .field("character", &CharacterControllerComponent::character, {.transient = true})
+        .field("appliedKey", &CharacterControllerComponent::appliedKey, {.transient = true})
+        .field("appliedPose", &CharacterControllerComponent::appliedPose, {.transient = true})
         .component();
 
     type<RotatorComponent>("Rotator")

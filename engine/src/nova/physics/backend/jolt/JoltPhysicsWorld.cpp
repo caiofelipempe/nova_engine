@@ -31,6 +31,7 @@
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
@@ -433,12 +434,14 @@ JPH::EAllowedDOFs allowedDOFs(u8 locked) {
     return static_cast<JPH::EAllowedDOFs>(allowed);
 }
 
-// Applies QueryFilter (ignored body, sensors). Runs with the body already locked by Jolt.
+// Applies QueryFilter (ignored body or character, sensors). Runs with the body already locked by Jolt.
 class QueryBodyFilter final : public JPH::BodyFilter {
 public:
-    explicit QueryBodyFilter(const QueryFilter& f) : m_filter(f) {}
+    QueryBodyFilter(const QueryFilter& f, JPH::BodyID ignoredCharacterBody = {})
+        : m_filter(f), m_character(ignoredCharacterBody) {}
     bool ShouldCollide(const JPH::BodyID& id) const override {
-        return !m_filter.ignoreBody || id.GetIndexAndSequenceNumber() != m_filter.ignoreBody.value;
+        if (m_filter.ignoreBody && id.GetIndexAndSequenceNumber() == m_filter.ignoreBody.value) return false;
+        return m_character.IsInvalid() || id != m_character;
     }
     bool ShouldCollideLocked(const JPH::Body& body) const override {
         return m_filter.includeSensors || !body.IsSensor();
@@ -446,6 +449,7 @@ public:
 
 private:
     QueryFilter m_filter;
+    JPH::BodyID m_character;
 };
 
 } // namespace
@@ -458,8 +462,24 @@ struct JoltJoint {
     glm::vec3 localA{0.0f}, localB{0.0f};         // anchors relative to each body's pose (B: world when no body)
 };
 
+struct JoltCharacter {
+    JPH::Ref<JPH::CharacterVirtual> character; // null = free slot
+    glm::vec3 velocity{0.0f};                   // wanted for the next steps
+    f32 gravityFactor = 1.0f;
+    f32 stepHeight = 0.3f;
+    f32 stickToFloor = 0.5f;
+    u32 layer = 0;
+};
+
 struct JoltPhysicsWorld::Impl {
     CollisionLayers layers;
+    std::vector<JoltCharacter> characters;
+    std::vector<u32> freeCharacters;
+    JPH::CharacterVsCharacterCollisionSimple characterVsCharacter;
+    JPH::BodyID characterBody(CharacterId id) const {
+        if (!id || id.value >= characters.size() || !characters[id.value].character) return {};
+        return characters[id.value].character->GetInnerBodyID();
+    }
     std::vector<JoltJoint> joints;
     std::vector<u32> freeJoints;
     f32 lastStep = 1.0f / 60.0f;
@@ -496,6 +516,9 @@ JoltPhysicsWorld::JoltPhysicsWorld(const WorldDesc& desc) {
 }
 
 JoltPhysicsWorld::~JoltPhysicsWorld() {
+    // Characters first (they remove their own inner bodies), then joints, then bodies, then the system.
+    for (u32 i = 0; i < m_impl->characters.size(); ++i) destroyCharacter({i});
+    for (u32 i = 0; i < m_impl->joints.size(); ++i) destroyJoint({i});
     // Remove and destroy every body before the system goes away.
     JPH::BodyIDVector ids;
     m_impl->system.GetBodies(ids);
@@ -632,6 +655,8 @@ void JoltPhysicsWorld::shiftOrigin(const glm::vec3& newOrigin) {
     for (const JPH::BodyID& id : ids)
         // Same translation for every body: relative poses (and so cached contacts) are unchanged.
         m_impl->bodies().SetPosition(id, m_impl->bodies().GetPosition(id) - shift, JPH::EActivation::DontActivate);
+    for (JoltCharacter& c : m_impl->characters) // their inner bodies were moved above, with the rest
+        if (c.character) c.character->SetPosition(c.character->GetPosition() - shift);
     m_impl->broadPhaseDirty = true;
 }
 
@@ -641,6 +666,7 @@ void JoltPhysicsWorld::step(f32 dt) {
         m_impl->broadPhaseDirty = false;
     }
     m_impl->lastStep = dt;
+    updateCharacters(dt);
     JPH::EPhysicsUpdateError err =
         m_impl->system.Update(dt, 1, m_impl->tempAllocator.get(), m_impl->jobSystem.get());
     if (err != JPH::EPhysicsUpdateError::None)
@@ -654,7 +680,7 @@ bool JoltPhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& directi
     glm::vec3 dir = glm::normalize(direction);
     JPH::RRayCast ray{toJR(origin), toJ(dir * maxDistance)};
     JPH::RayCastResult result;
-    QueryBodyFilter bodyFilter(filter);
+    QueryBodyFilter bodyFilter(filter, m_impl->characterBody(filter.ignoreCharacter));
     QueryLayerFilter layerFilter(filter.layerMask);
     if (!m_impl->system.GetNarrowPhaseQuery().CastRay(ray, result, {}, layerFilter, bodyFilter)) return false;
 
@@ -700,8 +726,8 @@ std::optional<PreparedSweep> prepareSweep(const JPH::Shape* shape, const JPH::RM
 
 template <typename Collector>
 void sweepWorld(const JPH::PhysicsSystem& system, const PreparedSweep& s, const QueryFilter& filter,
-                Collector& collector) {
-    QueryBodyFilter bodyFilter(filter);
+                Collector& collector, JPH::BodyID ignoredCharacter = {}) {
+    QueryBodyFilter bodyFilter(filter, ignoredCharacter);
     QueryLayerFilter layerFilter(filter.layerMask);
     system.GetNarrowPhaseQuery().CastShape(s.cast, s.settings, s.baseOffset, collector, {}, layerFilter, bodyFilter);
 }
@@ -771,7 +797,7 @@ bool JoltPhysicsWorld::sweep(const ShapeDesc& shapeDesc, const glm::vec3& positi
     auto s = prepareSweep(shape, poseMatrix(position, rotation), direction, maxDistance);
     if (!s) return false;
     JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
-    sweepWorld(m_impl->system, *s, filter, collector);
+    sweepWorld(m_impl->system, *s, filter, collector, m_impl->characterBody(filter.ignoreCharacter));
     if (!collector.HadHit()) return false;
     hit = toQueryHit(m_impl->system, collector.mHit, *s);
     return true;
@@ -784,7 +810,7 @@ std::vector<SweepHit> JoltPhysicsWorld::sweepAll(const ShapeDesc& shapeDesc, con
     auto s = prepareSweep(shape, poseMatrix(position, rotation), direction, maxDistance);
     if (!s) return {};
     JPH::AllHitCollisionCollector<JPH::CastShapeCollector> collector;
-    sweepWorld(m_impl->system, *s, filter, collector);
+    sweepWorld(m_impl->system, *s, filter, collector, m_impl->characterBody(filter.ignoreCharacter));
     return collectAll(m_impl->system, collector, *s);
 }
 
@@ -810,6 +836,119 @@ bool JoltPhysicsWorld::sweepBody(BodyId body, const glm::vec3& direction, f32 ma
     if (!collector.HadHit()) return false;
     hit = toQueryHit(m_impl->system, collector.mHit, *s);
     return true;
+}
+
+// -------------------------------------------------------------- characters --
+CharacterId JoltPhysicsWorld::createCharacter(const CharacterDesc& d) {
+    JPH::ShapeSettings::ShapeResult shape =
+        JPH::CapsuleShapeSettings(std::max(d.halfHeight, 0.001f), std::max(d.radius, 0.01f)).Create();
+    if (shape.HasError()) return {};
+    JPH::Ref<JPH::CharacterVirtualSettings> s = new JPH::CharacterVirtualSettings();
+    s->mShape = shape.Get();
+    s->mInnerBodyShape = shape.Get();             // seen by queries and sensors
+    s->mInnerBodyLayer = objectLayer(d.layer, true);
+    s->mUp = JPH::Vec3::sAxisY();
+    s->mMaxSlopeAngle = d.maxSlopeAngle;
+    s->mMass = std::max(d.mass, 0.1f);
+    s->mMaxStrength = d.maxPushForce;
+    s->mEnhancedInternalEdgeRemoval = true;
+    // Contacts below the bottom sphere's center support it (the capsule is centered on its position).
+    s->mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), std::max(d.halfHeight, 0.001f));
+    JPH::Ref<JPH::CharacterVirtual> c =
+        new JPH::CharacterVirtual(s, toJR(d.position), toJ(d.rotation), d.userData, &m_impl->system);
+    c->SetUserData(d.userData);
+    c->SetCharacterVsCharacterCollision(&m_impl->characterVsCharacter);
+    m_impl->characterVsCharacter.Add(c);
+
+    u32 index;
+    if (!m_impl->freeCharacters.empty()) {
+        index = m_impl->freeCharacters.back();
+        m_impl->freeCharacters.pop_back();
+    } else {
+        index = static_cast<u32>(m_impl->characters.size());
+        m_impl->characters.emplace_back();
+    }
+    JoltCharacter& jc = m_impl->characters[index];
+    jc = JoltCharacter{};
+    jc.character = c;
+    jc.gravityFactor = d.gravityFactor;
+    jc.stepHeight = d.stepHeight;
+    jc.stickToFloor = d.stickToFloor;
+    jc.layer = d.layer;
+    return {index};
+}
+
+void JoltPhysicsWorld::destroyCharacter(CharacterId id) {
+    if (!id || id.value >= m_impl->characters.size() || !m_impl->characters[id.value].character) return;
+    JoltCharacter& c = m_impl->characters[id.value];
+    m_impl->characterVsCharacter.Remove(c.character);
+    m_impl->contacts.bodyRemoved(c.character->GetInnerBodyID()); // its touches end with it
+    c = JoltCharacter{};                                          // (the inner body goes with it)
+    m_impl->freeCharacters.push_back(id.value);
+}
+
+void JoltPhysicsWorld::setCharacterVelocity(CharacterId id, const glm::vec3& v) {
+    if (id && id.value < m_impl->characters.size() && m_impl->characters[id.value].character)
+        m_impl->characters[id.value].velocity = v;
+}
+
+void JoltPhysicsWorld::setCharacterTransform(CharacterId id, const glm::vec3& position, const glm::quat& rotation) {
+    if (!id || id.value >= m_impl->characters.size() || !m_impl->characters[id.value].character) return;
+    JPH::CharacterVirtual& c = *m_impl->characters[id.value].character;
+    c.SetPosition(toJR(position));
+    c.SetRotation(toJ(rotation));
+    const JoltCharacter& jc = m_impl->characters[id.value];
+    JPH::DefaultBroadPhaseLayerFilter bp(m_impl->objectVsBroadPhase, objectLayer(jc.layer, true));
+    JPH::DefaultObjectLayerFilter ol(m_impl->objectPairs, objectLayer(jc.layer, true));
+    c.RefreshContacts(bp, ol, {}, {}, *m_impl->tempAllocator);
+}
+
+CharacterState JoltPhysicsWorld::characterState(CharacterId id) const {
+    CharacterState st;
+    if (!id || id.value >= m_impl->characters.size() || !m_impl->characters[id.value].character) return st;
+    const JPH::CharacterVirtual& c = *m_impl->characters[id.value].character;
+    st.position = toG(c.GetPosition());
+    st.velocity = toG(c.GetLinearVelocity());
+    switch (c.GetGroundState()) {
+        case JPH::CharacterBase::EGroundState::OnGround: st.ground = GroundState::OnGround; break;
+        case JPH::CharacterBase::EGroundState::OnSteepGround: st.ground = GroundState::OnSteepGround; break;
+        case JPH::CharacterBase::EGroundState::NotSupported: st.ground = GroundState::NotSupported; break;
+        case JPH::CharacterBase::EGroundState::InAir: st.ground = GroundState::InAir; break;
+    }
+    if (st.ground != GroundState::InAir) {
+        st.groundNormal = toG(c.GetGroundNormal());
+        st.groundVelocity = toG(c.GetGroundVelocity());
+        const JPH::BodyID ground = c.GetGroundBodyID();
+        st.groundBody = {ground.GetIndexAndSequenceNumber()};
+        JPH::BodyLockRead lock(m_impl->system.GetBodyLockInterface(), ground);
+        if (lock.Succeeded()) st.groundUserData = lock.GetBody().GetUserData();
+    }
+    return st;
+}
+
+void JoltPhysicsWorld::updateCharacters(f32 dt) {
+    const JPH::Vec3 g = m_impl->system.GetGravity();
+    for (JoltCharacter& jc : m_impl->characters) {
+        if (!jc.character) continue;
+        JPH::CharacterVirtual& c = *jc.character;
+        // Gravity while not standing on something walkable; on the ground, ride along with it.
+        JPH::Vec3 v = toJ(jc.velocity);
+        const JPH::Vec3 gravity = g * jc.gravityFactor;
+        const bool standing = c.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+        const JPH::Vec3 ground = c.GetGroundVelocity();
+        if (standing && v.GetY() - ground.GetY() <= 0.0f) v.SetY(ground.GetY()); // not jumping
+        else v += gravity * dt;
+        c.SetLinearVelocity(v);
+        JPH::CharacterVirtual::ExtendedUpdateSettings us;
+        us.mWalkStairsStepUp = JPH::Vec3(0.0f, jc.stepHeight, 0.0f);
+        us.mStickToFloorStepDown = JPH::Vec3(0.0f, -jc.stickToFloor, 0.0f);
+        const JPH::ObjectLayer layer = objectLayer(jc.layer, true);
+        JPH::DefaultBroadPhaseLayerFilter bp(m_impl->objectVsBroadPhase, layer);
+        JPH::DefaultObjectLayerFilter ol(m_impl->objectPairs, layer);
+        JPH::IgnoreSingleBodyFilter self(c.GetInnerBodyID());
+        c.ExtendedUpdate(dt, gravity, us, bp, ol, self, {}, *m_impl->tempAllocator);
+        jc.velocity = toG(c.GetLinearVelocity()); // what it moved with (after walls, landing...)
+    }
 }
 
 // ------------------------------------------------------------------ joints --
@@ -1018,7 +1157,7 @@ std::vector<OverlapHit> JoltPhysicsWorld::overlap(const ShapeDesc& shapeDesc, co
     JPH::CollideShapeSettings settings;
     settings.mBackFaceMode = JPH::EBackFaceMode::CollideWithBackFaces; // inside a mesh's triangles too
     JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
-    QueryBodyFilter bodyFilter(filter);
+    QueryBodyFilter bodyFilter(filter, m_impl->characterBody(filter.ignoreCharacter));
     QueryLayerFilter layerFilter(filter.layerMask);
     m_impl->system.GetNarrowPhaseQuery().CollideShape(shape, JPH::Vec3::sOne(), com, settings, com.GetTranslation(),
                                                       collector, {}, layerFilter, bodyFilter);

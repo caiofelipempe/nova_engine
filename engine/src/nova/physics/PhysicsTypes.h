@@ -187,9 +187,58 @@ struct JointBreakEvent {
 };
 /// @}
 
+/// @name Characters
+/// @{
+/// @brief Identifier of a character controller inside a world.
+struct CharacterId {
+    u32 value = ~0u; ///< Backend-specific id; `~0u` = invalid.
+    bool valid() const { return value != ~0u; }
+    explicit operator bool() const { return valid(); }
+    bool operator==(const CharacterId&) const = default;
+};
+
+/// @brief What a character stands on.
+enum class GroundState : u8 {
+    OnGround,      ///< On walkable ground.
+    OnSteepGround, ///< Touching ground too steep to stand on (it slides).
+    NotSupported,  ///< Touching something, but nothing below.
+    InAir,         ///< Touching nothing.
+};
+
+/// @brief Character controller parameters: an upright capsule moved by velocity, not by forces.
+template <typename Position>
+struct CharacterDescT {
+    f32 radius = 0.3f;              ///< Capsule radius (m).
+    f32 halfHeight = 0.6f;          ///< Half length of the capsule's cylinder (total height = 2 × (halfHeight + radius)).
+    Position position{};            ///< Capsule center.
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; ///< Facing (around the up axis).
+    f32 maxSlopeAngle = glm::radians(50.0f); ///< Steepest walkable slope (rad).
+    f32 stepHeight = 0.3f;          ///< Highest step it walks up (m); 0 = no stairs.
+    f32 stickToFloor = 0.5f;        ///< Down steps it follows instead of flying off (m); 0 = off.
+    f32 mass = 70.0f;               ///< Kg: how hard it pushes, and is pushed by, dynamic bodies.
+    f32 maxPushForce = 100.0f;      ///< Strongest push on dynamic bodies (N).
+    f32 gravityFactor = 1.0f;       ///< Gravity multiplier (0 = no gravity; it still stands on ground).
+    u32 layer = 0;                  ///< Collision layer.
+    u64 userData = 0;               ///< Returned in hits and contacts (the Scene stores the entity).
+};
+
+/// @brief A character after a step.
+template <typename Position>
+struct CharacterStateT {
+    Position position{};                    ///< Capsule center.
+    glm::vec3 velocity{0.0f};               ///< After collisions (sliding along walls, landing...).
+    GroundState ground = GroundState::InAir; ///< What it stands on.
+    glm::vec3 groundNormal{0.0f, 1.0f, 0.0f}; ///< Normal of the ground below.
+    glm::vec3 groundVelocity{0.0f};         ///< Velocity of the ground (moving platforms).
+    BodyId groundBody;                      ///< The body below (invalid in the air).
+    u64 groundUserData = 0;                 ///< Its user data.
+};
+/// @}
+
 /// @brief Which bodies a query may report.
 struct QueryFilter {
     BodyId ignoreBody;           ///< Body to skip, e.g. the caller itself.
+    CharacterId ignoreCharacter; ///< Character to skip (its capsule is seen by queries and sensors).
     bool includeSensors = false; ///< Report sensor bodies too.
     u32 layerMask = kAllLayers;  ///< Only bodies whose layer is in this mask (layerBit()).
 };

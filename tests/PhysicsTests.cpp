@@ -838,6 +838,11 @@ public:
     glm::vec3 gravity() const override { return g; }
     void setCollisionLayers(const CollisionLayers&) override {}
     void setBodyProperties(BodyId, const BodyDesc&) override {}
+    CharacterId createCharacter(const CharacterDesc&) override { return {}; }
+    void destroyCharacter(CharacterId) override {}
+    void setCharacterVelocity(CharacterId, const glm::vec3&) override {}
+    void setCharacterTransform(CharacterId, const GlobalPosition&, const glm::quat&) override {}
+    CharacterState characterState(CharacterId) const override { return {}; }
     JointId createJoint(const JointDesc&) override { return {}; }
     void destroyJoint(JointId) override {}
     void setJointMotor(JointId, const JointMotor&) override {}
