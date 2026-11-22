@@ -86,6 +86,7 @@ public:
         if (!m_paused) scene().update(app().frameDuration().scaled(m_timeScale));
         else if (m_stepOnce) scene().update(scene().fixedTimeStep); // exactly one physics step
         m_stepOnce = false;
+        if (scenarios()[m_current].character) followCharacter(); // after the update: where it is now
     }
 
     void onTick(float dt) override {
@@ -239,7 +240,13 @@ private:
         cc.velocity.x = v.x; // the vertical part is the scene's (gravity, landing)
         cc.velocity.z = v.z;
         if (cc.grounded && nova::Input::isActionPressed("Jump")) cc.velocity.y = 6.0f;
+    }
 
+    // The orbit camera, placed after the scene update so it sees the character's new position
+    // (placed before it, the camera would trail by 0, 1 or 2 physics steps: visible jitter).
+    void followCharacter() {
+        nova::Entity player = scene().findEntity("Player");
+        if (!player) return;
         auto& cam = m_camera.transform();
         cam.setEuler({m_orbitPitch, m_orbitYaw, 0.0f}, nova::EulerOrder::YXZ);
         cam.position = player.transform().position + glm::vec3(0.0f, 1.5f, 0.0f) - cam.forward() * 7.0f;
