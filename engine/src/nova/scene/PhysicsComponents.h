@@ -6,6 +6,7 @@
 
 #include "nova/physics/PhysicsWorld.h"
 #include "nova/renderer/Mesh.h"
+#include "nova/scene/EntityRef.h"
 
 #include <array>
 #include <string>
@@ -95,6 +96,41 @@ struct ConvexHullColliderComponent {
 ///        bodies only: on a dynamic body it falls back to the mesh's convex hull.
 struct MeshColliderComponent {
     MeshHandle mesh; ///< Source mesh; invalid = the entity's MeshComponent mesh.
+};
+
+/// @brief Connects this entity's rigid body to another one (or to the world): a hinge, a
+///        slider, a rope... Both entities need a RigidBodyComponent.
+///
+/// Anchor and axis are in this entity's local space, taken where the bodies are when the
+/// simulation starts (or when the joint is added). Edits apply while simulating (motor changes in
+/// place, the rest rebuilds the joint). A joint with a break force or torque breaks when it holds
+/// more (Script::onJointBreak); it stays broken until `broken` is cleared.
+struct JointComponent {
+    physics::JointType type = physics::JointType::Hinge; ///< Kind of joint.
+    EntityRef connected;             ///< The other body's entity; none = the world.
+    glm::vec3 anchor{0.0f};          ///< Pivot on this entity (local, scaled with it).
+    glm::vec3 axis{0.0f, 1.0f, 0.0f}; ///< Hinge axis / slider direction (local to this entity).
+    /// @brief Distance joints: the attachment on the other entity (its local space) or, with the
+    ///        world, an offset from this entity's position at start (world axes).
+    glm::vec3 connectedAnchor{0.0f, 2.0f, 0.0f};
+    bool limitsEnabled = false;      ///< Hinge / slider: limit the motion.
+    f32 limitMin = -45.0f;           ///< Hinge: degrees; slider: meters (from the start).
+    f32 limitMax = 45.0f;            ///< See limitMin.
+    f32 minDistance = -1.0f;         ///< Distance joints: shortest (m; −1 = at start).
+    f32 maxDistance = -1.0f;         ///< Distance joints: longest (m; −1 = at start).
+    f32 springFrequency = 0.0f;      ///< Distance joints: softness (Hz; 0 = rigid).
+    f32 springDamping = 0.5f;        ///< Damping ratio of that spring.
+    physics::JointMotorMode motorMode = physics::JointMotorMode::Off; ///< Hinge / slider motor.
+    f32 motorTarget = 0.0f;          ///< Hinge: deg/s or degrees; slider: m/s or meters.
+    f32 motorMaxForce = 0.0f;        ///< Hinge: N·m; slider: N; 0 = unlimited.
+    f32 breakForce = 0.0f;           ///< Breaks above this force (N); 0 = never.
+    f32 breakTorque = 0.0f;          ///< Breaks above this torque (N·m); 0 = never.
+    bool broken = false;             ///< Set when it broke; clear it to build the joint again.
+
+    physics::JointId joint;          ///< Runtime joint. Managed by Scene.
+    physics::BodyId connectedBody;   ///< Runtime: the other body when the joint was made.
+    u64 appliedKey = 0;              ///< Runtime: what the joint was built from.
+    u64 appliedMotor = 0;            ///< Runtime: the motor last applied.
 };
 
 /// @brief Scene-wide physics settings (saved with the scene).

@@ -12,6 +12,17 @@ void registerEngineTypes() {
         .value("Kinematic", physics::BodyType::Kinematic)
         .value("Dynamic", physics::BodyType::Dynamic);
 
+    enumeration<physics::JointType>("JointType")
+        .value("Fixed", physics::JointType::Fixed)
+        .value("Point", physics::JointType::Point)
+        .value("Hinge", physics::JointType::Hinge)
+        .value("Slider", physics::JointType::Slider)
+        .value("Distance", physics::JointType::Distance);
+    enumeration<physics::JointMotorMode>("JointMotorMode")
+        .value("Off", physics::JointMotorMode::Off)
+        .value("Velocity", physics::JointMotorMode::Velocity)
+        .value("Position", physics::JointMotorMode::Position);
+
     type<Material>("Material")
         .field("baseColor", &Material::baseColor, {.color = true})
         .field("metallic", &Material::metallic, {.min = 0.0f, .max = 1.0f})
@@ -113,6 +124,32 @@ void registerEngineTypes() {
         .field("halfHeight", &CapsuleColliderComponent::halfHeight, {.speed = 0.01f})
         .field("offset", &CapsuleColliderComponent::offset, {.speed = 0.01f})
         .field("rotation", &CapsuleColliderComponent::rotation, {.speed = 0.5f})
+        .component();
+
+    type<JointComponent>("Joint")
+        .field("type", &JointComponent::type)
+        .field("connected", &JointComponent::connected, {.tooltip = "The other body (needs a RigidBody); none = the world"})
+        .field("anchor", &JointComponent::anchor, {.speed = 0.01f, .tooltip = "Pivot, in this entity's local space"})
+        .field("axis", &JointComponent::axis, {.speed = 0.01f, .tooltip = "Hinge axis / slider direction (local)"})
+        .field("connectedAnchor", &JointComponent::connectedAnchor,
+               {.speed = 0.01f, .tooltip = "Distance: attachment on the other entity (local), or offset from here to the world point"})
+        .field("limitsEnabled", &JointComponent::limitsEnabled, {.label = "Limits"})
+        .field("limitMin", &JointComponent::limitMin, {.speed = 0.1f, .tooltip = "Hinge: degrees; slider: meters"})
+        .field("limitMax", &JointComponent::limitMax, {.speed = 0.1f, .tooltip = "Hinge: degrees; slider: meters"})
+        .field("minDistance", &JointComponent::minDistance, {.speed = 0.01f, .tooltip = "Distance joints (m); -1 = at start"})
+        .field("maxDistance", &JointComponent::maxDistance, {.speed = 0.01f, .tooltip = "Distance joints (m); -1 = at start"})
+        .field("springFrequency", &JointComponent::springFrequency, {.speed = 0.05f, .tooltip = "Distance joints: softness (Hz; 0 = rigid)"})
+        .field("springDamping", &JointComponent::springDamping, {.min = 0.0f, .max = 1.0f})
+        .field("motorMode", &JointComponent::motorMode)
+        .field("motorTarget", &JointComponent::motorTarget, {.speed = 0.1f, .tooltip = "Hinge: deg/s or degrees; slider: m/s or meters"})
+        .field("motorMaxForce", &JointComponent::motorMaxForce, {.speed = 1.0f, .tooltip = "Hinge: N·m; slider: N; 0 = unlimited"})
+        .field("breakForce", &JointComponent::breakForce, {.speed = 1.0f, .tooltip = "N; 0 = unbreakable"})
+        .field("breakTorque", &JointComponent::breakTorque, {.speed = 1.0f, .tooltip = "N·m; 0 = unbreakable"})
+        .field("broken", &JointComponent::broken, {.tooltip = "Clear to build the joint again"})
+        .field("joint", &JointComponent::joint, {.transient = true})
+        .field("connectedBody", &JointComponent::connectedBody, {.transient = true})
+        .field("appliedKey", &JointComponent::appliedKey, {.transient = true})
+        .field("appliedMotor", &JointComponent::appliedMotor, {.transient = true})
         .component();
 
     type<RotatorComponent>("Rotator")

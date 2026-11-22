@@ -42,10 +42,16 @@ void Scene::startSimulation(Scope<physics::PhysicsWorld> world) {
     m_physicsAccumulator = Duration();
     pushPhysicsFocus(); // before the bodies: they are placed where the action is
     for (auto e : m_registry.view<RigidBodyComponent>()) createBody(e);
+    for (auto e : m_registry.view<JointComponent>()) createJoint(e);
 }
 
 void Scene::stopSimulation() {
     if (!m_physics) return;
+    for (auto [e, jc] : m_registry.view<JointComponent>().each()) {
+        jc.joint = {};
+        jc.connectedBody = {};
+        jc.broken = false; // a new run starts whole
+    }
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) rb.body = {};
     m_physics.reset();
     m_geometry.clear();
@@ -307,8 +313,134 @@ void Scene::syncBodies() {
 
 void Scene::onRigidBodyDestroyed(entt::registry& registry, entt::entity e) {
     auto& rb = registry.get<RigidBodyComponent>(e);
-    if (m_physics && rb.body) m_physics->destroyBody(rb.body);
+    if (m_physics && rb.body) {
+        // Its joints go with it (the world destroys them too; forget the ids before they are reused).
+        for (auto [je, jc] : registry.view<JointComponent>().each())
+            if (jc.joint && (je == e || jc.connectedBody == rb.body)) destroyJoint(jc);
+        m_physics->destroyBody(rb.body);
+    }
     rb.body = {};
+}
+
+// ------------------------------------------------------------------ joints --
+namespace {
+u64 jointKey(const JointComponent& j, const TransformComponent& t) {
+    u64 h = 1469598103934665603ull;
+    auto mix = [&h](const void* data, size_t size) {
+        const auto* b = static_cast<const unsigned char*>(data);
+        for (size_t i = 0; i < size; ++i) {
+            h ^= b[i];
+            h *= 1099511628211ull;
+        }
+    };
+    auto add = [&](const auto& v) { mix(&v, sizeof(v)); };
+    add(j.type);
+    add(j.connected.uuid);
+    add(j.anchor);
+    add(j.axis);
+    add(j.connectedAnchor);
+    add(j.limitsEnabled);
+    add(j.limitMin);
+    add(j.limitMax);
+    add(j.minDistance);
+    add(j.maxDistance);
+    add(j.springFrequency);
+    add(j.springDamping);
+    add(j.breakForce);
+    add(j.breakTorque);
+    add(t.scale);
+    return h | 1;
+}
+
+physics::JointMotor motorOf(const JointComponent& j) {
+    physics::JointMotor m;
+    m.mode = j.motorMode;
+    // Hinges are edited in degrees, the physics works in radians.
+    m.target = j.type == physics::JointType::Hinge ? glm::radians(j.motorTarget) : j.motorTarget;
+    m.maxForce = j.motorMaxForce;
+    return m;
+}
+
+u64 motorKey(const JointComponent& j) {
+    const physics::JointMotor m = motorOf(j);
+    u64 h = 1469598103934665603ull;
+    for (const unsigned char* b = reinterpret_cast<const unsigned char*>(&m); b < reinterpret_cast<const unsigned char*>(&m) + sizeof(m); ++b) {
+        h ^= *b;
+        h *= 1099511628211ull;
+    }
+    return h | 1;
+}
+} // namespace
+
+void Scene::createJoint(entt::entity e) {
+    auto& jc = m_registry.get<JointComponent>(e);
+    const auto* rb = m_registry.try_get<RigidBodyComponent>(e);
+    if (!m_physics || jc.broken || !rb || !rb->body) return;
+    physics::BodyId other;
+    Entity target;
+    if (jc.connected) {
+        target = resolve(jc.connected);
+        const auto* orb = target.valid() ? target.tryGet<RigidBodyComponent>() : nullptr;
+        if (!orb || !orb->body || target.handle() == e) return; // waits for the other body
+        other = orb->body;
+    }
+    const auto& t = m_registry.get<TransformComponent>(e);
+    physics::JointDesc d;
+    d.type = jc.type;
+    d.bodyA = rb->body;
+    d.bodyB = other;
+    d.anchor = t.position + t.rotation * (jc.anchor * t.scale);
+    d.axis = t.rotation * jc.axis;
+    if (target.valid()) {
+        const auto& tb = target.transform();
+        d.anchorB = tb.position + tb.rotation * (jc.connectedAnchor * tb.scale);
+    } else {
+        d.anchorB = t.position + jc.connectedAnchor;
+    }
+    const bool hinge = jc.type == physics::JointType::Hinge;
+    d.limitsEnabled = jc.limitsEnabled;
+    d.limitMin = hinge ? glm::radians(jc.limitMin) : jc.limitMin;
+    d.limitMax = hinge ? glm::radians(jc.limitMax) : jc.limitMax;
+    d.minDistance = jc.minDistance;
+    d.maxDistance = jc.maxDistance;
+    d.springFrequency = jc.springFrequency;
+    d.springDamping = jc.springDamping;
+    d.motor = motorOf(jc);
+    d.breakForce = jc.breakForce;
+    d.breakTorque = jc.breakTorque;
+    d.userData = toUserData(e);
+    jc.joint = m_physics->createJoint(d);
+    jc.connectedBody = other;
+    jc.appliedKey = jointKey(jc, t);
+    jc.appliedMotor = motorKey(jc);
+}
+
+void Scene::destroyJoint(JointComponent& jc) {
+    if (m_physics && jc.joint) m_physics->destroyJoint(jc.joint);
+    jc.joint = {};
+    jc.connectedBody = {};
+}
+
+void Scene::onJointDestroyed(entt::registry& registry, entt::entity e) { destroyJoint(registry.get<JointComponent>(e)); }
+
+void Scene::syncJoints() {
+    for (auto [e, jc, t] : m_registry.view<JointComponent, TransformComponent>().each()) {
+        if (jc.broken) {
+            if (jc.joint) destroyJoint(jc);
+            continue;
+        }
+        if (!jc.joint) {
+            createJoint(e);
+            continue;
+        }
+        if (jointKey(jc, t) != jc.appliedKey) { // rebuilt where the bodies are now
+            destroyJoint(jc);
+            createJoint(e);
+        } else if (const u64 m = motorKey(jc); m != jc.appliedMotor) {
+            m_physics->setJointMotor(jc.joint, motorOf(jc));
+            jc.appliedMotor = m;
+        }
+    }
 }
 
 void Scene::stepPhysics(Duration dt) {
@@ -316,6 +448,7 @@ void Scene::stepPhysics(Duration dt) {
     syncBodies(); // edits since last frame
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) // gained a rigid body since last frame
         if (!rb.body) createBody(e);
+    syncJoints();
 
     constexpr int kMaxSteps = 4; // avoid the spiral of death after a hitch
     m_physicsAccumulator += dt;
@@ -350,6 +483,16 @@ void Scene::dispatchContacts() {
             for (auto& s : sc->scripts)
                 if (s->m_created) fn(*s);
     };
+    for (const physics::JointBreakEvent& b : m_physics->drainJointBreaks()) {
+        Entity self{fromUserData(b.userData), this};
+        if (!self.valid()) continue;
+        auto* jc = self.tryGet<JointComponent>();
+        if (!jc || jc->joint != b.joint) continue;
+        jc->broken = true;
+        const Entity connected = jc->connected ? resolve(jc->connected) : Entity{};
+        destroyJoint(*jc);
+        each(self, [&](Script& s) { s.onJointBreak(connected); });
+    }
     for (const physics::ContactEvent& c : m_physics->drainContactEvents()) {
         const bool began = c.type == physics::ContactEventType::Began;
         if (physics::isWorldBoundary(c.userDataA) || physics::isWorldBoundary(c.userDataB)) { // a barrier edge

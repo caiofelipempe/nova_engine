@@ -4,6 +4,9 @@
 #include "nova/reflect/Reflect.h"
 #include "nova/renderer/Renderer.h"
 
+#include <functional>
+#include <unordered_map>
+#include <typeindex>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -133,6 +136,7 @@ Json writeField(const reflect::FieldInfo& f, void* p, const SerializeOptions& op
             }
             return sh.id;
         }
+        case K::Entity: return static_cast<EntityRef*>(p)->uuid;
         case K::Struct: {
             const reflect::TypeInfo* t = f.nestedType();
             if (!t) return nullptr; // unregistered struct
@@ -330,10 +334,35 @@ void readField(const reflect::FieldInfo& f, void* p, const Json& j, const Serial
             }
             break;
         }
+        case K::Entity:
+            if (j.is_number_unsigned() || j.is_number_integer()) static_cast<EntityRef*>(p)->uuid = j.get<u64>();
+            else if (j.is_null()) *static_cast<EntityRef*>(p) = {};
+            break;
         case K::Struct:
             if (const reflect::TypeInfo* t = f.nestedType(); t && j.is_object()) readObject(*t, p, j, opt);
             break;
     }
+}
+
+// Every EntityRef inside a reflected object (nested structs included).
+void forEachEntityRef(const reflect::TypeInfo& type, void* object, const std::function<void(EntityRef&)>& fn) {
+    for (const auto& f : type.fields) {
+        if (f.kind == reflect::FieldKind::Entity) fn(*static_cast<EntityRef*>(f.in(object)));
+        else if (f.kind == reflect::FieldKind::Struct)
+            if (const reflect::TypeInfo* t = f.nestedType()) forEachEntityRef(*t, f.in(object), fn);
+    }
+}
+
+// References between entities of a copy point at the copies (others stay as they are).
+void remapEntityRefs(Entity e, const std::unordered_map<u64, u64>& map) {
+    auto remap = [&](EntityRef& r) {
+        if (auto it = map.find(r.uuid); it != map.end()) r.uuid = it->second;
+    };
+    for (const reflect::TypeInfo* t : reflect::types().components())
+        if (t->name != "Id" && t->has(e)) forEachEntityRef(*t, t->get(e), remap);
+    if (auto* sc = e.tryGet<ScriptComponent>())
+        for (auto& s : sc->scripts)
+            if (const reflect::TypeInfo* t = reflect::types().find(std::type_index(typeid(*s)))) forEachEntityRef(*t, s.get(), remap);
 }
 
 void readObject(const reflect::TypeInfo& type, void* object, const Json& j, const SerializeOptions& opt) {
@@ -491,6 +520,7 @@ std::string serializePrefab(const std::vector<Entity>& entities, const Serialize
         if (first) pivot = e.transform().position;
         first = false;
         Json je = writeEntity(e, options, warned);
+        je["prefabId"] = e.get<IdComponent>().uuid; // to remap references between the prefab's entities
         je["components"].erase("Id");
         je["components"].erase("PrefabInstance");
         // Relative to the first entity, so the prefab can be placed anywhere.
@@ -510,9 +540,11 @@ std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const
         return out;
     }
     std::set<std::string> warned;
+    std::unordered_map<u64, u64> ids; // prefab id -> new UUID
     try {
         if (root.contains("entities") && root["entities"].is_array())
             for (Json je : root["entities"]) {
+                const u64 prefabId = je.value("prefabId", u64{0});
                 GlobalOffset local;
                 if (je.contains("components")) {
                     je["components"].erase("Id"); // fresh UUIDs
@@ -523,11 +555,13 @@ std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const
                 }
                 Entity e = readEntity(scene, je, options, warned);
                 e.transform().position = position + local;
+                if (prefabId) ids[prefabId] = e.get<IdComponent>().uuid;
                 out.push_back(e);
             }
     } catch (const nlohmann::json::exception& ex) {
         if (error) *error = std::string("malformed prefab: ") + ex.what();
     }
+    for (Entity e : out) remapEntityRefs(e, ids);
     return out;
 }
 

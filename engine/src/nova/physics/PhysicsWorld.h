@@ -81,6 +81,9 @@ struct ContactEvent {
     glm::vec3 surfaceNormalB{0.0f}; ///< B's surface normal at pointB (its face towards A).
 };
 
+/// @brief Joint creation parameters (see JointDescT).
+using JointDesc = JointDescT<GlobalPosition>;
+
 /// @brief Where and how far the simulation runs (hints; backends may ignore what they do not need).
 struct SimulationFocus {
     std::vector<GlobalPosition> foci; ///< Points of interest (players, camera). Empty = none.
@@ -147,6 +150,25 @@ public:
     virtual void addTorque(BodyId body, const glm::vec3& torque) = 0;
     /// @brief False when the body is asleep, static or dormant.
     virtual bool isActive(BodyId body) const = 0;
+    /// @}
+
+    /// @name Joints
+    /// A joint acts while both bodies simulate in the same region (it waits while one is dormant).
+    /// @{
+    /// @brief Connects two bodies (or a body and the world) at their current poses.
+    /// @return The joint, or an invalid id if a body is invalid.
+    virtual JointId createJoint(const JointDesc& desc) = 0;
+    /// @brief Removes a joint (broken or not). Invalid ids are ignored. Destroying a body destroys its joints.
+    virtual void destroyJoint(JointId joint) = 0;
+    /// @brief Changes a hinge / slider motor.
+    virtual void setJointMotor(JointId joint, const JointMotor& motor) = 0;
+    /// @brief Hinge: angle (rad) from the start; slider: position (m) from the start; distance:
+    ///        current distance (m). 0 for other joints or while the joint is not acting.
+    virtual f32 jointPosition(JointId joint) const = 0;
+    /// @brief True if the joint broke.
+    virtual bool isJointBroken(JointId joint) const = 0;
+    /// @brief Returns (and clears) the joints that broke since the last call.
+    virtual std::vector<JointBreakEvent> drainJointBreaks() = 0;
     /// @}
 
     /// @brief Sets the world gravity (m/s²).

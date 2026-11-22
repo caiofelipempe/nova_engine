@@ -438,6 +438,245 @@ void compoundColliders() {
     CHECK_NEAR(post.transform().position.toMeters().y, 1.0, 0.03); // standing on its 2 m length
 }
 
+// ---------------------------------------------------------------- joints --
+Entity addBox(Scene& s, const std::string& name, const GlobalPosition& p, const glm::vec3& scale,
+              BodyType type = BodyType::Dynamic) {
+    Entity e = s.createEntity(name);
+    e.transform().position = p;
+    e.transform().scale = scale;
+    auto& rb = e.add<RigidBodyComponent>(type);
+    rb.linearDamping = rb.angularDamping = 0.0f;
+    return e;
+}
+
+f32 yawOf(Entity e) { // rotation about +Y
+    const glm::vec3 x = e.transform().rotation * glm::vec3(1, 0, 0);
+    return std::atan2(-x.z, x.x);
+}
+
+void hingeDoor() {
+    Scene scene("door");
+    scene.setPhysicsSettings([] { PhysicsSettings s; s.gravity = glm::vec3(0.0f); return s; }());
+    // A 2 m wide door hinged to the world at its left edge, around +Y, ±45°.
+    Entity door = addBox(scene, "Door", {1.0, 1.0, 0.0}, {2.0f, 2.0f, 0.1f});
+    auto& j = door.add<JointComponent>();
+    j.type = JointType::Hinge;
+    j.anchor = {-0.5f, 0.0f, 0.0f}; // local, scaled: x = −1 m, the left edge
+    j.axis = {0, 1, 0};
+    j.limitsEnabled = true;
+    j.limitMin = -45.0f;
+    j.limitMax = 45.0f;
+    scene.startSimulation();
+    run(scene, 1);
+    CHECK(j.joint.valid());
+    scene.physics()->addImpulse(door.get<RigidBodyComponent>().body, {0, 0, -3}); // push the free edge
+    run(scene, 60);
+    // It turned around the hinge, which did not move, and stopped at the limit.
+    const GlobalPosition hinge = door.transform().position + door.transform().rotation * glm::vec3(-1.0f, 0.0f, 0.0f);
+    CHECK(isWithin(hinge, GlobalPosition(0.0, 1.0, 0.0), 0.01));
+    // Swung to the limit (it may rebound a little from it), never past it.
+    const f32 angle = std::abs(scene.physics()->jointPosition(j.joint));
+    CHECK(angle > glm::radians(35.0f) && angle < glm::radians(45.5f));
+    CHECK_NEAR(std::abs(yawOf(door)), angle, 1e-3f);
+    CHECK_VEC(door.transform().rotation * glm::vec3(0, 1, 0), glm::vec3(0, 1, 0), 1e-3f); // only around Y
+}
+
+void hingeMotor() {
+    Scene scene("wheel");
+    scene.setPhysicsSettings([] { PhysicsSettings s; s.gravity = glm::vec3(0.0f); return s; }());
+    Entity wheel = addBox(scene, "Wheel", {0.0, 2.0, 0.0}, {1.0f, 1.0f, 0.2f});
+    auto& j = wheel.add<JointComponent>();
+    j.type = JointType::Hinge;
+    j.axis = {0, 0, 1};
+    j.motorMode = JointMotorMode::Velocity;
+    j.motorTarget = 90.0f; // deg/s
+    scene.startSimulation();
+    run(scene, 60);
+    CHECK_NEAR(scene.physics()->angularVelocity(wheel.get<RigidBodyComponent>().body).z, glm::radians(90.0f), 0.02f);
+    // Motor changes apply in place: now the other way.
+    j.motorTarget = -180.0f;
+    run(scene, 30);
+    CHECK_NEAR(scene.physics()->angularVelocity(wheel.get<RigidBodyComponent>().body).z, glm::radians(-180.0f), 0.03f);
+    CHECK(isWithin(wheel.transform().position, GlobalPosition(0.0, 2.0, 0.0), 1e-3));
+}
+
+void sliderLimits() {
+    Scene scene("drawer");
+    Entity drawer = addBox(scene, "Drawer", {0.0, 1.0, 0.0}, glm::vec3(0.5f));
+    drawer.get<RigidBodyComponent>().gravityFactor = 0.0f;
+    auto& j = drawer.add<JointComponent>();
+    j.type = JointType::Slider;
+    j.axis = {1, 0, 0};
+    j.limitsEnabled = true;
+    j.limitMin = 0.0f;
+    j.limitMax = 1.0f;
+    scene.startSimulation();
+    run(scene, 1);
+    scene.setLinearVelocity(drawer, {3, 2, 1}); // only X is free, up to 1 m
+    run(scene, 60);
+    const glm::dvec3 p = drawer.transform().position.toMeters();
+    CHECK_NEAR(p.x, 1.0, 0.02);
+    CHECK_NEAR(p.y, 1.0, 0.01);
+    CHECK_NEAR(p.z, 0.0, 0.01);
+    CHECK_NEAR(scene.physics()->jointPosition(j.joint), 1.0f, 0.02f);
+}
+
+void fixedJoint() {
+    Scene scene("glued");
+    addGround(scene);
+    Entity a = addBox(scene, "A", {0.0, 3.0, 0.0}, glm::vec3(1.0f));
+    Entity b = addBox(scene, "B", {1.0, 3.5, 0.0}, glm::vec3(0.5f));
+    b.add<JointComponent>(JointType::Fixed, Scene::refOf(a));
+    scene.startSimulation();
+    run(scene, 120); // they fall and land together, as one rigid piece
+    const glm::vec3 rel = glm::conjugate(a.transform().rotation) * (b.transform().position - a.transform().position).toVec3();
+    CHECK_VEC(rel, glm::vec3(1.0f, 0.5f, 0.0f), 0.02f); // same place in A's frame
+    CHECK(std::abs(glm::dot(a.transform().rotation, b.transform().rotation)) > 0.9999f); // same turn
+    CHECK(a.transform().position.toMeters().y < 1.5);
+}
+
+void pendulum() {
+    Scene scene("pendulum");
+    Entity bob = addBall(scene, {2.0, 5.0, 0.0});
+    auto& j = bob.add<JointComponent>();
+    j.type = JointType::Distance;
+    j.connectedAnchor = {-2.0f, 0.0f, 0.0f}; // the world point (0, 5, 0): a 2 m rope
+    scene.startSimulation();
+    f64 lowest = 10.0, worst = 0.0;
+    for (int i = 0; i < 120; ++i) {
+        scene.update(kFrame);
+        const f64 len = distance(bob.transform().position, GlobalPosition(0.0, 5.0, 0.0));
+        worst = std::max(worst, std::abs(len - 2.0));
+        lowest = std::min(lowest, bob.transform().position.toMeters().y);
+    }
+    CHECK(worst < 0.02);              // the rope keeps its length
+    CHECK_NEAR(lowest, 3.0, 0.03);    // swung through the bottom
+    CHECK_NEAR(scene.physics()->jointPosition(j.joint), 2.0f, 0.02f);
+}
+
+struct BreakRecorder : Script {
+    int breaks = 0;
+    Entity connected{entt::null, nullptr};
+    void onJointBreak(Entity c) override {
+        ++breaks;
+        connected = c;
+    }
+};
+
+void breakingJoints() {
+    for (f32 strength : {50.0f, 500.0f}) { // a 10 kg crate weighs 98 N
+        Scene scene("break");
+        Entity crate = addBox(scene, "Crate", {0.0, 5.0, 0.0}, glm::vec3(0.5f));
+        crate.get<RigidBodyComponent>().mass = 10.0f;
+        auto& j = crate.add<JointComponent>();
+        j.type = JointType::Point;
+        j.anchor = {0.0f, 1.0f, 0.0f}; // 0.5 m above its center
+        j.breakForce = strength;
+        auto& rec = crate.addScript<BreakRecorder>();
+        scene.startSimulation();
+        run(scene, 60);
+        if (strength < 98.0f) {
+            CHECK(rec.breaks == 1 && j.broken && !j.joint);
+            CHECK(!rec.connected.valid()); // it held the world
+            CHECK(crate.transform().position.toMeters().y < 2.0); // fell
+        } else {
+            CHECK(rec.breaks == 0 && !j.broken && j.joint);
+            CHECK_NEAR(crate.transform().position.toMeters().y, 5.0, 0.01);
+        }
+    }
+}
+
+void jointLifetime() {
+    Scene scene("lifetime");
+    Entity a = addBox(scene, "A", {0.0, 3.0, 0.0}, glm::vec3(1.0f));
+    Entity b = addBox(scene, "B", {2.0, 3.0, 0.0}, glm::vec3(1.0f));
+    auto& j = b.add<JointComponent>(JointType::Hinge, Scene::refOf(a));
+    j.anchor = {-1.0f, 0.0f, 0.0f};
+    scene.startSimulation();
+    run(scene, 2);
+    CHECK(j.joint.valid());
+    scene.destroyEntity(a); // the other body goes: so does the joint
+    run(scene, 10);
+    CHECK(!j.joint.valid());
+    CHECK(b.transform().position.toMeters().y < 3.0); // falls freely
+    // Added during the simulation: made on the next update.
+    Entity c = addBox(scene, "C", {5.0, 3.0, 0.0}, glm::vec3(1.0f));
+    auto& jc = c.add<JointComponent>();
+    jc.type = JointType::Point;
+    run(scene, 1);
+    CHECK(jc.joint.valid());
+    c.remove<JointComponent>(); // removed: destroyed (no crash, body free)
+    run(scene, 30);
+    CHECK(c.transform().position.toMeters().y < 3.0);
+}
+
+void farJointsAndRebase() {
+    // A pendulum 10,000 km out; the focus jumps (rebase): the world anchor stays where it was.
+    const GlobalPosition base = GlobalPosition::fromUnits({10'000, 0, 0}, LengthUnit::Kilometer);
+    Scene scene("far");
+    scene.physicsRegionRadius = 0.0; // one region: this test is about the floating origin
+    scene.setPhysicsFocus(base);
+    Entity bob = addBall(scene, base + glm::vec3(2.0f, 0.0f, 0.0f));
+    auto& j = bob.add<JointComponent>();
+    j.type = JointType::Distance;
+    j.connectedAnchor = {-2.0f, 0.0f, 0.0f};
+    scene.startSimulation();
+    run(scene, 30);
+    CHECK_NEAR(distance(bob.transform().position, base), 2.0, 0.02);
+    scene.setPhysicsFocus(base + glm::vec3(3000.0f, 0.0f, 0.0f));
+    run(scene, 60);
+    CHECK_NEAR(distance(bob.transform().position, base), 2.0, 0.02);
+    CHECK(j.joint.valid());
+}
+
+void jointsAndDormancy() {
+    // Two linked crates; the focus leaves (both dormant), comes back: the link holds again.
+    Scene scene("dormant joints");
+    scene.physicsRegionRadius = 100.0;
+    scene.setPhysicsFocus({0.0, 0.0, 0.0});
+    Entity anchor = addBox(scene, "Anchor", {0.0, 5.0, 0.0}, glm::vec3(0.5f), BodyType::Static);
+    Entity crate = addBox(scene, "Crate", {0.0, 3.0, 0.0}, glm::vec3(0.5f));
+    auto& j = crate.add<JointComponent>();
+    j.type = JointType::Distance;
+    j.connected = Scene::refOf(anchor);
+    j.connectedAnchor = {0.0f, 0.0f, 0.0f}; // the anchor's center: a 2 m rope
+    scene.startSimulation();
+    run(scene, 30);
+    scene.setPhysicsFocus({50'000.0, 0.0, 0.0});
+    run(scene, 30);
+    CHECK(scene.isPhysicsDormant(crate));
+    scene.setPhysicsFocus({0.0, 0.0, 0.0});
+    run(scene, 60);
+    CHECK(!scene.isPhysicsDormant(crate));
+    CHECK_NEAR(distance(crate.transform().position, anchor.transform().position), 2.0, 0.03);
+    CHECK_NEAR(scene.physics()->jointPosition(j.joint), 2.0f, 0.03f);
+}
+
+void prefabRemapsRefs() {
+    Scene scene("prefab");
+    Entity a = scene.createEntity("A");
+    a.add<RigidBodyComponent>();
+    Entity b = scene.createEntity("B");
+    b.add<RigidBodyComponent>();
+    b.add<JointComponent>(JointType::Hinge, Scene::refOf(a));
+    Entity c = scene.createEntity("Outside");
+    Entity d = scene.createEntity("D");
+    d.add<JointComponent>(JointType::Point, Scene::refOf(c)); // points outside the prefab
+    const std::string json = serializePrefab({a, b, d});
+    std::vector<Entity> copies = instantiatePrefab(scene, json, GlobalPosition(10.0, 0.0, 0.0));
+    CHECK(copies.size() == 3);
+    if (copies.size() == 3) {
+        CHECK(copies[1].get<JointComponent>().connected == Scene::refOf(copies[0])); // the new A
+        CHECK(copies[2].get<JointComponent>().connected == Scene::refOf(c));         // unchanged
+    }
+    // And joints survive a save / load.
+    Scene loaded("loaded");
+    CHECK(deserializeScene(loaded, serializeScene(scene)));
+    Entity lb = loaded.findEntity("B");
+    CHECK(lb.valid() && lb.get<JointComponent>().type == JointType::Hinge);
+    CHECK(lb.valid() && loaded.resolve(lb.get<JointComponent>().connected).name() == "A");
+}
+
 } // namespace
 
 int main() {
@@ -459,6 +698,16 @@ int main() {
         {"bodies: continuous collision stops fast bullets", continuousCollision},
         {"bodies: axis locks", axisLocks},
         {"bodies: compound and rotated colliders", compoundColliders},
+        {"joints: hinge door with limits", hingeDoor},
+        {"joints: hinge motor", hingeMotor},
+        {"joints: slider with limits", sliderLimits},
+        {"joints: fixed", fixedJoint},
+        {"joints: distance (pendulum)", pendulum},
+        {"joints: breaking", breakingJoints},
+        {"joints: lifetime with bodies and components", jointLifetime},
+        {"joints: 10,000 km out, across a rebase", farJointsAndRebase},
+        {"joints: dormant and back", jointsAndDormancy},
+        {"joints: prefab references and saving", prefabRemapsRefs},
     };
     for (auto& [name, fn] : tests) {
         const int before = g_failures;

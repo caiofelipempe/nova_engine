@@ -123,6 +123,70 @@ struct CollisionLayers {
 };
 /// @}
 
+/// @name Joints
+/// @{
+/// @brief Identifier of a joint inside a world.
+struct JointId {
+    u32 value = ~0u; ///< Backend-specific id; `~0u` = invalid.
+    bool valid() const { return value != ~0u; }
+    explicit operator bool() const { return valid(); }
+    bool operator==(const JointId&) const = default;
+};
+
+/// @brief How a joint connects two bodies (or a body and the world).
+enum class JointType : u8 {
+    Fixed,    ///< Glued: no relative motion at all.
+    Point,    ///< Ball and socket: shared anchor, free rotation.
+    Hinge,    ///< Door: rotation around the axis only.
+    Slider,   ///< Drawer: translation along the axis only.
+    Distance, ///< Rope / rod: the anchors stay between a minimum and a maximum distance.
+};
+
+/// @brief What a joint's motor drives.
+enum class JointMotorMode : u8 {
+    Off,      ///< No motor (free, within the limits).
+    Velocity, ///< Reach `target` speed (hinge: rad/s; slider: m/s).
+    Position, ///< Reach `target` position (hinge: rad from the start; slider: m from the start).
+};
+
+/// @brief Motor of a hinge or slider joint.
+struct JointMotor {
+    JointMotorMode mode = JointMotorMode::Off;
+    f32 target = 0.0f;   ///< Speed or position, see JointMotorMode.
+    f32 maxForce = 0.0f; ///< Strongest push (hinge: N·m; slider: N); 0 = unlimited.
+    bool operator==(const JointMotor&) const = default;
+};
+
+/// @brief Joint creation parameters (anchor and axis in world space, at the bodies' current poses).
+template <typename Position>
+struct JointDescT {
+    JointType type = JointType::Point;
+    BodyId bodyA;               ///< First body.
+    BodyId bodyB;               ///< Second body; invalid = attached to the world.
+    Position anchor{};          ///< Shared anchor point (world); Distance joints: the attachment on A.
+    Position anchorB{};         ///< Distance joints only: the attachment on B (or in the world).
+    glm::vec3 axis{0.0f, 1.0f, 0.0f}; ///< Hinge axis / slider direction (world).
+    bool limitsEnabled = false; ///< Hinge / slider: limit the motion to [limitMin, limitMax].
+    f32 limitMin = 0.0f;        ///< Hinge: radians from the start; slider: meters from the start.
+    f32 limitMax = 0.0f;        ///< See limitMin.
+    f32 minDistance = -1.0f;    ///< Distance joints: shortest (−1 = the distance at creation).
+    f32 maxDistance = -1.0f;    ///< Distance joints: longest (−1 = the distance at creation).
+    f32 springFrequency = 0.0f; ///< Distance joints: softness of the limits (Hz; 0 = rigid).
+    f32 springDamping = 0.0f;   ///< Damping ratio of that spring (0..1).
+    JointMotor motor;           ///< Hinge / slider motor.
+    f32 breakForce = 0.0f;      ///< Breaks when holding more than this (N); 0 = unbreakable.
+    f32 breakTorque = 0.0f;     ///< Breaks when holding more than this torque (N·m); 0 = unbreakable.
+    u64 userData = 0;           ///< Returned in JointBreakEvent.
+};
+
+/// @brief A joint broke (it held more than its break force or torque). It no longer acts but
+///        stays allocated until destroyJoint().
+struct JointBreakEvent {
+    JointId joint;
+    u64 userData = 0;
+};
+/// @}
+
 /// @brief Which bodies a query may report.
 struct QueryFilter {
     BodyId ignoreBody;           ///< Body to skip, e.g. the caller itself.

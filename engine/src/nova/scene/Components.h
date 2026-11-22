@@ -9,6 +9,7 @@
 #include "nova/math/GlobalPosition.h"
 #include "nova/math/Rotation.h"
 #include "nova/renderer/Mesh.h"
+#include "nova/scene/EntityRef.h"
 #include "nova/scene/PhysicsComponents.h"
 
 #include <glm/glm.hpp>

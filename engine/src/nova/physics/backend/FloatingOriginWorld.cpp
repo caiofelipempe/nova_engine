@@ -154,6 +154,12 @@ void FloatingOriginWorld::rebaseRegion(Region& r, const GlobalPosition& target) 
     r.origin += GlobalOffset::fromMeters(shift);
     r.world->shiftOrigin(shift);
     rebuildWalls(r);
+    // Joints to the world hold a point in the region's coordinates: place them again.
+    for (u32 j = 0; j < m_joints.size(); ++j)
+        if (m_joints[j].alive && m_joints[j].local && m_joints[j].region == r.id && !m_joints[j].desc.bodyB) {
+            uninstantiateJoint(j);
+            instantiateJoint(j);
+        }
 }
 
 void FloatingOriginWorld::rewrapBodies() {
@@ -328,6 +334,10 @@ void FloatingOriginWorld::removeInstance(u32 index, size_t k) {
     Body& b = m_bodies[index];
     const Instance inst = b.instances[k];
     endPairs(index, inst.region, false);
+    std::vector<u32> joints;
+    jointsOf(index, joints);
+    for (u32 j : joints) // a joint must go before its body (it waits until both are back)
+        if (m_joints[j].local && m_joints[j].region == inst.region) uninstantiateJoint(j);
     if (Region* r = findRegion(inst.region)) {
         if (b.desc.type == BodyType::Dynamic && k == 0) { // keep its pose and motion for later
             glm::vec3 p;
@@ -353,6 +363,9 @@ void FloatingOriginWorld::createInstance(u32 index, Region& region) {
         region.world->setAngularVelocity(id, b.savedAngular);
     b.savedLinear = b.savedAngular = glm::vec3(0.0f);
     b.instances.push_back({region.id, id});
+    std::vector<u32> joints;
+    jointsOf(index, joints);
+    for (u32 j : joints) instantiateJoint(j);
 }
 
 BodyId FloatingOriginWorld::createBody(const BodyDesc& desc) {
@@ -379,6 +392,10 @@ void FloatingOriginWorld::destroyBody(BodyId id) {
     Body* b = body(id);
     if (!b) return;
     endPairs(id.value, 0, true);
+    std::vector<u32> joints;
+    jointsOf(id.value, joints);
+    for (u32 j : joints) destroyJoint({j});
+    b = body(id);
     for (const Instance& inst : b->instances)
         if (Region* r = findRegion(inst.region)) r->world->destroyBody(inst.local);
     *b = Body{};
@@ -519,7 +536,144 @@ void FloatingOriginWorld::step(Duration dt) {
     for (Region& r : m_regions) r.world->step(seconds);
     for (Region& r : m_regions)
         for (const local::ContactEvent& c : r.world->drainContactEvents()) onLocalContact(r.id, c);
+    // Breakable joints: what they held during the step.
+    for (u32 j = 0; j < m_joints.size(); ++j) {
+        Joint& joint = m_joints[j];
+        if (!joint.alive || !joint.local || (joint.desc.breakForce <= 0.0f && joint.desc.breakTorque <= 0.0f)) continue;
+        const Region* r = findRegion(joint.region);
+        if (!r) continue;
+        const local::JointLoad load = r->world->jointLoad(joint.local);
+        const bool force = joint.desc.breakForce > 0.0f && load.force > joint.desc.breakForce;
+        const bool torque = joint.desc.breakTorque > 0.0f && load.torque > joint.desc.breakTorque;
+        if (!force && !torque) continue;
+        uninstantiateJoint(j);
+        joint.broken = true;
+        m_jointBreaks.push_back({JointId{j}, joint.desc.userData});
+    }
 }
+
+// ------------------------------------------------------------------ joints --
+void FloatingOriginWorld::jointsOf(u32 body, std::vector<u32>& out) const {
+    for (u32 j = 0; j < m_joints.size(); ++j)
+        if (m_joints[j].alive && (m_joints[j].desc.bodyA.value == body || m_joints[j].desc.bodyB.value == body)) out.push_back(j);
+}
+
+JointId FloatingOriginWorld::createJoint(const JointDesc& d) {
+    const Body* a = body(d.bodyA);
+    const Body* b = d.bodyB ? body(d.bodyB) : nullptr;
+    if (!a || (d.bodyB && !b) || d.bodyA == d.bodyB) return {};
+    u32 index;
+    if (!m_freeJoints.empty()) {
+        index = m_freeJoints.back();
+        m_freeJoints.pop_back();
+    } else {
+        index = static_cast<u32>(m_joints.size());
+        m_joints.emplace_back();
+    }
+    Joint& j = m_joints[index];
+    j = Joint{};
+    j.alive = true;
+    j.desc = d;
+    // Relative to the bodies as they are now: the joint follows them wherever they go.
+    GlobalPosition pa, pb;
+    glm::quat qa, qb;
+    getTransform(d.bodyA, pa, qa);
+    j.localA = glm::conjugate(qa) * (d.anchor - pa).toVec3();
+    const glm::vec3 axis = glm::length(d.axis) > 1e-6f ? glm::normalize(d.axis) : glm::vec3(0, 1, 0);
+    j.axisA = glm::conjugate(qa) * axis;
+    const GlobalPosition attachB = d.type == JointType::Distance ? d.anchorB : d.anchor;
+    if (b) {
+        getTransform(d.bodyB, pb, qb);
+        j.localB = glm::conjugate(qb) * (attachB - pb).toVec3();
+    } else {
+        j.worldAttach = attachB;
+    }
+    instantiateJoint(index);
+    return {index};
+}
+
+void FloatingOriginWorld::instantiateJoint(u32 index) {
+    Joint& j = m_joints[index];
+    if (!j.alive || j.broken || j.local) return;
+    const Body& a = m_bodies[j.desc.bodyA.value];
+    const Body* b = j.desc.bodyB ? &m_bodies[j.desc.bodyB.value] : nullptr;
+    // The region of A (or of B if A is static), where the other one must be too.
+    auto instanceIn = [](const Body& body, u32 region) -> BodyId {
+        for (const Instance& i : body.instances)
+            if (i.region == region) return i.local;
+        return {};
+    };
+    const Instance* home = a.desc.type != BodyType::Static || !b || b->instances.empty() ? this->home(a) : this->home(*b);
+    if (!home) return;
+    Region* r = findRegion(home->region);
+    if (!r) return;
+    const BodyId la = instanceIn(a, r->id);
+    const BodyId lb = b ? instanceIn(*b, r->id) : BodyId{};
+    if (!la || (b && !lb)) return; // waits until both simulate here
+
+    GlobalPosition pa, pb;
+    glm::quat qa, qb;
+    getTransform(j.desc.bodyA, pa, qa);
+    local::JointDesc l;
+    l.type = j.desc.type;
+    l.bodyA = la;
+    l.bodyB = lb;
+    l.anchor = r->toLocal(pa + qa * j.localA);
+    if (b) {
+        getTransform(j.desc.bodyB, pb, qb);
+        l.anchorB = r->toLocal(pb + qb * j.localB);
+    } else {
+        l.anchorB = r->toLocal(j.worldAttach);
+    }
+    if (l.type != JointType::Distance) l.anchorB = l.anchor;
+    l.axis = qa * j.axisA;
+    l.limitsEnabled = j.desc.limitsEnabled;
+    l.limitMin = j.desc.limitMin;
+    l.limitMax = j.desc.limitMax;
+    l.minDistance = j.desc.minDistance;
+    l.maxDistance = j.desc.maxDistance;
+    l.springFrequency = j.desc.springFrequency;
+    l.springDamping = j.desc.springDamping;
+    l.motor = j.desc.motor;
+    l.userData = index;
+    j.local = r->world->createJoint(l);
+    j.region = r->id;
+}
+
+void FloatingOriginWorld::uninstantiateJoint(u32 index) {
+    Joint& j = m_joints[index];
+    if (!j.local) return;
+    if (Region* r = findRegion(j.region)) r->world->destroyJoint(j.local);
+    j.local = {};
+}
+
+void FloatingOriginWorld::destroyJoint(JointId id) {
+    if (!id || id.value >= m_joints.size() || !m_joints[id.value].alive) return;
+    uninstantiateJoint(id.value);
+    m_joints[id.value] = Joint{};
+    m_freeJoints.push_back(id.value);
+}
+
+void FloatingOriginWorld::setJointMotor(JointId id, const JointMotor& motor) {
+    if (!id || id.value >= m_joints.size() || !m_joints[id.value].alive) return;
+    Joint& j = m_joints[id.value];
+    j.desc.motor = motor;
+    if (j.local)
+        if (Region* r = findRegion(j.region)) r->world->setJointMotor(j.local, motor);
+}
+
+f32 FloatingOriginWorld::jointPosition(JointId id) const {
+    if (!id || id.value >= m_joints.size() || !m_joints[id.value].alive || !m_joints[id.value].local) return 0.0f;
+    const Joint& j = m_joints[id.value];
+    const Region* r = findRegion(j.region);
+    return r ? r->world->jointPosition(j.local) : 0.0f;
+}
+
+bool FloatingOriginWorld::isJointBroken(JointId id) const {
+    return id && id.value < m_joints.size() && m_joints[id.value].alive && m_joints[id.value].broken;
+}
+
+std::vector<JointBreakEvent> FloatingOriginWorld::drainJointBreaks() { return std::exchange(m_jointBreaks, {}); }
 
 // ---------------------------------------------------------------- contacts --
 // Local userData is the global body index (or a world-edge code).

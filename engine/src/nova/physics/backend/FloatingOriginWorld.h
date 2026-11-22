@@ -51,6 +51,13 @@ public:
     void addTorque(BodyId body, const glm::vec3& torque) override;
     bool isActive(BodyId body) const override;
 
+    JointId createJoint(const JointDesc& desc) override;
+    void destroyJoint(JointId joint) override;
+    void setJointMotor(JointId joint, const JointMotor& motor) override;
+    f32 jointPosition(JointId joint) const override;
+    bool isJointBroken(JointId joint) const override;
+    std::vector<JointBreakEvent> drainJointBreaks() override;
+
     void setGravity(const glm::vec3& gravity) override;
     void setCollisionLayers(const CollisionLayers& layers) override;
     glm::vec3 gravity() const override { return m_gravity; }
@@ -116,6 +123,21 @@ private:
                       bool ray) const;
     QueryFilter toLocal(const QueryFilter& filter, const Region& region) const;
     void toGlobalIds(u64 localUser, BodyId& id, u64& user) const;
+    // Joints: kept relative to their bodies, instantiated in the region holding both.
+    struct Joint {
+        bool alive = false;
+        bool broken = false;
+        JointDesc desc;                 // global description (motor kept current)
+        glm::vec3 localA{0.0f};         // anchor in A's frame
+        glm::vec3 localB{0.0f};         // B's attachment in B's frame (bodies only)
+        GlobalPosition worldAttach;     // B's attachment when B is the world
+        glm::vec3 axisA{0.0f, 1.0f, 0.0f}; // axis in A's frame
+        u32 region = 0;                 // where the instance lives
+        JointId local;                  // invalid = waiting (a body dormant / elsewhere)
+    };
+    void instantiateJoint(u32 index);
+    void uninstantiateJoint(u32 index);
+    void jointsOf(u32 body, std::vector<u32>& out) const;
     void onLocalContact(u32 region, const local::ContactEvent& c);
     void endPairs(u64 index, u32 region, bool anyRegion);
 
@@ -134,6 +156,9 @@ private:
     using PairKey = std::pair<u64, u64>;
     std::map<std::tuple<u32, u64, u64>, ContactEvent> m_regionPairs;
     std::map<PairKey, u32> m_pairs;
+    std::vector<Joint> m_joints;
+    std::vector<u32> m_freeJoints;
+    std::vector<JointBreakEvent> m_jointBreaks;
 };
 
 } // namespace nova::physics

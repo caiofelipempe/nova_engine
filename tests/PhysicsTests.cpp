@@ -838,6 +838,12 @@ public:
     glm::vec3 gravity() const override { return g; }
     void setCollisionLayers(const CollisionLayers&) override {}
     void setBodyProperties(BodyId, const BodyDesc&) override {}
+    JointId createJoint(const JointDesc&) override { return {}; }
+    void destroyJoint(JointId) override {}
+    void setJointMotor(JointId, const JointMotor&) override {}
+    f32 jointPosition(JointId) const override { return 0.0f; }
+    bool isJointBroken(JointId) const override { return false; }
+    std::vector<JointBreakEvent> drainJointBreaks() override { return {}; }
     std::vector<OverlapHit> overlap(const ShapeDesc&, const GlobalPosition&, const glm::quat&,
                                     const QueryFilter&) const override { return {}; }
     void step(Duration dt) override {

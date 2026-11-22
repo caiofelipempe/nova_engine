@@ -197,6 +197,28 @@ bool reflectedField(const reflect::TypeInfo& owner, const reflect::FieldInfo& f,
             }
             break;
         }
+        case K::Entity: {
+            auto& ref = *static_cast<EntityRef*>(p);
+            Scene& scene = ctx.scene();
+            const Entity target = scene.resolve(ref);
+            std::string current = !ref ? "<none>" : target.valid() ? target.name() : "<missing>";
+            if (ImGui::BeginCombo(f.label.c_str(), current.c_str())) {
+                if (ImGui::Selectable("<none>", !ref)) {
+                    ref = {};
+                    changed = true;
+                }
+                for (auto [h, id, name] : scene.view<IdComponent, NameComponent>().each()) {
+                    ImGui::PushID(static_cast<int>(entt::to_integral(h)));
+                    if (ImGui::Selectable(name.name.c_str(), id.uuid == ref.uuid)) {
+                        ref.uuid = id.uuid;
+                        changed = true;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndCombo();
+            }
+            break;
+        }
         case K::Struct: {
             const reflect::TypeInfo* t = f.nestedType();
             if (!t) {

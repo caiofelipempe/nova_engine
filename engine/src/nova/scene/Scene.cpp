@@ -18,6 +18,7 @@ Scene::Scene(std::string name) : m_name(std::move(name)), m_worldSpace(WorldSpac
 void Scene::connectSignals() {
     // Removing the component (or destroying the entity) removes the body from the world.
     m_registry.on_destroy<RigidBodyComponent>().connect<&Scene::onRigidBodyDestroyed>(*this);
+    m_registry.on_destroy<JointComponent>().connect<&Scene::onJointDestroyed>(*this);
 }
 
 Scene::~Scene() {
@@ -40,6 +41,12 @@ Entity Scene::createEntity(const std::string& name) {
     e.add<NameComponent>(name);
     e.add<TransformComponent>();
     return e;
+}
+
+EntityRef Scene::refOf(Entity entity) {
+    if (!entity.valid()) return {};
+    const auto* id = entity.tryGet<IdComponent>();
+    return id ? EntityRef{id->uuid} : EntityRef{};
 }
 
 Entity Scene::findEntityByUuid(u64 uuid) {

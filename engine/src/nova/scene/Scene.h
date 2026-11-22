@@ -62,6 +62,10 @@ public:
     Entity findEntity(const std::string& name);
     /// @brief The entity with this IdComponent UUID, or an invalid Entity.
     Entity findEntityByUuid(u64 uuid);
+    /// @brief The entity an EntityRef points to, or an invalid Entity.
+    Entity resolve(EntityRef ref) { return findEntityByUuid(ref.uuid); }
+    /// @brief A saved reference to `entity` (none for an invalid entity).
+    static EntityRef refOf(Entity entity);
     /// @brief Destroys every entity (the physics world, if any, keeps running empty).
     void clear();
     /// @brief clear() and also destroys every component *storage* of the ECS registry.
@@ -252,6 +256,10 @@ private:
     void createBody(entt::entity e);
     physics::BodyDesc bodyDescFor(entt::entity e);
     void syncBodies();
+    void syncJoints();
+    void createJoint(entt::entity e);
+    void destroyJoint(JointComponent& jc);
+    void onJointDestroyed(entt::registry& registry, entt::entity e);
     void onRigidBodyDestroyed(entt::registry& registry, entt::entity e);
     void connectSignals();
     physics::BodyId bodyOf(Entity e);

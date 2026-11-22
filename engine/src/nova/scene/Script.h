@@ -58,6 +58,9 @@ public:
     virtual void onTriggerEnter(Entity /*other*/) {}
     /// @brief A sensor and a body stopped overlapping (or one was destroyed: `other` may be invalid).
     virtual void onTriggerExit(Entity /*other*/) {}
+    /// @brief This entity's JointComponent broke (it held more than its break force or torque).
+    /// @param connected The entity it held (invalid for the world).
+    virtual void onJointBreak(Entity /*connected*/) {}
     /// @brief Called when this entity's rigid body touches a barrier edge of the world
     ///        (e.g. destroy whatever falls off the map).
     virtual void onWorldBoundary(const WorldBoundaryHit& /*hit*/) {}

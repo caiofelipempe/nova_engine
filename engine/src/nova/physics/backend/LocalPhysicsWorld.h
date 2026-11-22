@@ -67,6 +67,16 @@ struct ContactEvent {
     glm::vec3 surfaceNormalB{0.0f}; ///< B's surface normal at pointB (its face towards A).
 };
 
+/// @brief Joint parameters (anchor relative to the world's origin). Break limits are checked
+///        by the caller with jointLoad().
+using JointDesc = JointDescT<glm::vec3>;
+
+/// @brief What a joint held during the last step.
+struct JointLoad {
+    f32 force = 0.0f;  ///< N.
+    f32 torque = 0.0f; ///< N·m.
+};
+
 /// @brief A float physics simulation around a local origin: bodies, stepping, queries, contacts.
 ///
 /// This is how float engines such as Jolt work. Positions are float meters relative to the
@@ -122,6 +132,20 @@ public:
     virtual void addTorque(BodyId body, const glm::vec3& torque) = 0;
     /// @brief False when the body is asleep (at rest) or static.
     virtual bool isActive(BodyId body) const = 0;
+    /// @}
+
+    /// @name Joints
+    /// @{
+    /// @brief Connects two bodies (bodyB invalid = the world) at their current poses.
+    virtual JointId createJoint(const JointDesc& desc) = 0;
+    /// @brief Removes a joint. Must be called before destroying one of its bodies.
+    virtual void destroyJoint(JointId joint) = 0;
+    /// @brief Changes a hinge / slider motor.
+    virtual void setJointMotor(JointId joint, const JointMotor& motor) = 0;
+    /// @brief See PhysicsWorld::jointPosition.
+    virtual f32 jointPosition(JointId joint) const = 0;
+    /// @brief Force and torque the joint applied during the last step.
+    virtual JointLoad jointLoad(JointId joint) const = 0;
     /// @}
 
     /// @brief Sets the world gravity (m/s²).

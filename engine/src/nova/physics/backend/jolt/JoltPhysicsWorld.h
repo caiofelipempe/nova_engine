@@ -38,6 +38,12 @@ public:
     void addTorque(BodyId body, const glm::vec3& torque) override;
     bool isActive(BodyId body) const override;
 
+    JointId createJoint(const JointDesc& desc) override;
+    void destroyJoint(JointId joint) override;
+    void setJointMotor(JointId joint, const JointMotor& motor) override;
+    f32 jointPosition(JointId joint) const override;
+    JointLoad jointLoad(JointId joint) const override;
+
     void setGravity(const glm::vec3& gravity) override;
     void setCollisionLayers(const CollisionLayers& layers) override;
     glm::vec3 gravity() const override;
