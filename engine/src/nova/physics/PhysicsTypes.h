@@ -35,6 +35,7 @@ enum class ShapeType : u8 {
     Cylinder,   ///< ShapeDesc::radius and ShapeDesc::halfHeight, aligned with local Y.
     ConvexHull, ///< Convex polyhedron: the hull of ShapeDesc::geometry->points (any body type).
     Mesh,       ///< Triangle mesh: ShapeDesc::geometry points + indices. Static/kinematic bodies only.
+    Compound,   ///< Several shapes rigidly joined: ShapeDesc::children (each with its own offset/rotation).
 };
 
 /// @brief Vertices (and triangles) of a ConvexHull or Mesh shape, local to the body.
@@ -47,6 +48,8 @@ struct ShapeGeometry {
     std::vector<u32> indices;      ///< Mesh: 3 per triangle, counter-clockwise from outside. Unused by hulls.
 };
 
+struct ShapeDesc;
+
 /// @brief Collision shape, in coordinates **local to the body** (sizes final, already scaled).
 ///
 /// Shapes stay small and local whatever the body's world position: only the body itself has a
@@ -57,7 +60,20 @@ struct ShapeDesc {
     f32 radius = 0.5f;               ///< Sphere / Capsule radius.
     f32 halfHeight = 0.5f;           ///< Capsule: half length of the cylindrical part (along local Y).
     glm::vec3 offset{0.0f};          ///< Shape center relative to the body origin (local space).
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; ///< Shape orientation relative to the body (local space).
     std::shared_ptr<const ShapeGeometry> geometry; ///< ConvexHull / Mesh vertices (already scaled).
+    std::shared_ptr<const std::vector<ShapeDesc>> children; ///< Compound: the parts (no nested compounds).
+};
+
+/// @brief Degrees of freedom a dynamic body may not use (bit mask; see BodyDesc::lockedAxes).
+enum AxisLock : u8 {
+    LockPositionX = 1 << 0,
+    LockPositionY = 1 << 1,
+    LockPositionZ = 1 << 2,
+    LockRotationX = 1 << 3,
+    LockRotationY = 1 << 4,
+    LockRotationZ = 1 << 5,
+    LockAllRotation = LockRotationX | LockRotationY | LockRotationZ,
 };
 
 /// @brief Identifier of a body inside a world.

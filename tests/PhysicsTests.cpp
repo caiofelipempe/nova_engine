@@ -837,6 +837,7 @@ public:
     void setGravity(const glm::vec3& gravity) override { g = gravity; }
     glm::vec3 gravity() const override { return g; }
     void setCollisionLayers(const CollisionLayers&) override {}
+    void setBodyProperties(BodyId, const BodyDesc&) override {}
     std::vector<OverlapHit> overlap(const ShapeDesc&, const GlobalPosition&, const glm::quat&,
                                     const QueryFilter&) const override { return {}; }
     void step(Duration dt) override {

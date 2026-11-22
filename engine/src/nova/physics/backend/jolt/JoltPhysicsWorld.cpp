@@ -25,6 +25,7 @@
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
@@ -295,6 +296,22 @@ glm::quat toG(const JPH::Quat& q) { return {q.GetW(), q.GetX(), q.GetY(), q.GetZ
 
 JPH::BodyID toJ(BodyId id) { return JPH::BodyID(id.value); }
 
+// Wakes whatever rests on or against a body (its bounds, grown a little): Jolt keeps sleeping
+// bodies asleep when what supports them changes, moves or disappears.
+void wakeAround(JPH::PhysicsSystem& system, const JPH::BodyID& id) {
+    JPH::AABox bounds;
+    {
+        JPH::BodyLockRead lock(system.GetBodyLockInterface(), id);
+        if (!lock.Succeeded()) return;
+        // World-edge walls are kilometres wide and rebuilt right away on every rebase: waking
+        // everything near them each time would be all cost and no effect.
+        if (isWorldBoundary(lock.GetBody().GetUserData())) return;
+        bounds = lock.GetBody().GetWorldSpaceBounds();
+    }
+    bounds.ExpandBy(JPH::Vec3::sReplicate(0.05f));
+    system.GetBodyInterface().ActivateBodiesInAABox(bounds, {}, {});
+}
+
 JPH::EMotionType toJ(BodyType t) {
     switch (t) {
         case BodyType::Static: return JPH::EMotionType::Static;
@@ -352,7 +369,10 @@ JPH::ShapeRefC geometryShape(const ShapeDesc& s) {
     return result.Get();
 }
 
-JPH::ShapeRefC buildShape(const ShapeDesc& s) {
+JPH::ShapeRefC buildShape(const ShapeDesc& s);
+
+// The shape itself, without its offset / rotation.
+JPH::ShapeRefC buildBaseShape(const ShapeDesc& s) {
     JPH::ShapeSettings::ShapeResult result;
     constexpr f32 kMin = 0.001f;
     switch (s.type) {
@@ -373,23 +393,39 @@ JPH::ShapeRefC buildShape(const ShapeDesc& s) {
             break;
         }
         case ShapeType::ConvexHull:
-        case ShapeType::Mesh: {
-            JPH::ShapeRefC shape = geometryShape(s); // cached, shared
-            if (!shape || s.offset == glm::vec3(0.0f)) return shape;
-            auto offsetResult = JPH::RotatedTranslatedShapeSettings(toJ(s.offset), JPH::Quat::sIdentity(), shape).Create();
-            return offsetResult.HasError() ? shape : offsetResult.Get();
+        case ShapeType::Mesh: return geometryShape(s); // cached, shared
+        case ShapeType::Compound: {
+            if (!s.children || s.children->empty()) return nullptr;
+            JPH::StaticCompoundShapeSettings compound;
+            for (const ShapeDesc& part : *s.children) {
+                JPH::ShapeRefC base = buildBaseShape(part);
+                if (!base) return nullptr;
+                compound.AddShape(toJ(part.offset), toJ(part.rotation), base);
+            }
+            result = compound.Create();
+            break;
         }
     }
     if (result.HasError()) {
         NOVA_CORE_ERROR("[physics] shape creation failed: {}", result.GetError().c_str());
         return nullptr;
     }
-    JPH::ShapeRefC shape = result.Get();
-    if (s.offset != glm::vec3(0.0f)) {
-        auto offsetResult = JPH::RotatedTranslatedShapeSettings(toJ(s.offset), JPH::Quat::sIdentity(), shape).Create();
-        if (!offsetResult.HasError()) shape = offsetResult.Get();
-    }
-    return shape;
+    return result.Get();
+}
+
+// The shape placed in the body: its offset and rotation applied.
+JPH::ShapeRefC buildShape(const ShapeDesc& s) {
+    JPH::ShapeRefC shape = buildBaseShape(s);
+    const bool rotated = s.rotation != glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    if (!shape || (s.offset == glm::vec3(0.0f) && !rotated)) return shape;
+    auto placed = JPH::RotatedTranslatedShapeSettings(toJ(s.offset), toJ(s.rotation), shape).Create();
+    return placed.HasError() ? shape : placed.Get();
+}
+
+JPH::EAllowedDOFs allowedDOFs(u8 locked) {
+    u8 allowed = static_cast<u8>(JPH::EAllowedDOFs::All) & ~locked;
+    if (allowed == 0) allowed = static_cast<u8>(JPH::EAllowedDOFs::TranslationY); // Jolt needs one; keep falling
+    return static_cast<JPH::EAllowedDOFs>(allowed);
 }
 
 // Applies QueryFilter (ignored body, sensors). Runs with the body already locked by Jolt.
@@ -480,7 +516,9 @@ BodyId JoltPhysicsWorld::createBody(const BodyDesc& desc) {
         bcs.mMassPropertiesOverride.mMass = std::max(desc.mass, 0.001f);
         // No bumps on the internal edges of meshes (a ball rolling across triangles stays down).
         bcs.mEnhancedInternalEdgeRemoval = true;
+        bcs.mAllowedDOFs = allowedDOFs(desc.lockedAxes);
     }
+    if (desc.continuousCollision) bcs.mMotionQuality = JPH::EMotionQuality::LinearCast;
     if (desc.type == BodyType::Kinematic && desc.isSensor) bcs.mCollideKinematicVsNonDynamic = true;
 
     JPH::BodyID id = m_impl->bodies().CreateAndAddBody(
@@ -497,6 +535,7 @@ void JoltPhysicsWorld::destroyBody(BodyId body) {
     if (!body) return;
     JPH::BodyID id = toJ(body);
     if (!m_impl->bodies().IsAdded(id)) return;
+    wakeAround(m_impl->system, id); // what rested on it falls
     m_impl->bodies().RemoveBody(id);
     m_impl->bodies().DestroyBody(id);
     m_impl->contacts.bodyRemoved(id);
@@ -505,7 +544,9 @@ void JoltPhysicsWorld::destroyBody(BodyId body) {
 u32 JoltPhysicsWorld::bodyCount() const { return m_impl->system.GetNumBodies(); }
 
 void JoltPhysicsWorld::setTransform(BodyId body, const glm::vec3& position, const glm::quat& rotation) {
+    wakeAround(m_impl->system, toJ(body)); // where it was...
     m_impl->bodies().SetPositionAndRotation(toJ(body), toJR(position), toJ(rotation), JPH::EActivation::Activate);
+    wakeAround(m_impl->system, toJ(body)); // ...and where it is now
 }
 
 void JoltPhysicsWorld::getTransform(BodyId body, glm::vec3& position, glm::quat& rotation) const {
@@ -518,6 +559,30 @@ void JoltPhysicsWorld::getTransform(BodyId body, glm::vec3& position, glm::quat&
 
 void JoltPhysicsWorld::moveKinematic(BodyId body, const glm::vec3& position, const glm::quat& rotation, f32 dt) {
     m_impl->bodies().MoveKinematic(toJ(body), toJR(position), toJ(rotation), dt);
+}
+
+void JoltPhysicsWorld::setBodyProperties(BodyId body, const BodyDesc& d) {
+    const JPH::BodyID id = toJ(body);
+    JPH::BodyInterface& bi = m_impl->bodies();
+    if (!bi.IsAdded(id)) return;
+    bi.SetFriction(id, d.friction);
+    bi.SetRestitution(id, d.restitution);
+    bi.SetGravityFactor(id, d.gravityFactor);
+    const bool moving = bi.GetMotionType(id) != JPH::EMotionType::Static;
+    bi.SetObjectLayer(id, objectLayer(d.layer, moving));
+    if (moving) bi.SetMotionQuality(id, d.continuousCollision ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete);
+    {
+        JPH::BodyLockWrite lock(m_impl->system.GetBodyLockInterface(), id);
+        if (!lock.Succeeded()) return;
+        JPH::Body& b = lock.GetBody();
+        b.SetIsSensor(d.isSensor);
+        if (JPH::MotionProperties* mp = b.GetMotionPropertiesUnchecked(); mp && !b.IsStatic()) {
+            mp->SetLinearDamping(d.linearDamping);
+            mp->SetAngularDamping(d.angularDamping);
+        }
+    }
+    if (moving) bi.ActivateBody(id); // whatever changed shows on the next step
+    wakeAround(m_impl->system, id);  // and on what touches it (a floor turned into a sensor...)
 }
 
 glm::vec3 JoltPhysicsWorld::linearVelocity(BodyId body) const {

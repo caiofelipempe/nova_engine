@@ -40,6 +40,7 @@ public:
     void setTransform(BodyId body, const GlobalPosition& position, const glm::quat& rotation) override;
     void getTransform(BodyId body, GlobalPosition& position, glm::quat& rotation) const override;
     void moveKinematic(BodyId body, const GlobalPosition& position, const glm::quat& rotation, Duration dt) override;
+    void setBodyProperties(BodyId body, const BodyDesc& desc) override;
 
     glm::vec3 linearVelocity(BodyId body) const override;
     void setLinearVelocity(BodyId body, const glm::vec3& velocity) override;

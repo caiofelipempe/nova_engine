@@ -58,6 +58,14 @@ void registerEngineTypes() {
         .field("radius", &PointLightComponent::radius, {.speed = 0.05f})
         .component();
 
+    type<RigidBodyLocks>("RigidBodyLocks")
+        .field("positionX", &RigidBodyLocks::positionX)
+        .field("positionY", &RigidBodyLocks::positionY)
+        .field("positionZ", &RigidBodyLocks::positionZ)
+        .field("rotationX", &RigidBodyLocks::rotationX)
+        .field("rotationY", &RigidBodyLocks::rotationY)
+        .field("rotationZ", &RigidBodyLocks::rotationZ);
+
     type<RigidBodyComponent>("RigidBody")
         .field("type", &RigidBodyComponent::type)
         .field("mass", &RigidBodyComponent::mass, {.speed = 0.05f, .tooltip = "kg (dynamic bodies)"})
@@ -68,12 +76,19 @@ void registerEngineTypes() {
         .field("gravityFactor", &RigidBodyComponent::gravityFactor, {.speed = 0.01f})
         .field("isSensor", &RigidBodyComponent::isSensor, {.tooltip = "Reports overlaps (onTriggerEnter/Exit), no collision response", .label = "Sensor"})
         .field("layer", &RigidBodyComponent::layer, {.tooltip = "Collision layer (Physics settings say which collide)"})
+        .field("continuousCollision", &RigidBodyComponent::continuousCollision,
+               {.tooltip = "Fast bodies (bullets) never tunnel through thin walls", .label = "Continuous Collision"})
+        .field("locks", &RigidBodyComponent::locks, {.tooltip = "Dynamic bodies: axes they may not move or turn along"})
         .field("body", &RigidBodyComponent::body, {.transient = true})
+        .field("appliedShape", &RigidBodyComponent::appliedShape, {.transient = true})
+        .field("appliedProperties", &RigidBodyComponent::appliedProperties, {.transient = true})
+        .field("appliedPose", &RigidBodyComponent::appliedPose, {.transient = true})
         .component();
 
     type<BoxColliderComponent>("BoxCollider")
         .field("halfExtents", &BoxColliderComponent::halfExtents, {.speed = 0.01f})
         .field("offset", &BoxColliderComponent::offset, {.speed = 0.01f})
+        .field("rotation", &BoxColliderComponent::rotation, {.speed = 0.5f})
         .component();
     type<SphereColliderComponent>("SphereCollider")
         .field("radius", &SphereColliderComponent::radius, {.speed = 0.01f})
@@ -83,10 +98,12 @@ void registerEngineTypes() {
         .field("radius", &CylinderColliderComponent::radius, {.speed = 0.01f})
         .field("halfHeight", &CylinderColliderComponent::halfHeight, {.speed = 0.01f})
         .field("offset", &CylinderColliderComponent::offset, {.speed = 0.01f})
+        .field("rotation", &CylinderColliderComponent::rotation, {.speed = 0.5f})
         .component();
     type<ConvexHullColliderComponent>("ConvexHullCollider")
         .field("mesh", &ConvexHullColliderComponent::mesh, {.tooltip = "Empty = the entity's mesh"})
         .field("offset", &ConvexHullColliderComponent::offset, {.speed = 0.01f})
+        .field("rotation", &ConvexHullColliderComponent::rotation, {.speed = 0.5f})
         .component();
     type<MeshColliderComponent>("MeshCollider")
         .field("mesh", &MeshColliderComponent::mesh, {.tooltip = "Empty = the entity's mesh. Static/kinematic bodies only"})
@@ -95,6 +112,7 @@ void registerEngineTypes() {
         .field("radius", &CapsuleColliderComponent::radius, {.speed = 0.01f})
         .field("halfHeight", &CapsuleColliderComponent::halfHeight, {.speed = 0.01f})
         .field("offset", &CapsuleColliderComponent::offset, {.speed = 0.01f})
+        .field("rotation", &CapsuleColliderComponent::rotation, {.speed = 0.5f})
         .component();
 
     type<RotatorComponent>("Rotator")

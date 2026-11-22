@@ -23,6 +23,16 @@ bool PhysicsWorld::isValidBody(const BodyDesc& desc) {
             ok = s.geometry && !s.geometry->points.empty() && !s.geometry->indices.empty() &&
                  s.geometry->indices.size() % 3 == 0;
             break;
+        case ShapeType::Compound: {
+            ok = s.children && !s.children->empty();
+            for (size_t i = 0; ok && i < s.children->size(); ++i) {
+                BodyDesc part = desc;
+                part.shape = (*s.children)[i];
+                ok = part.shape.type != ShapeType::Compound && isValidBody(part);
+            }
+            if (!ok) NOVA_CORE_ERROR("[physics] invalid compound shape (empty, nested or with an invalid part)");
+            return ok;
+        }
     }
     if (!ok) NOVA_CORE_ERROR("[physics] invalid collision shape (type {})", static_cast<int>(s.type));
     return ok;

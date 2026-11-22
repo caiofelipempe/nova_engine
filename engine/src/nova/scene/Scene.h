@@ -9,6 +9,7 @@
 #include "nova/scene/Script.h"
 
 #include <optional>
+#include <set>
 #include <tuple>
 #include <map>
 #include <functional>
@@ -249,6 +250,8 @@ private:
     std::vector<GlobalPosition> currentFoci();
     void pushPhysicsFocus();
     void createBody(entt::entity e);
+    physics::BodyDesc bodyDescFor(entt::entity e);
+    void syncBodies();
     void onRigidBodyDestroyed(entt::registry& registry, entt::entity e);
     void connectSignals();
     physics::BodyId bodyOf(Entity e);
@@ -268,6 +271,7 @@ private:
     std::map<std::tuple<u32, u32, u32, u32, bool>, std::shared_ptr<const physics::ShapeGeometry>> m_geometry;
     TimePoint m_time;
     PhysicsSettings m_physicsSettings;
+    std::set<entt::entity> m_warnedMeshOnDynamic, m_warnedNoVertices; // warn once per entity
     std::vector<GlobalPosition> m_physicsFoci;
     bool m_hasPhysicsFocus = false;
     Duration m_physicsAccumulator;

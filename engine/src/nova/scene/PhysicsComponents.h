@@ -13,12 +13,28 @@
 
 namespace nova {
 
+/// @brief Axes a dynamic body may not move or turn along (world axes).
+struct RigidBodyLocks {
+    bool positionX = false, positionY = false, positionZ = false; ///< No motion along the axis.
+    bool rotationX = false, rotationY = false, rotationZ = false; ///< No turning around the axis.
+    /// @brief As physics::AxisLock bits.
+    u8 bits() const {
+        return static_cast<u8>((positionX ? physics::LockPositionX : 0) | (positionY ? physics::LockPositionY : 0) |
+                               (positionZ ? physics::LockPositionZ : 0) | (rotationX ? physics::LockRotationX : 0) |
+                               (rotationY ? physics::LockRotationY : 0) | (rotationZ ? physics::LockRotationZ : 0));
+    }
+};
+
 /// @brief Makes the entity a physics rigid body while the scene is simulating.
 ///
-/// The shape comes from a Box/Sphere/CapsuleColliderComponent on the same entity; without one,
-/// a box matching the entity's scale is used. Collider sizes are multiplied by the transform scale.
-/// Body properties are read when the body is created (Scene::startSimulation or the first
-/// update after adding the component); later edits apply on the next simulation start.
+/// The shape comes from the collider components on the same entity: one gives that shape,
+/// several are joined into one compound shape (e.g. a box and a sphere); without any, a box
+/// matching the entity's scale is used. Collider sizes are multiplied by the transform scale.
+///
+/// Edits apply while simulating: friction, restitution, damping, gravity factor, sensor, layer
+/// and continuous collision change in place; type, mass, locks, colliders and scale rebuild the
+/// body (keeping its velocity; its touches end and begin again). Static bodies follow their
+/// transform when it is moved.
 struct RigidBodyComponent {
     physics::BodyType type = physics::BodyType::Dynamic; ///< Static, kinematic (follows the transform) or dynamic.
     f32 mass = 1.0f;                                     ///< Mass in kg (dynamic only).
@@ -29,14 +45,20 @@ struct RigidBodyComponent {
     f32 gravityFactor = 1.0f;                            ///< Gravity multiplier.
     bool isSensor = false;                               ///< Trigger: reports overlaps (Script::onTriggerEnter/Exit), no response.
     u32 layer = 0;                                       ///< Collision layer (Scene::physicsSettings() says which collide).
+    bool continuousCollision = false;                    ///< For fast bodies (bullets): never tunnel through thin walls.
+    RigidBodyLocks locks;                                ///< Dynamic bodies: axes they may not move / turn along.
 
     physics::BodyId body; ///< Runtime body; valid while the scene is simulating. Managed by Scene.
+    u64 appliedShape = 0; ///< Runtime: what the body was built from (Scene rebuilds it when this changes).
+    u64 appliedProperties = 0; ///< Runtime: the properties last applied.
+    u64 appliedPose = 0;  ///< Runtime: static bodies' last applied pose.
 };
 
 /// @brief Box collision shape for a RigidBodyComponent.
 struct BoxColliderComponent {
     glm::vec3 halfExtents{0.5f}; ///< Half size per axis, before scaling (0.5 = matches the unit cube mesh).
     glm::vec3 offset{0.0f};      ///< Center relative to the entity origin, before scaling.
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; ///< Orientation relative to the entity.
 };
 
 /// @brief Sphere collision shape for a RigidBodyComponent.
@@ -50,6 +72,7 @@ struct CapsuleColliderComponent {
     f32 radius = 0.5f;      ///< Radius before scaling (multiplied by max(scale.x, scale.z)).
     f32 halfHeight = 0.5f;  ///< Half length of the cylindrical part, before scaling (multiplied by scale.y).
     glm::vec3 offset{0.0f}; ///< Center relative to the entity origin, before scaling.
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; ///< Orientation relative to the entity (axis = local Y).
 };
 
 /// @brief Cylinder collision shape (axis = local Y) for a RigidBodyComponent.
@@ -57,6 +80,7 @@ struct CylinderColliderComponent {
     f32 radius = 0.5f;      ///< Radius before scaling (multiplied by max(scale.x, scale.z)).
     f32 halfHeight = 0.5f;  ///< Half height before scaling (multiplied by scale.y).
     glm::vec3 offset{0.0f}; ///< Center relative to the entity origin, before scaling.
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; ///< Orientation relative to the entity (axis = local Y).
 };
 
 /// @brief Convex polyhedron collision shape: the convex hull of a mesh's vertices (scaled by the
@@ -64,6 +88,7 @@ struct CylinderColliderComponent {
 struct ConvexHullColliderComponent {
     MeshHandle mesh;        ///< Source mesh; invalid = the entity's MeshComponent mesh.
     glm::vec3 offset{0.0f}; ///< Shift relative to the entity origin, before scaling.
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; ///< Orientation relative to the entity.
 };
 
 /// @brief Exact triangle-mesh collision shape (level geometry, glTF scenery). Static and kinematic

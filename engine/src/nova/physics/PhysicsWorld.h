@@ -39,6 +39,8 @@ struct BodyDesc {
     f32 gravityFactor = 1.0f;                   ///< Gravity multiplier (0 = floats).
     bool isSensor = false;                      ///< Reports contacts but has no collision response (trigger).
     u32 layer = 0;                              ///< Collision layer (0..kCollisionLayerCount − 2; see CollisionLayers).
+    bool continuousCollision = false;           ///< Swept collision (fast bodies cannot tunnel through thin walls).
+    u8 lockedAxes = 0;                          ///< Dynamic bodies: AxisLock bits (e.g. no rotation for an upright crate).
     u64 userData = 0;                           ///< Opaque value returned in hits/contacts (the Scene stores the entity).
 };
 
@@ -122,6 +124,9 @@ public:
     /// @brief Kinematic bodies: reach this pose by the end of the next step of length `dt`
     ///        (derives the velocity, so it pushes dynamic bodies correctly).
     virtual void moveKinematic(BodyId body, const GlobalPosition& position, const glm::quat& rotation, Duration dt) = 0;
+    /// @brief Changes the properties that need no new body: friction, restitution, damping, gravity
+    ///        factor, sensor, layer and continuous collision (read from `desc`; the rest is ignored).
+    virtual void setBodyProperties(BodyId body, const BodyDesc& desc) = 0;
     /// @}
 
     /// @name Motion

@@ -49,6 +49,8 @@ void Scene::stopSimulation() {
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) rb.body = {};
     m_physics.reset();
     m_geometry.clear();
+    m_warnedMeshOnDynamic.clear();
+    m_warnedNoVertices.clear();
 }
 
 namespace {
@@ -106,55 +108,85 @@ bool Scene::isPhysicsDormant(Entity e) const {
     return rb && rb->body && m_physics->isDormant(rb->body);
 }
 
-void Scene::createBody(entt::entity e) {
+physics::BodyDesc Scene::bodyDescFor(entt::entity e) {
     auto& rb = m_registry.get<RigidBodyComponent>(e);
     auto& t = m_registry.get<TransformComponent>(e);
     const glm::vec3 s = glm::abs(t.scale);
 
-    physics::BodyDesc desc;
+    // Every collider on the entity is a part; several make one compound shape. Sizes and offsets
+    // follow the scale along the collider's own axes (exact unless rotated and scaled unevenly).
+    std::vector<physics::ShapeDesc> parts;
     if (auto* box = m_registry.try_get<BoxColliderComponent>(e)) {
-        desc.shape.type = physics::ShapeType::Box;
-        desc.shape.halfExtents = box->halfExtents * s;
-        desc.shape.offset = box->offset * s;
-    } else if (auto* sphere = m_registry.try_get<SphereColliderComponent>(e)) {
-        desc.shape.type = physics::ShapeType::Sphere;
-        desc.shape.radius = sphere->radius * std::max({s.x, s.y, s.z});
-        desc.shape.offset = sphere->offset * s;
-    } else if (auto* capsule = m_registry.try_get<CapsuleColliderComponent>(e)) {
-        desc.shape.type = physics::ShapeType::Capsule;
-        desc.shape.radius = capsule->radius * std::max(s.x, s.z);
-        desc.shape.halfHeight = capsule->halfHeight * s.y;
-        desc.shape.offset = capsule->offset * s;
-    } else if (auto* cylinder = m_registry.try_get<CylinderColliderComponent>(e)) {
-        desc.shape.type = physics::ShapeType::Cylinder;
-        desc.shape.radius = cylinder->radius * std::max(s.x, s.z);
-        desc.shape.halfHeight = cylinder->halfHeight * s.y;
-        desc.shape.offset = cylinder->offset * s;
-    } else if (m_registry.any_of<ConvexHullColliderComponent, MeshColliderComponent>(e)) {
+        physics::ShapeDesc p;
+        p.type = physics::ShapeType::Box;
+        p.halfExtents = box->halfExtents * s;
+        p.offset = box->offset * s;
+        p.rotation = box->rotation;
+        parts.push_back(p);
+    }
+    if (auto* sphere = m_registry.try_get<SphereColliderComponent>(e)) {
+        physics::ShapeDesc p;
+        p.type = physics::ShapeType::Sphere;
+        p.radius = sphere->radius * std::max({s.x, s.y, s.z});
+        p.offset = sphere->offset * s;
+        parts.push_back(p);
+    }
+    if (auto* capsule = m_registry.try_get<CapsuleColliderComponent>(e)) {
+        physics::ShapeDesc p;
+        p.type = physics::ShapeType::Capsule;
+        p.radius = capsule->radius * std::max(s.x, s.z);
+        p.halfHeight = capsule->halfHeight * s.y;
+        p.offset = capsule->offset * s;
+        p.rotation = capsule->rotation;
+        parts.push_back(p);
+    }
+    if (auto* cylinder = m_registry.try_get<CylinderColliderComponent>(e)) {
+        physics::ShapeDesc p;
+        p.type = physics::ShapeType::Cylinder;
+        p.radius = cylinder->radius * std::max(s.x, s.z);
+        p.halfHeight = cylinder->halfHeight * s.y;
+        p.offset = cylinder->offset * s;
+        p.rotation = cylinder->rotation;
+        parts.push_back(p);
+    }
+    if (m_registry.any_of<ConvexHullColliderComponent, MeshColliderComponent>(e)) {
         // Polyhedra from the mesh's vertices, local to the body (scaled; the rotation is the body's).
         const auto* hull = m_registry.try_get<ConvexHullColliderComponent>(e);
         const auto* mc = m_registry.try_get<MeshColliderComponent>(e);
         MeshHandle mesh = hull ? hull->mesh : mc->mesh;
         if (!mesh)
             if (const auto* m = m_registry.try_get<MeshComponent>(e)) mesh = m->mesh;
-        bool triangles = mc != nullptr;
+        bool triangles = mc != nullptr && !hull;
         if (triangles && rb.type == physics::BodyType::Dynamic) {
-            NOVA_CORE_WARN("Scene: '{}' has a MeshCollider on a dynamic body; using its convex hull",
-                           Entity{e, this}.name());
+            if (m_warnedMeshOnDynamic.insert(e).second)
+                NOVA_CORE_WARN("Scene: '{}' has a MeshCollider on a dynamic body; using its convex hull",
+                               Entity{e, this}.name());
             triangles = false;
         }
-        desc.shape.type = triangles ? physics::ShapeType::Mesh : physics::ShapeType::ConvexHull;
-        desc.shape.geometry = meshGeometry(mesh, s, triangles);
-        if (hull) desc.shape.offset = hull->offset * s;
-        if (!desc.shape.geometry) {
-            NOVA_CORE_WARN("Scene: no vertices for the collider of '{}' (mesh {}); using a box",
-                           Entity{e, this}.name(), mesh.id);
-            desc.shape = {};
-            desc.shape.halfExtents = 0.5f * s;
+        physics::ShapeDesc p;
+        p.type = triangles ? physics::ShapeType::Mesh : physics::ShapeType::ConvexHull;
+        p.geometry = meshGeometry(mesh, s, triangles);
+        if (hull) {
+            p.offset = hull->offset * s;
+            p.rotation = hull->rotation;
         }
-    } else {
+        if (p.geometry) {
+            parts.push_back(p);
+        } else if (m_warnedNoVertices.insert(e).second) {
+            NOVA_CORE_WARN("Scene: no vertices for the collider of '{}' (mesh {}); ignoring it",
+                           Entity{e, this}.name(), mesh.id);
+        }
+    }
+
+    physics::BodyDesc desc;
+    if (parts.empty()) {
         desc.shape.type = physics::ShapeType::Box;
         desc.shape.halfExtents = 0.5f * s;
+    } else if (parts.size() == 1) {
+        desc.shape = parts.front();
+    } else {
+        desc.shape.type = physics::ShapeType::Compound;
+        desc.shape.children = std::make_shared<const std::vector<physics::ShapeDesc>>(std::move(parts));
     }
     desc.type = rb.type;
     desc.position = t.position; // global: the backend decides how to get there
@@ -167,8 +199,110 @@ void Scene::createBody(entt::entity e) {
     desc.gravityFactor = rb.gravityFactor;
     desc.isSensor = rb.isSensor;
     desc.layer = std::min(rb.layer, physics::kCollisionLayerCount - 2); // the last one is the world edge
+    desc.continuousCollision = rb.continuousCollision;
+    desc.lockedAxes = rb.locks.bits();
     desc.userData = toUserData(e);
+    return desc;
+}
+
+namespace {
+struct Hasher {
+    u64 h = 1469598103934665603ull;
+    void bytes(const void* data, size_t size) {
+        const auto* b = static_cast<const unsigned char*>(data);
+        for (size_t i = 0; i < size; ++i) {
+            h ^= b[i];
+            h *= 1099511628211ull;
+        }
+    }
+    template <typename T>
+    void operator()(const T& v) {
+        bytes(&v, sizeof(v));
+    }
+    void shape(const physics::ShapeDesc& s) {
+        (*this)(s.type);
+        (*this)(s.halfExtents);
+        (*this)(s.radius);
+        (*this)(s.halfHeight);
+        (*this)(s.offset);
+        (*this)(s.rotation);
+        (*this)(s.geometry.get()); // geometries are shared per mesh and scale
+        if (s.children)
+            for (const physics::ShapeDesc& c : *s.children) shape(c);
+    }
+};
+
+// What needs a new body when it changes.
+u64 shapeKey(const physics::BodyDesc& d) {
+    Hasher h;
+    h.shape(d.shape);
+    h(d.type);
+    h(d.mass);
+    h(d.lockedAxes);
+    return h.h | 1; // never 0 ("nothing applied")
+}
+
+// What changes in place.
+u64 propertiesKey(const physics::BodyDesc& d) {
+    Hasher h;
+    h(d.friction);
+    h(d.restitution);
+    h(d.linearDamping);
+    h(d.angularDamping);
+    h(d.gravityFactor);
+    h(d.isSensor);
+    h(d.layer);
+    h(d.continuousCollision);
+    return h.h | 1;
+}
+
+u64 poseKey(const TransformComponent& t) {
+    Hasher h;
+    h(t.position.raw());
+    h(t.rotation);
+    return h.h | 1;
+}
+} // namespace
+
+void Scene::createBody(entt::entity e) {
+    auto& rb = m_registry.get<RigidBodyComponent>(e);
+    const physics::BodyDesc desc = bodyDescFor(e);
     rb.body = m_physics->createBody(desc);
+    rb.appliedShape = shapeKey(desc);
+    rb.appliedProperties = propertiesKey(desc);
+    rb.appliedPose = poseKey(m_registry.get<TransformComponent>(e));
+}
+
+// Edits made while simulating: rebuild, update in place, or move static bodies.
+void Scene::syncBodies() {
+    for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each()) {
+        if (!rb.body) continue;
+        const physics::BodyDesc desc = bodyDescFor(e);
+        if (const u64 key = shapeKey(desc); key != rb.appliedShape) {
+            const glm::vec3 v = m_physics->linearVelocity(rb.body), w = m_physics->angularVelocity(rb.body);
+            physics::BodyDesc fresh = desc;
+            if (rb.type == physics::BodyType::Dynamic) {
+                m_physics->getTransform(rb.body, fresh.position, fresh.rotation); // where it is now
+                fresh.linearVelocity = v;
+            }
+            m_physics->destroyBody(rb.body);
+            rb.body = m_physics->createBody(fresh);
+            if (rb.body && rb.type == physics::BodyType::Dynamic) m_physics->setAngularVelocity(rb.body, w);
+            rb.appliedShape = key;
+            rb.appliedProperties = propertiesKey(desc);
+            rb.appliedPose = poseKey(t);
+            continue;
+        }
+        if (const u64 key = propertiesKey(desc); key != rb.appliedProperties) {
+            m_physics->setBodyProperties(rb.body, desc);
+            rb.appliedProperties = key;
+        }
+        if (rb.type == physics::BodyType::Static)
+            if (const u64 key = poseKey(t); key != rb.appliedPose) {
+                m_physics->setTransform(rb.body, t.position, t.rotation);
+                rb.appliedPose = key;
+            }
+    }
 }
 
 void Scene::onRigidBodyDestroyed(entt::registry& registry, entt::entity e) {
@@ -179,6 +313,7 @@ void Scene::onRigidBodyDestroyed(entt::registry& registry, entt::entity e) {
 
 void Scene::stepPhysics(Duration dt) {
     pushPhysicsFocus(); // the simulation follows the foci (regions, dormancy: up to the backend)
+    syncBodies(); // edits since last frame
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) // gained a rigid body since last frame
         if (!rb.body) createBody(e);
 

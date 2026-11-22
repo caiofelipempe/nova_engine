@@ -46,6 +46,12 @@ f64 shapeReach(const ShapeDesc& s) {
         case ShapeType::Sphere: return s.radius + offset;
         case ShapeType::Capsule: return s.radius + s.halfHeight + offset;
         case ShapeType::Cylinder: return std::sqrt(s.radius * s.radius + s.halfHeight * s.halfHeight) + offset;
+        case ShapeType::Compound: {
+            f64 r = 0.0;
+            if (s.children)
+                for (const ShapeDesc& c : *s.children) r = std::max(r, shapeReach(c));
+            return r + offset;
+        }
         case ShapeType::ConvexHull:
         case ShapeType::Mesh: {
             f64 r = 0.0;
@@ -71,6 +77,8 @@ local::BodyDesc toLocalDesc(const BodyDesc& d, const glm::vec3& position, u64 us
     l.gravityFactor = d.gravityFactor;
     l.isSensor = d.isSensor;
     l.layer = d.layer;
+    l.continuousCollision = d.continuousCollision;
+    l.lockedAxes = d.lockedAxes;
     l.userData = userData;
     return l;
 }
@@ -417,6 +425,22 @@ void FloatingOriginWorld::moveKinematic(BodyId id, const GlobalPosition& positio
     b->desc.rotation = rotation;
     if (const Instance* h = home(*b))
         if (Region* r = findRegion(h->region)) r->world->moveKinematic(h->local, r->toLocal(position), rotation, dt.secondsF());
+}
+
+void FloatingOriginWorld::setBodyProperties(BodyId id, const BodyDesc& d) {
+    Body* b = body(id);
+    if (!b) return;
+    b->desc.friction = d.friction;
+    b->desc.restitution = d.restitution;
+    b->desc.linearDamping = d.linearDamping;
+    b->desc.angularDamping = d.angularDamping;
+    b->desc.gravityFactor = d.gravityFactor;
+    b->desc.isSensor = d.isSensor;
+    b->desc.layer = d.layer;
+    b->desc.continuousCollision = d.continuousCollision;
+    const local::BodyDesc l = toLocalDesc(b->desc, glm::vec3(0.0f), id.value);
+    for (const Instance& inst : b->instances)
+        if (Region* r = findRegion(inst.region)) r->world->setBodyProperties(inst.local, l);
 }
 
 // ------------------------------------------------------------------ motion --

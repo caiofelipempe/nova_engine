@@ -129,6 +129,23 @@ void destroyingEndsTouches() {
     if (rg.count("end") == 1) CHECK(!rg.log.back().other.valid()); // the other one is gone
 }
 
+void destroyingSupportWakes() {
+    // A crate asleep on a platform falls when the platform is destroyed.
+    Scene scene("support");
+    addGround(scene);
+    Entity platform = scene.createEntity("Platform");
+    platform.transform().position = {0.0, 3.0, 0.0};
+    platform.transform().scale = {3, 0.2f, 3};
+    platform.add<RigidBodyComponent>(BodyType::Static);
+    Entity crate = addBall(scene, {0.0, 3.6, 0.0});
+    scene.startSimulation();
+    run(scene, 90);
+    CHECK(!scene.physics()->isActive(crate.get<RigidBodyComponent>().body)); // asleep up there
+    scene.destroyEntity(platform);
+    run(scene, 90);
+    CHECK_NEAR(crate.transform().position.toMeters().y, 0.5, 0.03);
+}
+
 void dormancyEndsTouches() {
     Scene scene("dormant");
     Entity ground = addGround(scene);
@@ -262,6 +279,165 @@ void settingsAreSaved() {
     CHECK(plain.physicsSettings() == PhysicsSettings{});
 }
 
+// ---------------------------------------------------------------- bodies --
+void runtimeProperties() {
+    Scene scene("runtime");
+    Entity ground = addGround(scene);
+    Entity ball = addBall(scene, {0.0, 20.0, 0.0});
+    ball.get<RigidBodyComponent>().linearDamping = 0.0f;
+    scene.startSimulation();
+    run(scene, 30);
+    // Gravity off mid-flight: the fall goes on at the speed it had.
+    ball.get<RigidBodyComponent>().gravityFactor = 0.0f;
+    run(scene, 1);
+    const f32 vy = scene.linearVelocity(ball).y;
+    run(scene, 30);
+    CHECK(vy < -4.0f);
+    CHECK_NEAR(scene.linearVelocity(ball).y, vy, 1e-3f);
+
+    // Friction on mid-slide: the crate stops.
+    Entity crate = scene.createEntity("Crate");
+    crate.transform().position = {5.0, 0.5, 0.0};
+    auto& crb = crate.add<RigidBodyComponent>();
+    crb.friction = 0.0f;
+    crb.linearDamping = 0.0f;
+    ground.get<RigidBodyComponent>().friction = 0.0f;
+    run(scene, 2);
+    scene.setLinearVelocity(crate, {4, 0, 0});
+    run(scene, 30);
+    CHECK_NEAR(scene.linearVelocity(crate).x, 4.0f, 0.05f); // ice
+    crb.friction = 1.0f;
+    ground.get<RigidBodyComponent>().friction = 1.0f;
+    run(scene, 60);
+    CHECK(std::abs(scene.linearVelocity(crate).x) < 0.05f);
+
+    // A solid floor turned into a sensor: what rests on it falls through.
+    Entity shelf = scene.createEntity("Shelf");
+    shelf.transform().position = {-5.0, 2.0, 0.0};
+    shelf.transform().scale = {2, 0.2f, 2};
+    shelf.add<RigidBodyComponent>(BodyType::Static);
+    Entity pot = addBall(scene, {-5.0, 3.0, 0.0}, 0.3f);
+    run(scene, 60);
+    CHECK_NEAR(pot.transform().position.toMeters().y, 2.4, 0.03);
+    shelf.get<RigidBodyComponent>().isSensor = true;
+    run(scene, 90);
+    CHECK_NEAR(pot.transform().position.toMeters().y, 0.3, 0.03);
+}
+
+void rebuildOnShapeChange() {
+    Scene scene("rebuild");
+    addGround(scene);
+    Entity ball = addBall(scene, {0.0, 0.5, 0.0});
+    scene.startSimulation();
+    run(scene, 30);
+    ball.get<SphereColliderComponent>().radius = 1.0f; // bigger: pushed up out of the ground
+    run(scene, 60);
+    CHECK_NEAR(ball.transform().position.toMeters().y, 1.0, 0.03);
+    // Rebuilt while moving: keeps its velocity.
+    ball.get<RigidBodyComponent>().gravityFactor = 0.0f;
+    ball.get<RigidBodyComponent>().linearDamping = 0.0f;
+    ball.transform().position = GlobalPosition(0.0, 10.0, 0.0);
+    scene.syncTransformToPhysics(ball);
+    scene.setLinearVelocity(ball, {3, 0, 0});
+    run(scene, 2);
+    ball.get<RigidBodyComponent>().mass = 5.0f; // a rebuild
+    run(scene, 2);
+    CHECK_NEAR(scene.linearVelocity(ball).x, 3.0f, 1e-3f);
+    CHECK_NEAR(ball.transform().position.toMeters().y, 10.0, 1e-3);
+    // Scaling the entity rebuilds it too.
+    ball.transform().scale = glm::vec3(0.25f);
+    run(scene, 1);
+    auto hit = scene.raycast(GlobalPosition(ball.transform().position.toMeters().x, 20.0, 0.0), {0, -1, 0}, 20.0f);
+    CHECK(hit && hit->entity == ball);
+    if (hit) CHECK_NEAR(hit->point.toMeters().y, 10.0 + 0.25, 0.02); // radius 1 × 0.25
+}
+
+void staticFollowsTransform() {
+    Scene scene("static");
+    Entity wall = scene.createEntity("Wall");
+    wall.transform().position = {5.0, 0.0, 0.0};
+    wall.add<RigidBodyComponent>(BodyType::Static);
+    scene.startSimulation();
+    run(scene, 1);
+    auto hit = scene.raycast(GlobalPosition(0.0, 0.0, 0.0), {1, 0, 0}, 20.0f);
+    CHECK(hit && std::abs(hit->distance - 4.5f) < 1e-3f);
+    wall.transform().position = {8.0, 0.0, 0.0}; // moved by code
+    run(scene, 1);
+    hit = scene.raycast(GlobalPosition(0.0, 0.0, 0.0), {1, 0, 0}, 20.0f);
+    CHECK(hit && std::abs(hit->distance - 7.5f) < 1e-3f);
+}
+
+void continuousCollision() {
+    // A 300 m/s bullet against a 5 cm wall 17.5 m away: one step moves it 5 m (0, 5, ... 20).
+    for (bool ccd : {false, true}) {
+        Scene scene("bullets");
+        Entity wall = scene.createEntity("Wall");
+        wall.transform().position = {17.5, 0.0, 0.0};
+        wall.transform().scale = {0.05f, 4.0f, 4.0f};
+        wall.add<RigidBodyComponent>(BodyType::Static);
+        Entity bullet = addBall(scene, {0.0, 0.0, 0.0}, 0.05f);
+        auto& rb = bullet.get<RigidBodyComponent>();
+        rb.gravityFactor = 0.0f;
+        rb.continuousCollision = ccd;
+        scene.startSimulation();
+        run(scene, 1);
+        scene.setLinearVelocity(bullet, {300, 0, 0});
+        run(scene, 10);
+        const f64 x = bullet.transform().position.toMeters().x;
+        if (ccd) CHECK(x < 17.5);  // stopped at the wall
+        else CHECK(x > 17.5);      // tunnelled through (why CCD exists)
+    }
+}
+
+void axisLocks() {
+    Scene scene("locks");
+    addGround(scene);
+    Entity crate = scene.createEntity("Crate");
+    crate.transform().position = {0.0, 0.5, 0.0};
+    auto& rb = crate.add<RigidBodyComponent>();
+    rb.locks.rotationX = rb.locks.rotationY = rb.locks.rotationZ = true;
+    rb.locks.positionZ = true;
+    scene.startSimulation();
+    run(scene, 10);
+    // An off-center push would spin it; locked, it only slides (and never along Z).
+    scene.physics()->addImpulse(rb.body, {2, 0, 2});
+    scene.physics()->addTorque(rb.body, {0, 50, 50});
+    run(scene, 30);
+    CHECK(std::abs(glm::dot(crate.transform().rotation * glm::vec3(0, 1, 0), glm::vec3(0, 1, 0)) - 1.0f) < 1e-4f);
+    CHECK(glm::length(scene.physics()->angularVelocity(rb.body)) < 1e-4f);
+    CHECK(crate.transform().position.toMeters().x > 0.1);
+    CHECK(std::abs(crate.transform().position.toMeters().z) < 1e-4);
+}
+
+void compoundColliders() {
+    Scene scene("compound");
+    addGround(scene);
+    // A box and a sphere on one entity: a mallet. The sphere sits 1.5 above the box's center.
+    Entity mallet = scene.createEntity("Mallet");
+    mallet.transform().position = {0.0, 3.0, 0.0};
+    mallet.add<RigidBodyComponent>(BodyType::Static);
+    mallet.add<BoxColliderComponent>().halfExtents = {0.2f, 1.0f, 0.2f};
+    auto& head = mallet.add<SphereColliderComponent>();
+    head.radius = 0.5f;
+    head.offset = {0.0f, 1.5f, 0.0f};
+    // A box collider rotated 90° about Z: 2 m long along X becomes 2 m tall.
+    Entity post = scene.createEntity("Post");
+    post.transform().position = {5.0, 5.0, 0.0};
+    post.add<RigidBodyComponent>();
+    auto& pc = post.add<BoxColliderComponent>();
+    pc.halfExtents = {1.0f, 0.25f, 0.25f};
+    pc.rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1));
+    scene.startSimulation();
+    run(scene, 150);
+    auto top = scene.raycast(GlobalPosition(0.0, 10.0, 0.0), {0, -1, 0}, 20.0f);
+    CHECK(top && top->entity == mallet);
+    if (top) CHECK_NEAR(top->point.toMeters().y, 3.0 + 1.5 + 0.5, 1e-3); // the head
+    auto side = scene.raycast(GlobalPosition(-5.0, 3.0, 0.0), {1, 0, 0}, 20.0f);
+    CHECK(side && side->entity == mallet);
+    if (side) CHECK_NEAR(side->point.toMeters().x, -0.2, 1e-3); // the handle
+    CHECK_NEAR(post.transform().position.toMeters().y, 1.0, 0.03); // standing on its 2 m length
+}
+
 } // namespace
 
 int main() {
@@ -272,10 +448,17 @@ int main() {
         {"contacts: rolling across mesh triangles is one touch", meshTouchIsOne},
         {"contacts: destroying a body ends its touches", destroyingEndsTouches},
         {"contacts: going dormant ends touches", dormancyEndsTouches},
+        {"bodies: destroying a support wakes what rests on it", destroyingSupportWakes},
         {"triggers: enter and exit, no collision", triggers},
         {"collision layers: matrix, queries, runtime changes", collisionLayers},
         {"overlap queries", overlaps},
         {"physics settings are saved with the scene", settingsAreSaved},
+        {"bodies: property edits apply while simulating", runtimeProperties},
+        {"bodies: collider, mass and scale edits rebuild them", rebuildOnShapeChange},
+        {"bodies: static bodies follow their transform", staticFollowsTransform},
+        {"bodies: continuous collision stops fast bullets", continuousCollision},
+        {"bodies: axis locks", axisLocks},
+        {"bodies: compound and rotated colliders", compoundColliders},
     };
     for (auto& [name, fn] : tests) {
         const int before = g_failures;

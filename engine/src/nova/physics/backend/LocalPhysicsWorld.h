@@ -25,6 +25,8 @@ struct BodyDesc {
     f32 gravityFactor = 1.0f;                   ///< Gravity multiplier (0 = floats).
     bool isSensor = false;                      ///< Reports contacts but has no collision response (trigger).
     u32 layer = 0;                              ///< Collision layer (see CollisionLayers).
+    bool continuousCollision = false;           ///< Swept collision for fast bodies.
+    u8 lockedAxes = 0;                          ///< Dynamic bodies: AxisLock bits.
     u64 userData = 0;                           ///< Opaque value returned in hits/contacts (the Scene stores the entity).
 };
 
@@ -97,6 +99,9 @@ public:
     ///
     /// Unlike setTransform(), this derives the velocity needed, so the body pushes dynamic bodies correctly.
     virtual void moveKinematic(BodyId body, const glm::vec3& position, const glm::quat& rotation, f32 dt) = 0;
+    /// @brief Friction, restitution, damping, gravity factor, sensor, layer and continuous
+    ///        collision from `desc` (the rest is ignored).
+    virtual void setBodyProperties(BodyId body, const BodyDesc& desc) = 0;
     /// @}
 
     /// @name Motion
