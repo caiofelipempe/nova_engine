@@ -118,10 +118,10 @@ void sceneClock() {
 }
 
 void glmInterop() {
-    GlobalOffset o(glm::i64vec3(1, -2, 3));
-    CHECK(o == GlobalOffset(1, -2, 3) && o.raw() == glm::i64vec3(1, -2, 3));
-    GlobalPosition p = GlobalPosition::fromRaw(glm::i64vec3(5, 6, 7));
-    CHECK(p.raw() == glm::i64vec3(5, 6, 7));
+    GlobalOffset o(glm::i32vec3(1, -2, 3));
+    CHECK(o == GlobalOffset(1, -2, 3) && o.raw() == glm::i32vec3(1, -2, 3));
+    GlobalPosition p = GlobalPosition::fromRaw(glm::i32vec3(5, 6, 7));
+    CHECK(p.raw() == glm::i32vec3(5, 6, 7));
 }
 
 } // namespace

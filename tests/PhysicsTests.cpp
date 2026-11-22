@@ -431,10 +431,6 @@ void sceneLevelQueries() {
 }
 
 // ------------------------------------------------------------ floating origin --
-struct Restore {
-    ~Restore() { WorldSpace::setActive(WorldSpace()); }
-};
-
 // Ground box (top face at base.y), a ball above it and a camera, all around `base`.
 struct FarScene {
     Scene scene{"far"};
@@ -455,8 +451,9 @@ struct FarScene {
 };
 
 void farFromOrigin() {
-    // 10,000 km away: absolute floats there are 1 m apart; the simulation runs around the camera.
-    const GlobalPosition base = GlobalPosition::fromUnits({10'000, 0, -10'000}, LengthUnit::Kilometer);
+    // Near the far corner of the world, where absolute floats are coarsest; the simulation runs
+    // around the camera.
+    const GlobalPosition base(7900.0, 0.0, -7900.0);
     FarScene f(base);
     f.scene.startSimulation();
     CHECK(f.scene.physicsOrigin() == f.camera.transform().position);
@@ -476,7 +473,7 @@ void farFromOrigin() {
 }
 
 void rebase() {
-    const GlobalPosition base = GlobalPosition::fromUnits({500, 0, 0}, LengthUnit::Kilometer);
+    const GlobalPosition base(2500.0, 0.0, 0.0);
     FarScene f(base);
     f.ball.get<RigidBodyComponent>().gravityFactor = 0.0f;
     f.ball.get<RigidBodyComponent>().linearDamping = 0.0f; // measure the floating origin, not damping
@@ -514,67 +511,32 @@ void rebase() {
     CHECK_NEAR((f.ball.transform().position - mark).toMeters().x, 3.0, 2e-4);
 }
 
-struct BoundaryRecorder : Script {
-    std::vector<WorldBoundaryHit> hits;
-    void onWorldBoundary(const WorldBoundaryHit& hit) override { hits.push_back(hit); }
-};
-
-void barrierWalls() {
-    Restore restore;
-    Scene scene("walls");
-    scene.setWorldSpace(WorldSpaceDesc{}.setUnit(1, LengthUnit::Millimeter).setAxis(0, 100, LengthUnit::Meter, WorldBoundary::Barrier));
-    Entity ball = scene.createEntity("Ball");
-    ball.transform().position = {40.0, 0.0, 0.0};
-    auto& rb = ball.add<RigidBodyComponent>();
-    rb.gravityFactor = 0.0f;
-    rb.restitution = 0.0f;
-    ball.add<SphereColliderComponent>();
-    auto& rec = ball.addScript<BoundaryRecorder>();
-    scene.startSimulation();
-    scene.update(Duration::perSecond(60)); // creates scripts
-    scene.setLinearVelocity(ball, {20.0f, 0.0f, 0.0f});
-    for (int i = 0; i < 90; ++i) scene.update(Duration::perSecond(60));
-    // The +X edge (50 m) stopped it: the ball's surface rests against the wall.
-    CHECK_NEAR(ball.transform().position.toMeters().x, 49.5, 0.05);
-    CHECK(!rec.hits.empty());
-    if (!rec.hits.empty()) {
-        CHECK(rec.hits[0].axis == 0 && rec.hits[0].side == 1);
-        CHECK_VEC(rec.hits[0].normal, glm::vec3(-1, 0, 0), 1e-6f);
-        CHECK_NEAR(rec.hits[0].point.toMeters().x, 50.0, 0.05);
-    }
-    // Raycasts see the wall but report no entity.
-    auto hit = scene.raycast(GlobalPosition(0, 0, 3), {-1, 0, 0}, 100.0f);
-    CHECK(hit && !hit->entity.valid());
-    if (hit) CHECK_NEAR(hit->point.toMeters().x, -50.0, 0.01);
-}
-
 void wrapSeam() {
-    Restore restore;
     Scene scene("loop");
-    scene.setWorldSpace(WorldSpaceDesc{}.setUnit(1, LengthUnit::Millimeter).setAxis(0, 100, LengthUnit::Meter, WorldBoundary::Wrap));
-    // A box just past the seam (−49.5 m) and a ball just before it (+48 m) rolling towards it:
-    // with the physics focus at the seam they are neighbours for the physics engine.
+    const f64 seam = WorldSpace::kHalfLap; // +8 192 m ≡ −8 192 m
+    // A box just past the seam and a ball just before it rolling towards it: with the physics
+    // focus at the seam they are neighbours for the physics engine.
     Entity box = scene.createEntity("Box");
-    box.transform().position = {-49.0, 0.0, 0.0};
+    box.transform().position = {-seam + 1.0, 0.0, 0.0};
     box.add<RigidBodyComponent>(BodyType::Static).restitution = 0.0f;
     Entity ball = scene.createEntity("Ball");
-    ball.transform().position = {47.0, 0.0, 0.0};
+    ball.transform().position = {seam - 3.0, 0.0, 0.0};
     auto& ballBody = ball.add<RigidBodyComponent>();
     ballBody.gravityFactor = 0.0f;
     ballBody.restitution = 0.0f;
     ball.add<SphereColliderComponent>();
-    scene.setPhysicsFocus(GlobalPosition(50.0, 0.0, 0.0));
+    scene.setPhysicsFocus(GlobalPosition(seam, 0.0, 0.0));
     scene.startSimulation();
     scene.setLinearVelocity(ball, {10.0f, 0.0f, 0.0f});
     for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
-    // Stopped by the box across the seam: box face at −49.5, ball radius 0.5 → center at −50 ≡ +50.
+    // Stopped by the box across the seam: box face 0.5 m past it, ball radius 0.5 → center on it.
     const GlobalOffset fromBox = ball.transform().position - box.transform().position;
     CHECK_NEAR(fromBox.toMeters().x, -1.0, 0.05);
-    CHECK(ball.transform().position.toMeters().x > 49.0 || ball.transform().position.toMeters().x < -49.0);
+    CHECK(std::abs(ball.transform().position.toMeters().x) > seam - 1.0);
 
     // A free ball crosses the seam and keeps going on the other side.
     Entity free = scene.createEntity("Free");
-    free.transform().position = {48.0, 5.0, 0.0};
+    free.transform().position = {seam - 2.0, 5.0, 0.0};
     auto& freeBody = free.add<RigidBodyComponent>();
     freeBody.gravityFactor = 0.0f;
     freeBody.linearDamping = 0.0f;
@@ -582,14 +544,14 @@ void wrapSeam() {
     scene.update(Duration::perSecond(60)); // creates the body
     scene.setLinearVelocity(free, {10.0f, 0.0f, 0.0f});
     for (int i = 0; i < 30; ++i) scene.update(Duration::perSecond(60));
-    CHECK_NEAR(free.transform().position.toMeters().x, -47.0, 0.1); // 48 + 5 m, wrapped
+    CHECK_NEAR(free.transform().position.toMeters().x, -seam + 3.0, 0.1); // 5 m on, around the torus
 }
 
 // ------------------------------------------------------------ physics regions --
 void twoRegions() {
-    // Two players 50 km apart: each gets its own region, precise around it.
-    const GlobalPosition a = GlobalPosition::fromUnits({1000, 0, 0}, LengthUnit::Kilometer);
-    const GlobalPosition b = a + glm::vec3(50'000.0f, 0.0f, 0.0f);
+    // Two players 11 km apart (diagonally across the torus): each gets its own region.
+    const GlobalPosition a(-4000.0, 0.0, -4000.0);
+    const GlobalPosition b(4000.0, 0.0, 4000.0);
     Scene scene("regions");
     std::vector<Entity> balls;
     for (const GlobalPosition& base : {a, b}) {
@@ -620,13 +582,13 @@ void twoRegions() {
     scene.setPhysicsFoci({a + glm::vec3(0, 2, 5), a + glm::vec3(3000, 2, 5)});
     scene.update(Duration::perSecond(60));
     CHECK(scene.physicsRegionCount() == 1);
-    CHECK(scene.isPhysicsDormant(balls[1])); // 50 km from both players now: frozen
+    CHECK(scene.isPhysicsDormant(balls[1])); // far from both players now: frozen
     CHECK(balls[1].transform().position == restB);
     CHECK(!scene.isPhysicsDormant(balls[0]));
 }
 
 void dormancy() {
-    const GlobalPosition base = GlobalPosition::fromUnits({200, 0, 0}, LengthUnit::Kilometer);
+    const GlobalPosition base(1000.0, 0.0, 0.0);
     Scene scene("dormant");
     Entity ball = scene.createEntity("Ball");
     ball.transform().position = base;
@@ -640,7 +602,7 @@ void dormancy() {
     scene.update(Duration::perSecond(60));
 
     // The focus leaves: the ball freezes where it is, keeping its velocity...
-    scene.setPhysicsFocus(base + glm::vec3(20'000.0f, 0.0f, 0.0f));
+    scene.setPhysicsFocus(base + glm::vec3(6000.0f, 0.0f, 6000.0f));
     scene.update(Duration::perSecond(60));
     CHECK(scene.isPhysicsDormant(ball) && ball.get<RigidBodyComponent>().body.valid()); // same id, just not simulated
     const GlobalPosition frozen = ball.transform().position;
@@ -774,7 +736,7 @@ void moreShapes() {
 void meshShapesFarAway() {
     // The same mesh ground and hull 10,000 km out: shapes stay local, only bodies are global.
     TestMeshes meshes;
-    const GlobalPosition base = GlobalPosition::fromUnits({10'000, 0, -10'000}, LengthUnit::Kilometer);
+    const GlobalPosition base = GlobalPosition(7500.0, 0.0, -7500.0);
     Scene scene("far shapes");
     scene.setMeshSource(meshes.source());
     Entity cam = scene.createEntity("Camera");
@@ -902,7 +864,7 @@ void adapterRegressions() {
 
 void nativeIntegerBackend() {
     // The scene feeds a custom backend global positions only — 10,000 km out, exactly.
-    const GlobalPosition base = GlobalPosition::fromUnits({10'000, 1, -10'000}, LengthUnit::Kilometer);
+    const GlobalPosition base = GlobalPosition(7500.0, 1000.0, -7500.0);
     Scene scene("native");
     Entity cam = scene.createEntity("Camera");
     cam.add<CameraComponent>();
@@ -958,7 +920,6 @@ int main() {
         {"scene-level queries", sceneLevelQueries},
         {"floating origin: 10,000 km from the world origin", farFromOrigin},
         {"floating origin: rebase keeps positions and velocities", rebase},
-        {"barrier edges are walls (onWorldBoundary)", barrierWalls},
         {"wrap seam: neighbours across it collide", wrapSeam},
         {"physics regions: far-apart foci, merging", twoRegions},
         {"physics regions: dormant bodies keep their velocity", dormancy},

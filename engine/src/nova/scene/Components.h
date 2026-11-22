@@ -42,7 +42,7 @@ struct NameComponent {
 /// Euler angles in any axis order with euler()/setEuler() (see EulerOrder).
 /// The entity's local axes: right = +X, up = +Y, forward = −Z.
 struct TransformComponent {
-    /// @brief World position: exact integer fixed point (see WorldSpace). Assign meters directly
+    /// @brief World position: Q13.18 fixed point on the 16 km torus (see WorldSpace). Assign meters directly
     ///        (`position = {0, 3, 10}`), move with offsets (`position += velocity * dt`).
     GlobalPosition position;
     /// @brief World rotation, a **unit** quaternion. The helpers below keep it unit; when assigning

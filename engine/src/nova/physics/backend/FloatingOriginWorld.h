@@ -23,8 +23,8 @@ namespace nova::physics {
 /// - **Bodies:** a dynamic/kinematic body lives in the region of its nearest focus if within reach;
 ///   otherwise it is **dormant** (no local body, pose and velocity kept) until a focus comes back.
 ///   Static bodies join every region they reach. Moving between regions keeps the velocity.
-/// - **Barriers:** barrier edges of the active WorldSpace near a region become static walls;
-///   contacts/hits against them carry kWorldBoundaryUserData.
+/// - **Torus:** every axis of the world wraps (WorldSpace); bodies are kept on the lap around the
+///   region's origin.
 /// - Queries run in the region around their origin; results are converted back to global.
 /// All decisions follow body index and focus order, so the simulation stays deterministic.
 class FloatingOriginWorld final : public PhysicsWorld {

@@ -15,13 +15,13 @@ bool isCharacter(u64 localUser) { return !isWorldBoundary(localUser) && (localUs
 GlobalPosition centroid(const std::vector<GlobalPosition>& points) {
     if (points.empty()) return {};
     const GlobalPosition& first = points.front();
-    i64 sum[3] = {0, 0, 0};
+    i64 sum[3] = {0, 0, 0}; // offsets are int32: no overflow for any realistic number of points
     for (const GlobalPosition& p : points) {
         const GlobalOffset d = p - first;
-        for (int i = 0; i < 3; ++i) sum[i] = detail::saturatingAdd(sum[i], d[i]);
+        for (int i = 0; i < 3; ++i) sum[i] += d[i];
     }
     const i64 n = static_cast<i64>(points.size());
-    return first + GlobalOffset(sum[0] / n, sum[1] / n, sum[2] / n);
+    return first + GlobalOffset(static_cast<i32>(sum[0] / n), static_cast<i32>(sum[1] / n), static_cast<i32>(sum[2] / n));
 }
 
 // Groups points closer than `distance` (transitively), in a deterministic order.
@@ -134,18 +134,8 @@ void FloatingOriginWorld::destroyRegion(size_t index) {
 }
 
 namespace {
-// Smallest span (m) of the wrapping axes of the active world (0 = no axis wraps within int64).
-f64 smallestWrapSpan() {
-    const WorldSpace& w = WorldSpace::active();
-    f64 smallest = 0.0;
-    for (int i = 0; i < 3; ++i) {
-        const WorldSpace::Axis& a = w.axis(i);
-        if (a.boundary != WorldBoundary::Wrap || a.full) continue;
-        const f64 size = w.sizeMeters(i);
-        smallest = smallest == 0.0 ? size : std::min(smallest, size);
-    }
-    return smallest;
-}
+// Every axis of the world wraps after one lap.
+constexpr f64 smallestWrapSpan() { return WorldSpace::kLap; }
 } // namespace
 
 void FloatingOriginWorld::rebaseRegion(Region& r, const GlobalPosition& target) {
@@ -191,31 +181,9 @@ void FloatingOriginWorld::rewrapBodies() {
 }
 
 void FloatingOriginWorld::rebuildWalls(Region& r) {
+    // The world is a torus: it has no edges, so no walls (kept for the contract's world-edge codes).
     for (BodyId wall : r.walls) r.world->destroyBody(wall);
     r.walls.clear();
-    const WorldSpace& world = WorldSpace::active();
-    const f32 thickness = 1.0f, span = static_cast<f32>(m_focus.barrierWallRange);
-    for (int axis = 0; axis < 3; ++axis) {
-        const WorldSpace::Axis& a = world.axis(axis);
-        if (a.boundary != WorldBoundary::Barrier) continue;
-        for (int side : {-1, 1}) {
-            const i64 edgeRaw = side < 0 ? a.min : a.max;
-            const f64 toEdge = static_cast<f64>(world.difference(axis, edgeRaw, r.origin.raw(axis))) * world.unit();
-            if (std::abs(toEdge) > m_focus.barrierWallRange) continue;
-            local::BodyDesc d;
-            d.type = BodyType::Static;
-            d.shape.type = ShapeType::Box;
-            d.shape.halfExtents = glm::vec3(span);
-            d.shape.halfExtents[axis] = thickness;
-            d.position = glm::vec3(0.0f);
-            d.position[axis] = static_cast<f32>(toEdge) + side * thickness; // just outside the edge
-            d.friction = 0.5f;
-            d.restitution = 0.0f; // the edge adds no bounce of its own
-            d.layer = kWorldBoundaryLayer; // collides with every layer
-            d.userData = kWorldBoundaryUserData | static_cast<u64>(axis * 2 + (side > 0 ? 1 : 0));
-            if (BodyId wall = r.world->createBody(d)) r.walls.push_back(wall);
-        }
-    }
 }
 
 void FloatingOriginWorld::setFocus(const SimulationFocus& focus) {
@@ -239,11 +207,11 @@ void FloatingOriginWorld::updateRegions() {
         for (size_t c = 0; c < clusters.size(); ++c) {
             const GlobalPosition center = centroid(clusters[c]);
             Region* best = nullptr;
-            UInt128 bestDistance;
+            u64 bestDistance = 0;
             for (Region& r : m_regions) { // keep the nearest unclaimed region still around these foci
                 if (std::find(claimed.begin(), claimed.end(), r.id) != claimed.end()) continue;
                 if (!isWithin(r.origin, center, 4.0 * m_focus.radius)) continue;
-                const UInt128 d = distanceSquared(r.origin, center);
+                const u64 d = distanceSquared(r.origin, center);
                 if (!best || d < bestDistance) best = &r, bestDistance = d;
             }
             const u32 id = best ? best->id : createRegion(center).id;
@@ -269,15 +237,15 @@ const FloatingOriginWorld::Region* FloatingOriginWorld::regionAt(const GlobalPos
     if (m_regions.empty()) return nullptr;
     if (!m_bounded) return &m_regions.front();
     const Region* best = nullptr;
-    UInt128 bestDistance;
+    u64 bestDistance = 0;
     for (const Region& r : m_regions)
         for (const GlobalPosition& f : r.foci) {
-            const UInt128 d = distanceSquared(f, p);
+            const u64 d = distanceSquared(f, p);
             if (!best || d < bestDistance) best = &r, bestDistance = d;
         }
     if (!best) return nullptr;
-    const f64 limit = m_focus.radius / WorldSpace::active().unit();
-    return bestDistance.toDouble() <= limit * limit ? best : nullptr;
+    const f64 limit = m_focus.radius / WorldSpace::kUnit;
+    return static_cast<f64>(bestDistance) <= limit * limit ? best : nullptr;
 }
 
 // ------------------------------------------------------------------ bodies --
@@ -318,14 +286,14 @@ void FloatingOriginWorld::assign(u32 index) {
                     }
         } else { // the region of the nearest focus, if within reach; else dormant
             const Region* best = nullptr;
-            UInt128 bestDistance;
+            u64 bestDistance = 0;
             for (const Region& r : m_regions)
                 for (const GlobalPosition& f : r.foci) {
-                    const UInt128 d = distanceSquared(f, position);
+                    const u64 d = distanceSquared(f, position);
                     if (!best || d < bestDistance) best = &r, bestDistance = d;
                 }
-            const f64 limit = reach / WorldSpace::active().unit();
-            if (best && bestDistance.toDouble() <= limit * limit) wanted.push_back(best->id);
+            const f64 limit = reach / WorldSpace::kUnit;
+            if (best && static_cast<f64>(bestDistance) <= limit * limit) wanted.push_back(best->id);
         }
     }
     for (size_t k = b.instances.size(); k-- > 0;)

@@ -8,15 +8,38 @@
 /// numbers: accumulating them never drifts, and 60 steps of 1/60 s are exactly one second.
 /// An int64 of flicks covers ±414 years.
 
-#include "nova/math/Integer.h"
 #include "nova/math/Units.h"
 
 #include <chrono>
 #include <cmath>
 #include <compare>
+#include <limits>
 #include <ratio>
 
 namespace nova {
+
+namespace detail {
+// Saturating int64 arithmetic for flicks (they clamp at ±414 years instead of overflowing).
+constexpr i64 kI64Max = std::numeric_limits<i64>::max();
+constexpr i64 kI64Min = std::numeric_limits<i64>::min();
+constexpr i64 saturatingAdd(i64 a, i64 b) {
+    if (b > 0 && a > kI64Max - b) return kI64Max;
+    if (b < 0 && a < kI64Min - b) return kI64Min;
+    return a + b;
+}
+constexpr i64 saturatingNegate(i64 a) { return a == kI64Min ? kI64Max : -a; }
+constexpr i64 saturatingMul(i64 a, i64 b) {
+    if (a == 0 || b == 0) return 0;
+    const bool negative = (a < 0) != (b < 0);
+    // |a| · |b| > max  ⇔  |a| > max / |b|, in unsigned magnitudes (safe at INT64_MIN).
+    const u64 ma = a >= 0 ? static_cast<u64>(a) : static_cast<u64>(-(a + 1)) + 1;
+    const u64 mb = b >= 0 ? static_cast<u64>(b) : static_cast<u64>(-(b + 1)) + 1;
+    const u64 limit = negative ? (u64(1) << 63) : static_cast<u64>(kI64Max);
+    if (ma > limit / mb) return negative ? kI64Min : kI64Max;
+    const u64 p = ma * mb;
+    return negative ? static_cast<i64>(0 - p) : static_cast<i64>(p);
+}
+} // namespace detail
 
 /// @brief Flicks in one second.
 constexpr i64 kFlicksPerSecond = 705'600'000;

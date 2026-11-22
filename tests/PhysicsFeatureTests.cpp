@@ -156,7 +156,7 @@ void dormancyEndsTouches() {
     scene.startSimulation();
     run(scene, 30);
     CHECK(rb.count("begin") == 1);
-    scene.setPhysicsFocus({50'000.0, 0.0, 0.0}); // far away: the ball stops simulating
+    scene.setPhysicsFocus({6000.0, 0.0, 6000.0}); // far away: the ball stops simulating
     run(scene, 2);
     CHECK(scene.isPhysicsDormant(ball));
     CHECK(rb.count("end") == 1);
@@ -611,8 +611,8 @@ void jointLifetime() {
 }
 
 void farJointsAndRebase() {
-    // A pendulum 10,000 km out; the focus jumps (rebase): the world anchor stays where it was.
-    const GlobalPosition base = GlobalPosition::fromUnits({10'000, 0, 0}, LengthUnit::Kilometer);
+    // A pendulum near the far corner; the focus jumps (rebase): the world anchor stays where it was.
+    const GlobalPosition base = GlobalPosition(7500.0, 0.0, 0.0);
     Scene scene("far");
     scene.physicsRegionRadius = 0.0; // one region: this test is about the floating origin
     scene.setPhysicsFocus(base);
@@ -642,7 +642,7 @@ void jointsAndDormancy() {
     j.connectedAnchor = {0.0f, 0.0f, 0.0f}; // the anchor's center: a 2 m rope
     scene.startSimulation();
     run(scene, 30);
-    scene.setPhysicsFocus({50'000.0, 0.0, 0.0});
+    scene.setPhysicsFocus({6000.0, 0.0, 6000.0});
     run(scene, 30);
     CHECK(scene.isPhysicsDormant(crate));
     scene.setPhysicsFocus({0.0, 0.0, 0.0});
@@ -809,7 +809,7 @@ void characterPushesAndIsSeen() {
 }
 
 void characterTeleportAndFar() {
-    const GlobalPosition base = GlobalPosition::fromUnits({10'000, 0, 0}, LengthUnit::Kilometer);
+    const GlobalPosition base = GlobalPosition(7500.0, 0.0, 0.0);
     Scene scene("far");
     addGround(scene, base);
     Entity player = addCharacter(scene, base + glm::vec3(0.0f, 0.05f, 0.0f));
@@ -859,14 +859,14 @@ int main() {
         {"joints: distance (pendulum)", pendulum},
         {"joints: breaking", breakingJoints},
         {"joints: lifetime with bodies and components", jointLifetime},
-        {"joints: 10,000 km out, across a rebase", farJointsAndRebase},
+        {"joints: far out, across a rebase", farJointsAndRebase},
         {"joints: dormant and back", jointsAndDormancy},
         {"joints: prefab references and saving", prefabRemapsRefs},
         {"characters: walk, land, jump", characterWalks},
         {"characters: slide along walls", characterSlidesAlongWalls},
         {"characters: stairs and steep slopes", characterStairsAndSlopes},
         {"characters: push bodies, seen by queries and sensors", characterPushesAndIsSeen},
-        {"characters: teleport, 10,000 km out, removal", characterTeleportAndFar},
+        {"characters: teleport, far out, removal", characterTeleportAndFar},
     };
     for (auto& [name, fn] : tests) {
         const int before = g_failures;

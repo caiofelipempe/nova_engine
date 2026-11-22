@@ -741,38 +741,17 @@ void hotReload() {
 
 } // namespace
 
-void worldSettings() {
+void worldSeam() {
+    // The world is a 16 km torus: across the seam the editor sees one continuous world. A camera at
+    // +8 191.5 m looking +X picks and renders a box that sits at −8 191.5 m, one meter ahead.
     Fixture f;
-    Entity crate = f.scene.createEntity("Crate");
-    crate.transform().position = GlobalPosition(1.25, 2.0, -3.5) + GlobalOffset(1, 0, 0); // one 32.32 step off
-    const GlobalPosition exact = crate.transform().position;
-    f.ctx.camera().position = {10.0, 4.0, 20.0};
-    const WorldSpaceDesc before = f.scene.worldSpace();
-
-    // 1 mm steps, a 100 m loop on X: positions carry over in meters (the extra step is lost).
-    const auto desc = WorldSpaceDesc{}.setUnit(1, LengthUnit::Millimeter).setAxis(0, 100, LengthUnit::Meter, WorldBoundary::Wrap);
-    CHECK(f.ctx.setWorldSpace(desc));
-    CHECK(f.scene.worldSpace().unit == 0.001 && f.scene.worldSpace().axes[0].boundary == WorldBoundary::Wrap);
-    CHECK(crate.transform().position.raw(0) == 1250 && crate.transform().position == GlobalPosition(1.25, 2.0, -3.5));
-    CHECK(f.ctx.camera().position == GlobalPosition(10.0, 4.0, 20.0));
-    CHECK(f.ctx.undoStack().undoName() == "Change World Settings");
-
-    // Undo restores the settings and every position bit for bit.
-    CHECK(f.ctx.undoStack().undo());
-    CHECK(f.scene.worldSpace().unit == before.unit && f.scene.worldSpace().axes[0].boundary == WorldBoundary::Barrier);
-    CHECK(crate.transform().position == exact);
-    CHECK(f.ctx.camera().position == GlobalPosition(10.0, 4.0, 20.0));
-    CHECK(f.ctx.undoStack().redo());
-    CHECK(f.scene.worldSpace().unit == 0.001 && crate.transform().position.raw(0) == 1250);
-
-    // Across the wrap seam the editor sees one continuous world: a camera at +49.5 m looking +X
-    // picks and renders a box that sits at −49.5 m, one meter ahead.
+    const f64 seam = WorldSpace::kHalfLap;
     const MeshData cube = MeshData::cube();
     MeshLookup meshes = [&](MeshHandle h) { return h.id == 1 ? &cube : nullptr; };
     Entity across = f.scene.createEntity("Across");
-    across.transform().position = {-49.5, 0.0, 0.0};
+    across.transform().position = {-seam + 0.5, 0.0, 0.0};
     across.add<MeshComponent>(MeshHandle{1});
-    const GlobalPosition eye(49.5, 0.0, 0.0);
+    const GlobalPosition eye(seam - 0.5, 0.0, 0.0);
     auto hit = pick(f.scene, meshes, eye, {1, 0, 0});
     CHECK(hit && hit->entity == across);
     if (hit) CHECK(std::abs(hit->distance - 0.5f) < 1e-4f); // the cube's near face, 0.5 m away
@@ -781,18 +760,12 @@ void worldSettings() {
     f.scene.buildRenderScene(rs, 1.0f, &cam);
     bool found = false;
     for (const DrawItem& d : rs.draws)
-        if (std::abs(d.transform[3].x - 1.0f) < 1e-4f) found = true; // drawn 1 m ahead, not 99 m behind
+        if (std::abs(d.transform[3].x - 1.0f) < 1e-4f) found = true; // drawn 1 m ahead, not 16 km behind
     CHECK(found);
     // Flying through the seam keeps the camera continuous.
     f.ctx.camera().position = eye;
     f.ctx.camera().position += glm::vec3(1.0f, 0.0f, 0.0f);
-    CHECK(f.ctx.camera().position == GlobalPosition(-49.5, 0.0, 0.0));
-
-    // The world is fixed while playing.
-    f.ctx.play();
-    CHECK(!f.ctx.setWorldSpace(WorldSpaceDesc{}));
-    f.ctx.stop();
-    WorldSpace::setActive(WorldSpace());
+    CHECK(f.ctx.camera().position == GlobalPosition(-seam + 0.5, 0.0, 0.0));
 }
 
 int main() {
@@ -816,7 +789,7 @@ int main() {
         {"multi-selection", multiSelection},
         {"tools", tools},
         {"picking", picking},
-        {"world settings (undo, seam continuity)", worldSettings},
+        {"world: the torus seam is continuous (pick, render, camera)", worldSeam},
         {"signals", signals},
         {"assets (prefabs, instantiate + undo, actions)", assets},
 #if defined(NOVA_TEST_MODULE_V1) && defined(NOVA_TEST_MODULE_V2)

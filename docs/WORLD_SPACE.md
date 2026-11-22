@@ -1,5 +1,12 @@
 # Espaço do mundo: posições globais em inteiros
 
+> **Estado:** o mundo já é o **toro de 16 km em Q13.18** (etapas 1–3 da seção
+> [Próxima reformulação](#próxima-reformulação-ponto-fixo-e-mundo-de-16-km-planejado)): `math/Fixed.h`
+> (lib `fpm`), `GlobalPosition`/`GlobalOffset` em `int32` com a volta pelo estouro, `WorldSpace` só com
+> constantes, sem `Integer.h`. As seções de "Modelo" a "Fases" descrevem o modelo anterior (`int64`,
+> unidade e bordas configuráveis), mantidas como histórico; a física ainda usa as regiões e a origem
+> flutuante dele até a etapa 4.
+
 Objetivo: mundos grandes sem perda de precisão, com escala ajustável e bordas que dão a volta ou
 são barreiras.
 
@@ -407,10 +414,12 @@ Para um mundo contínuo maior que 16 km, sem tela de carregamento.
   consistentes. O **conteúdo** de cada bloco (entidades, terreno, de onde vem) é do jogo.
 
 ### Etapas de implementação
-1. Ponto fixo: `fpm` via `FetchContent`, `math/Fixed.h` (aliases, `FixedVec3`, `FixedQuat`), testes de
-   exatidão e de limites.
-2. Fim do `Integer.h`.
-3. Posição Q13.18 circular: `GlobalPosition`, `WorldSpace`, serialização, painel World, renderer e testes.
+1. ✅ Ponto fixo: `fpm` via `FetchContent`, `math/Fixed.h` (aliases, `FixedVec3`, `FixedQuat`), testes de
+   exatidão e de limites (`tests/FixedTests.cpp`).
+2. ✅ Fim do `Integer.h` (o `Duration` tem as suas próprias operações saturadas).
+3. ✅ Posição Q13.18 circular: `GlobalPosition`, `WorldSpace`, serialização (só metros, que são exatos),
+   painel World (informativo), emendas no editor, renderer, cenários (arena com paredes e a emenda do
+   toro) e testes.
 4. Física direta no Jolt, saindo o `FloatingOriginWorld`.
 5. Atributos de simulação em ponto fixo, com reflexão, serialização, widgets e as APIs de física e de
    scripts.

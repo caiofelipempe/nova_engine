@@ -77,18 +77,14 @@ CameraData CameraData::relativeLookAt(const GlobalPosition& eye, const glm::vec3
 }
 
 namespace {
-// The origin modulo the shaders' world tile, exact when the tile is a whole number of steps.
+// The origin modulo the shaders' world tile: exact, the tile is a power of two of steps and the
+// lap a whole number of tiles, so the pattern is seamless across the torus too.
 glm::vec3 tiledOrigin(const GlobalPosition& origin) {
-    const f64 unit = WorldSpace::active().unit();
-    const f64 tileSteps = gpu::kWorldTile / unit;
+    constexpr u32 tileSteps = static_cast<u32>(gpu::kWorldTile / WorldSpace::kUnit);
+    static_assert((tileSteps & (tileSteps - 1)) == 0, "the world tile must be a power of two of steps");
     glm::vec3 out;
-    if (tileSteps >= 1.0 && tileSteps < 9.2e18 && std::floor(tileSteps) == tileSteps) {
-        const i64 t = static_cast<i64>(tileSteps);
-        for (int i = 0; i < 3; ++i) out[i] = static_cast<f32>(static_cast<f64>(origin.raw(i) % t) * unit);
-    } else {
-        const glm::dvec3 m = origin.toMeters();
-        for (int i = 0; i < 3; ++i) out[i] = static_cast<f32>(std::fmod(m[i], static_cast<f64>(gpu::kWorldTile)));
-    }
+    for (int i = 0; i < 3; ++i)
+        out[i] = static_cast<f32>(static_cast<f64>(static_cast<u32>(origin.raw(i)) & (tileSteps - 1)) * WorldSpace::kUnit);
     return out;
 }
 } // namespace

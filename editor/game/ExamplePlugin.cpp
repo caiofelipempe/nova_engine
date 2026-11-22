@@ -147,10 +147,10 @@ void ExamplePlugin::onRegister(Registry& r) {
         view.yaw = std::atan2(-f.x, -f.z);
         view.pitch = std::asin(glm::clamp(f.y, -1.0f, 1.0f));
     };
-    r.command("Game/Scenarios/Small World: Closed Edges", [openScenario](EditorContext& ctx) {
+    r.command("Game/Scenarios/Arena (walls)", [openScenario](EditorContext& ctx) {
         openScenario(ctx, SmallWorld::Closed);
     });
-    r.command("Game/Scenarios/Small World: Open Edges (wrap)", [openScenario](EditorContext& ctx) {
+    r.command("Game/Scenarios/Torus Seam", [openScenario](EditorContext& ctx) {
         openScenario(ctx, SmallWorld::Open);
     });
 }

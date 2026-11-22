@@ -148,40 +148,6 @@ void EditorContext::edit(std::string name, const std::vector<Entity>& entities, 
     tx.commit();
 }
 
-bool EditorContext::setWorldSpace(const WorldSpaceDesc& desc) {
-    if (isPlaying()) {
-        NOVA_CORE_WARN("World settings cannot change while playing");
-        return false;
-    }
-    struct Saved {
-        u64 uuid;
-        GlobalPosition position;
-    };
-    // Exact positions under the current world: undo puts them back bit for bit.
-    auto snapshot = std::make_shared<std::vector<Saved>>();
-    for (auto [e, id, t] : m_scene->registry().view<IdComponent, TransformComponent>().each())
-        snapshot->push_back({id.uuid, t.position});
-    const WorldSpaceDesc before = m_scene->worldSpace();
-    const GlobalPosition cameraBefore = m_camera.position;
-
-    auto apply = [this](const WorldSpaceDesc& d) {
-        const glm::dvec3 camera = m_camera.position.toMeters();
-        m_scene->setWorldSpace(d); // converts entities through meters
-        m_camera.position = GlobalPosition::fromMeters(camera);
-    };
-    apply(desc);
-    const WorldSpaceDesc after = m_scene->worldSpace();
-    m_undo.push({"Change World Settings",
-                 [this, before, snapshot, cameraBefore] {
-                     m_scene->setWorldSpace(before);
-                     for (const Saved& s : *snapshot)
-                         if (Entity e = m_scene->findEntityByUuid(s.uuid)) e.transform().position = s.position;
-                     m_camera.position = cameraBefore;
-                 },
-                 [apply, after] { apply(after); }});
-    return true;
-}
-
 CreationTransaction EditorContext::beginCreation(std::string name) {
     CreationTransaction tx;
     tx.m_ctx = this;
@@ -292,7 +258,6 @@ void EditorContext::newScene() {
     stop();
     clearSelection();
     m_scene->clear();
-    m_scene->setWorldSpace(WorldSpaceDesc{}); // a new scene starts in the default world
     m_scene->setName("Untitled");
     m_scenePath.clear();
     m_undo.clear();

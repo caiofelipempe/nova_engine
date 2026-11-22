@@ -20,7 +20,8 @@ struct Collision {
     glm::vec3 otherSurfaceNormal{0.0f}; ///< Other's surface normal at `otherPoint`.
 };
 
-/// @brief A body touched a barrier edge of the world (see WorldSpace, WorldBoundary::Barrier).
+/// @brief A body touched an edge of the physics world (reported by backends that have edges; the
+///        16 km torus has none).
 struct WorldBoundaryHit {
     int axis = 0;           ///< 0 = X, 1 = Y, 2 = Z.
     int side = 0;           ///< −1 = the low edge, +1 = the high edge.

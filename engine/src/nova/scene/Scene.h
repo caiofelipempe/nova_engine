@@ -237,18 +237,6 @@ public:
     ///        keeps sub-millisecond precision however long the game runs.
     static constexpr Duration kShaderTimeCycle = Duration::hours(1);
 
-    /// @name World space
-    /// Unit, size and boundaries of the world positions are stored in (see WorldSpace).
-    /// @{
-    /// @brief This scene's world settings.
-    const WorldSpaceDesc& worldSpace() const { return m_worldSpace; }
-    /// @brief Changes the world settings and makes them active. Existing positions are carried over
-    ///        in meters (clamped or wrapped into the new world).
-    void setWorldSpace(const WorldSpaceDesc& desc);
-    /// @brief Makes this scene's world settings the active ones (update() does it every frame).
-    void activateWorldSpace() const;
-    /// @}
-
 private:
     void stepPhysics(Duration dt);
     std::vector<GlobalPosition> currentFoci();
@@ -274,7 +262,6 @@ private:
     SceneHit toSceneHit(const physics::QueryHit& hit);
 
     std::string m_name;
-    WorldSpaceDesc m_worldSpace;
     entt::registry m_registry;
     // Physics, in global positions (declared after the registry: destroyed first).
     Scope<physics::PhysicsWorld> m_physics;

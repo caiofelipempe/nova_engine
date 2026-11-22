@@ -13,7 +13,7 @@ bool Entity::valid() const { return m_scene && m_scene->registry().valid(m_handl
 entt::registry& Entity::registry() const { return m_scene->registry(); }
 
 // ------------------------------------------------------------------- Scene --
-Scene::Scene(std::string name) : m_name(std::move(name)), m_worldSpace(WorldSpace().desc()) { connectSignals(); }
+Scene::Scene(std::string name) : m_name(std::move(name)) { connectSignals(); }
 
 void Scene::connectSignals() {
     // Removing the component (or destroying the entity) removes the body from the world.
@@ -84,26 +84,7 @@ void Scene::resetStorage() {
     connectSignals();
 }
 
-void Scene::setWorldSpace(const WorldSpaceDesc& desc) {
-    // Carry positions over in meters: the integer steps mean something else under the new unit.
-    std::vector<std::pair<entt::entity, glm::dvec3>> meters;
-    for (auto [e, t] : m_registry.view<TransformComponent>().each()) meters.emplace_back(e, t.position.toMeters());
-    WorldSpace::setActive(WorldSpace(desc));
-    m_worldSpace = WorldSpace::active().desc(); // as resolved (clamped sizes)
-    for (auto& [e, m] : meters) m_registry.get<TransformComponent>(e).position = GlobalPosition::fromMeters(m);
-}
-
-void Scene::activateWorldSpace() const {
-    const WorldSpace& active = WorldSpace::active();
-    const WorldSpaceDesc& d = active.desc();
-    bool same = d.unit == m_worldSpace.unit;
-    for (int i = 0; same && i < 3; ++i)
-        same = d.axes[i].size == m_worldSpace.axes[i].size && d.axes[i].boundary == m_worldSpace.axes[i].boundary;
-    if (!same) WorldSpace::setActive(WorldSpace(m_worldSpace));
-}
-
 void Scene::update(Duration frame) {
-    activateWorldSpace();
     m_time += frame;
     const f32 dt = frame.secondsF(); // scripts and built-in systems work in float seconds
 

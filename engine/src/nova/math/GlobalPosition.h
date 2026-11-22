@@ -1,91 +1,108 @@
 #pragma once
 
 /// @file
-/// @brief Exact integer world positions (GlobalPosition) and the offsets between them (GlobalOffset).
+/// @brief World positions (GlobalPosition) and the offsets between them (GlobalOffset): Q13.18
+///        fixed point on the 16 km torus (see WorldSpace).
 
+#include "nova/math/Fixed.h"
 #include "nova/math/WorldSpace.h"
 
 #include <glm/glm.hpp>
 #include <glm/ext/vector_int3_sized.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-#include <limits>
-
 namespace nova {
 
-/// @brief A displacement between world positions, in integer steps of the world unit.
+namespace detail {
+// Two's complement arithmetic on the torus: unsigned, so the overflow is the lap (and defined).
+constexpr i32 wrapAdd(i32 a, i32 b) { return static_cast<i32>(static_cast<u32>(a) + static_cast<u32>(b)); }
+constexpr i32 wrapSub(i32 a, i32 b) { return static_cast<i32>(static_cast<u32>(a) - static_cast<u32>(b)); }
+constexpr i32 wrapNeg(i32 a) { return static_cast<i32>(0u - static_cast<u32>(a)); }
+constexpr i32 wrapMul(i32 a, i32 n) { return static_cast<i32>(static_cast<u32>(a) * static_cast<u32>(n)); }
+} // namespace detail
+
+/// @brief A displacement between world positions, in steps of 2⁻¹⁸ m (a Length vector).
 ///
-/// Integer operations are exact (`+`, `-`, `* integer`, comparisons of lengths); they saturate at
-/// the int64 limits instead of overflowing. Conversions to/from meters use the active WorldSpace.
+/// Offsets live on the torus too: adding them is exact and loops around the lap (an offset of
+/// one whole lap is zero), and the offset between two positions is always the shortest way.
 /// @code
 /// nova::GlobalOffset step = nova::GlobalOffset::fromMeters(velocity * dt);
-/// glm::vec3 local = (enemy - player).toVec3();   // small offsets are exact enough in float
+/// glm::vec3 local = (enemy - player).toVec3();
 /// @endcode
-struct GlobalOffset : glm::i64vec3 {
-    // A glm::i64vec3 of steps: x/y/z, [] and glm interop come from glm. The operators below
-    // (exact type match, so they win over glm's) saturate instead of overflowing.
-    constexpr GlobalOffset() : glm::i64vec3(0) {}
-    /// @brief From raw integer steps.
-    constexpr GlobalOffset(i64 x_, i64 y_, i64 z_) : glm::i64vec3(x_, y_, z_) {}
-    /// @brief From raw integer steps in a glm vector.
-    explicit constexpr GlobalOffset(const glm::i64vec3& steps) : glm::i64vec3(steps) {}
-    /// @brief Raw integer steps as a glm vector.
-    constexpr glm::i64vec3 raw() const { return *this; }
+struct GlobalOffset : glm::i32vec3 {
+    constexpr GlobalOffset() : glm::i32vec3(0) {}
+    /// @brief From raw steps.
+    constexpr GlobalOffset(i32 x_, i32 y_, i32 z_) : glm::i32vec3(x_, y_, z_) {}
+    /// @brief From raw steps in a glm vector.
+    explicit constexpr GlobalOffset(const glm::i32vec3& steps) : glm::i32vec3(steps) {}
+    /// @brief Raw steps as a glm vector.
+    constexpr glm::i32vec3 raw() const { return *this; }
 
-    /// @brief From meters (rounded to the nearest step, saturating).
+    /// @brief From meters (rounded to the nearest step; whole laps drop out).
     static GlobalOffset fromMeters(const glm::dvec3& meters);
-    /// @brief From meters (rounded to the nearest step, saturating).
+    /// @brief From meters (rounded to the nearest step; whole laps drop out).
     static GlobalOffset fromMeters(const glm::vec3& meters) { return fromMeters(glm::dvec3(meters)); }
-    /// @brief In meters, as double (53 significant bits: exact up to 2^53 steps per axis).
+    /// @brief In meters, exact (a step count times 2⁻¹⁸ fits a double).
     glm::dvec3 toMeters() const;
-    /// @brief In meters, as float — for local geometry, physics and the GPU (keep offsets small).
+    /// @brief In meters, as float (local geometry, physics, the GPU).
     glm::vec3 toVec3() const { return glm::vec3(toMeters()); }
-    /// @brief From a value in any metric unit (`fromUnits({0, 0, 250}, LengthUnit::Millimeter)`).
+    /// @brief From a value in any metric unit.
     static GlobalOffset fromUnits(const glm::dvec3& value, LengthUnit u) { return fromMeters(value * metersPer(u)); }
-    /// @brief Expressed in a metric unit, as double.
+    /// @brief Expressed in a metric unit.
     glm::dvec3 toUnits(LengthUnit u) const;
+    /// @brief The same offset as a fixed-point Length vector (same bits).
+    constexpr LengthVec toFixed() const { return {fromRaw<Length>(x), fromRaw<Length>(y), fromRaw<Length>(z)}; }
+    /// @brief From a fixed-point Length vector (same bits).
+    static constexpr GlobalOffset fromFixed(const LengthVec& v) {
+        return {v.x.raw_value(), v.y.raw_value(), v.z.raw_value()};
+    }
 
-
-    /// @brief Exact squared length, in steps².
-    UInt128 lengthSquared() const;
-    /// @brief Length in meters (double precision).
+    /// @brief Exact squared length in steps² (fits: 3 · 2⁶² < 2⁶⁴).
+    constexpr u64 lengthSquared() const {
+        auto sq = [](i32 v) { return static_cast<u64>(static_cast<i64>(v) * v); };
+        return sq(x) + sq(y) + sq(z);
+    }
+    /// @brief Length in meters.
     f64 length() const;
     /// @brief Length expressed in a metric unit.
     f64 length(LengthUnit u) const;
     /// @brief Exact: is the length below `meters`?
     bool isShorterThan(f64 meters) const;
-    /// @brief This offset times `t`, rounded to the nearest step (near-exact even for huge offsets).
+    /// @brief This offset times `factor`, rounded to the nearest step (loops around the lap).
     GlobalOffset scaled(f64 factor) const;
 
-    friend bool operator==(const GlobalOffset&, const GlobalOffset&) = default;
-    friend GlobalOffset operator+(const GlobalOffset& a, const GlobalOffset& b) {
-        return {detail::saturatingAdd(a.x, b.x), detail::saturatingAdd(a.y, b.y), detail::saturatingAdd(a.z, b.z)};
+    friend constexpr bool operator==(const GlobalOffset&, const GlobalOffset&) = default;
+    friend constexpr GlobalOffset operator+(const GlobalOffset& a, const GlobalOffset& b) {
+        return {detail::wrapAdd(a.x, b.x), detail::wrapAdd(a.y, b.y), detail::wrapAdd(a.z, b.z)};
     }
-    friend GlobalOffset operator-(const GlobalOffset& a) {
-        return {detail::saturatingNegate(a.x), detail::saturatingNegate(a.y), detail::saturatingNegate(a.z)};
+    friend constexpr GlobalOffset operator-(const GlobalOffset& a) {
+        return {detail::wrapNeg(a.x), detail::wrapNeg(a.y), detail::wrapNeg(a.z)};
     }
-    friend GlobalOffset operator-(const GlobalOffset& a, const GlobalOffset& b) { return a + (-b); }
-    /// @brief Exact integer multiple (saturating).
-    friend GlobalOffset operator*(const GlobalOffset& a, i64 n);
-    friend GlobalOffset operator*(i64 n, const GlobalOffset& a) { return a * n; }
+    friend constexpr GlobalOffset operator-(const GlobalOffset& a, const GlobalOffset& b) {
+        return {detail::wrapSub(a.x, b.x), detail::wrapSub(a.y, b.y), detail::wrapSub(a.z, b.z)};
+    }
+    /// @brief Integer multiple (loops around the lap).
+    friend constexpr GlobalOffset operator*(const GlobalOffset& a, i32 n) {
+        return {detail::wrapMul(a.x, n), detail::wrapMul(a.y, n), detail::wrapMul(a.z, n)};
+    }
+    friend constexpr GlobalOffset operator*(i32 n, const GlobalOffset& a) { return a * n; }
     GlobalOffset& operator+=(const GlobalOffset& o) { return *this = *this + o; }
     GlobalOffset& operator-=(const GlobalOffset& o) { return *this = *this - o; }
-    GlobalOffset& operator*=(i64 n) { return *this = *this * n; }
+    GlobalOffset& operator*=(i32 n) { return *this = *this * n; }
 };
 
 /// @brief Exact comparison of lengths: negative if `a` is shorter, 0 if equal, positive if longer.
 int compareLength(const GlobalOffset& a, const GlobalOffset& b);
 
-/// @brief A point in the world: three int64 in fixed point (WorldSpace::unit meters per step).
+/// @brief A point of the world: three Q13.18 coordinates on the 16 km torus (see WorldSpace).
 ///
-/// Always inside the active WorldSpace: barrier axes saturate at their edges, wrap axes loop.
-/// Relations between points are integer and exact — `b - a` is a GlobalOffset and
-/// `a + (b - a) == b` bit for bit, across wrap seams too. Meters appear only at the edges:
-/// fromMeters()/toMeters() (double) to initialize and display, float vectors for movement.
+/// Every value is a valid position: moving past one side enters the other. Relations between
+/// points are exact: `b - a` is the shortest GlobalOffset and `a + (b - a) == b` bit for bit,
+/// across the seam too.
 /// @code
-/// auto p = nova::GlobalPosition::fromMeters({1'250'000.0, 12.5, -30.0});
-/// p += velocity * dt;                        // float meters → exact integer step
-/// float d = float(nova::distance(p, target)); // meters
+/// nova::GlobalPosition p{1250.0, 12.5, -30.0};
+/// p += velocity * dt;                         // float meters → exact steps
+/// double d = nova::distance(p, target);       // meters
 /// @endcode
 class GlobalPosition {
 public:
@@ -95,45 +112,52 @@ public:
     GlobalPosition(f64 xMeters, f64 yMeters, f64 zMeters) : GlobalPosition(fromMeters({xMeters, yMeters, zMeters})) {}
     /// @brief From meters (implicit).
     GlobalPosition(const glm::dvec3& meters) : GlobalPosition(fromMeters(meters)) {}
-    /// @brief From meters (implicit). Far from the origin a float cannot say where you are: prefer
-    ///        moving existing positions by offsets (`position += velocity * dt`).
+    /// @brief From meters (implicit).
     GlobalPosition(const glm::vec3& meters) : GlobalPosition(fromMeters(glm::dvec3(meters))) {}
 
-    /// @brief From raw steps, brought into the world (wrap: modulo; barrier: clamped).
-    static GlobalPosition fromRaw(i64 x, i64 y, i64 z);
+    /// @brief From raw steps.
+    static constexpr GlobalPosition fromRaw(i32 x, i32 y, i32 z) {
+        GlobalPosition p;
+        p.m_steps = {x, y, z};
+        return p;
+    }
     /// @brief From raw steps in a glm vector.
-    static GlobalPosition fromRaw(const glm::i64vec3& steps) { return fromRaw(steps.x, steps.y, steps.z); }
-    /// @brief From meters (rounded to the nearest step; wrap axes loop, barrier axes clamp).
+    static constexpr GlobalPosition fromRaw(const glm::i32vec3& steps) { return fromRaw(steps.x, steps.y, steps.z); }
+    /// @brief From meters (rounded to the nearest step; any value, it loops around the torus).
     static GlobalPosition fromMeters(const glm::dvec3& meters);
-    /// @brief In meters, as double (for display/logs; exact up to 2^53 steps per axis).
+    /// @brief In meters, in [−8 192, 8 192), exact.
     glm::dvec3 toMeters() const;
-    /// @brief In meters from the world origin, as float. Loses precision far from the origin: for
-    ///        rendering and physics prefer offsets from a nearby point (`(p - camera).toVec3()`).
+    /// @brief In meters, as float (precise to ≤ 0.5 mm anywhere in the world).
     glm::vec3 toVec3() const { return glm::vec3(toMeters()); }
-    /// @brief From a value in any metric unit (`fromUnits({1500, 0, 20}, LengthUnit::Kilometer)`).
+    /// @brief From a value in any metric unit.
     static GlobalPosition fromUnits(const glm::dvec3& value, LengthUnit u) { return fromMeters(value * metersPer(u)); }
-    /// @brief Expressed in a metric unit, as double (`p.toUnits(LengthUnit::Kilometer)`).
+    /// @brief Expressed in a metric unit.
     glm::dvec3 toUnits(LengthUnit u) const;
+    /// @brief The coordinates as fixed-point Lengths from the origin (same bits).
+    constexpr LengthVec toFixed() const { return GlobalOffset(m_steps).toFixed(); }
 
     /// @brief Raw steps on axis `i` (0 = x).
-    i64 raw(int i) const { return m_steps[i]; }
-    /// @brief Raw steps as a glm vector. Plain glm arithmetic on them ignores the world's
-    ///        boundaries: use GlobalOffset / the operators here for positions.
-    const glm::i64vec3& raw() const { return m_steps; }
+    constexpr i32 raw(int i) const { return m_steps[i]; }
+    /// @brief Raw steps as a glm vector.
+    constexpr const glm::i32vec3& raw() const { return m_steps; }
 
-    /// @brief Moves by `offset` (exact). @return Bit mask of the axes stopped by a barrier (bit i = axis i).
-    u8 move(const GlobalOffset& offset);
-    /// @brief Moves by `meters` (rounded to the nearest step). @return Axes stopped by a barrier.
-    u8 move(const glm::vec3& meters) { return move(GlobalOffset::fromMeters(meters)); }
+    /// @brief Moves by `offset` (exact, around the torus).
+    constexpr void move(const GlobalOffset& offset) {
+        for (int i = 0; i < 3; ++i) m_steps[i] = detail::wrapAdd(m_steps[i], offset[i]);
+    }
+    /// @brief Moves by `meters` (rounded to the nearest step).
+    void move(const glm::vec3& meters) { move(GlobalOffset::fromMeters(meters)); }
 
-    friend bool operator==(const GlobalPosition&, const GlobalPosition&) = default;
-    /// @brief Exact offset from `b` to `a` (wrap axes: the shortest way around).
-    friend GlobalOffset operator-(const GlobalPosition& a, const GlobalPosition& b);
-    friend GlobalPosition operator+(GlobalPosition p, const GlobalOffset& o) {
+    friend constexpr bool operator==(const GlobalPosition&, const GlobalPosition&) = default;
+    /// @brief Exact offset from `b` to `a`: the shortest way around the torus.
+    friend constexpr GlobalOffset operator-(const GlobalPosition& a, const GlobalPosition& b) {
+        return GlobalOffset(a.m_steps) - GlobalOffset(b.m_steps);
+    }
+    friend constexpr GlobalPosition operator+(GlobalPosition p, const GlobalOffset& o) {
         p.move(o);
         return p;
     }
-    friend GlobalPosition operator-(GlobalPosition p, const GlobalOffset& o) {
+    friend constexpr GlobalPosition operator-(GlobalPosition p, const GlobalOffset& o) {
         p.move(-o);
         return p;
     }
@@ -163,18 +187,18 @@ public:
     }
 
 private:
-    glm::i64vec3 m_steps{0}; // integer steps of the world unit
+    glm::i32vec3 m_steps{0}; // Q13.18 steps (2⁻¹⁸ m)
 };
 
-/// @brief Distance in meters (double precision).
+/// @brief Distance in meters (the shortest way around).
 f64 distance(const GlobalPosition& a, const GlobalPosition& b);
 /// @brief Distance expressed in a metric unit.
 f64 distance(const GlobalPosition& a, const GlobalPosition& b, LengthUnit u);
 /// @brief Exact squared distance in steps².
-UInt128 distanceSquared(const GlobalPosition& a, const GlobalPosition& b);
+constexpr u64 distanceSquared(const GlobalPosition& a, const GlobalPosition& b) { return (b - a).lengthSquared(); }
 /// @brief Exact: are `a` and `b` closer than `meters`?
 bool isWithin(const GlobalPosition& a, const GlobalPosition& b, f64 meters);
-/// @brief Point at `t` from `a` (0) to `b` (1), along the shortest way (wrap seams included).
+/// @brief Point at `t` from `a` (0) to `b` (1), along the shortest way (across the seam too).
 GlobalPosition lerp(const GlobalPosition& a, const GlobalPosition& b, f64 t);
 /// @brief Moves `from` towards `to` by at most `maxMeters` (reaches `to` exactly when close enough).
 GlobalPosition moveTowards(const GlobalPosition& from, const GlobalPosition& to, f64 maxMeters);

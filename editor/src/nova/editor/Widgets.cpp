@@ -305,7 +305,7 @@ bool position(const char* label, GlobalPosition& value, float speed) {
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
             const LengthUnit u = readableUnit(meters[i]);
             ImGui::SetTooltip("%.9g %s\n%lld steps of %.3g m", fromMeters(meters[i], u), unitSymbol(u),
-                              static_cast<long long>(value.raw(i)), WorldSpace::active().unit());
+                              static_cast<long long>(value.raw(i)), WorldSpace::kUnit);
         }
         if (axisChanged) {
             // Move by the edited amount: the other axes stay bit-exact.

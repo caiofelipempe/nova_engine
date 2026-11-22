@@ -35,7 +35,6 @@ void Scene::setPhysicsSettings(const PhysicsSettings& settings) {
 
 void Scene::startSimulation(Scope<physics::PhysicsWorld> world) {
     if (m_physics || !world) return;
-    activateWorldSpace();
     m_physics = std::move(world);
     m_physics->setGravity(m_physicsSettings.gravity); // a world made elsewhere follows the scene too
     m_physics->setCollisionLayers(m_physicsSettings.layers);

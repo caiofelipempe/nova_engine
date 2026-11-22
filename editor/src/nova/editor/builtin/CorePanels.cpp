@@ -397,24 +397,7 @@ void RendererPanel::onImGui(EditorContext& ctx) {
 
 // ------------------------------------------------------------------- world --
 namespace {
-const char* kLengthUnitNames[] = {"nm", "um", "mm", "cm", "dm", "m", "km", "Mm"};
-
-bool unitCombo(const char* id, LengthUnit& unit) {
-    int i = static_cast<int>(unit);
-    ImGui::SetNextItemWidth(56.0f);
-    if (!ImGui::Combo(id, &i, kLengthUnitNames, IM_ARRAYSIZE(kLengthUnitNames))) return false;
-    unit = static_cast<LengthUnit>(i);
-    return true;
-}
-
-bool sameWorld(const WorldSpaceDesc& a, const WorldSpaceDesc& b) {
-    if (a.unit != b.unit) return false;
-    for (int i = 0; i < 3; ++i)
-        if (a.axes[i].size != b.axes[i].size || a.axes[i].boundary != b.axes[i].boundary) return false;
-    return true;
-}
-
-// "4.29 Mm", "0.233 nm": a length in its most readable unit.
+// "4.29 km", "3.81 um": a length in its most readable unit.
 std::string readable(f64 meters) {
     const LengthUnit u = readableUnit(meters);
     char buf[64];
@@ -427,81 +410,10 @@ WorldPanel::WorldPanel() : Panel("World", DockSlot::RightBottom) {}
 
 void WorldPanel::onImGui(EditorContext& ctx) {
     Scene& scene = ctx.scene();
-    // Follow the scene (opened files, undo/redo) unless there are pending edits.
-    const bool dirty = m_hasLoaded && !sameWorld(m_pending, m_loaded);
-    if (!m_hasLoaded || (!sameWorld(m_loaded, scene.worldSpace()) && !dirty)) {
-        m_pending = m_loaded = scene.worldSpace();
-        m_hasLoaded = true;
-        m_unitShown = readableUnit(m_pending.unit);
-        for (int i = 0; i < 3; ++i) m_sizeShown[i] = readableUnit(m_pending.axes[i].size);
-    }
-
-    const WorldSpace current(scene.worldSpace());
-    ImGui::TextDisabled("Step %s  |  X %s  Y %s  Z %s", readable(current.unit()).c_str(),
-                        readable(current.sizeMeters(0)).c_str(), readable(current.sizeMeters(1)).c_str(),
-                        readable(current.sizeMeters(2)).c_str());
-    ImGui::Separator();
-
-    ImGui::BeginDisabled(ctx.isPlaying());
-    // Step size (the fixed-point unit).
-    f64 step = fromMeters(m_pending.unit, m_unitShown);
-    ImGui::SetNextItemWidth(140.0f);
-    if (ImGui::InputDouble("##step", &step, 0.0, 0.0, "%.6g") && step > 0.0) m_pending.unit = toMeters(step, m_unitShown);
-    ImGui::SameLine();
-    unitCombo("##stepUnit", m_unitShown);
-    ImGui::SameLine();
-    ImGui::TextUnformatted("Step (precision)");
-
-    const char* boundaries[] = {"Barrier", "Wrap"};
-    const char* axisNames[] = {"X", "Y", "Z"};
-    for (int i = 0; i < 3; ++i) {
-        ImGui::PushID(i);
-        WorldAxisDesc& a = m_pending.axes[i];
-        f64 size = fromMeters(a.size, m_sizeShown[i]);
-        ImGui::SetNextItemWidth(140.0f);
-        if (ImGui::InputDouble("##size", &size, 0.0, 0.0, "%.6g") && size >= 0.0) a.size = toMeters(size, m_sizeShown[i]);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = the largest size the step allows");
-        ImGui::SameLine();
-        unitCombo("##sizeUnit", m_sizeShown[i]);
-        ImGui::SameLine();
-        int b = static_cast<int>(a.boundary);
-        ImGui::SetNextItemWidth(80.0f);
-        if (ImGui::Combo("##boundary", &b, boundaries, 2)) a.boundary = static_cast<WorldBoundary>(b);
-        ImGui::SameLine();
-        ImGui::TextUnformatted(axisNames[i]);
-        ImGui::PopID();
-    }
-
-    if (ImGui::Button("Finest step for these sizes")) m_pending.fitUnit();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spends all 64 bits on the sizes above (WorldSpaceDesc::fitUnit)");
-    ImGui::SetNextItemWidth(80.0f);
-    ImGui::InputDouble("##max", &m_maxSize, 0.0, 0.0, "%.6g");
-    ImGui::SameLine();
-    unitCombo("##maxUnit", m_maxSizeUnit);
-    ImGui::SameLine();
-    if (ImGui::Button("Every axis at most this") && m_maxSize > 0.0) {
-        for (WorldAxisDesc& a : m_pending.axes) a.size = toMeters(m_maxSize, m_maxSizeUnit);
-        m_pending.fitUnit();
-        for (LengthUnit& u : m_sizeShown) u = m_maxSizeUnit;
-        m_unitShown = readableUnit(m_pending.unit);
-    }
-
-    // What Apply would produce (sizes are clamped to what the step can hold).
-    const WorldSpace preview(m_pending);
-    ImGui::TextDisabled("Result: step %s  |  X %s  Y %s  Z %s", readable(preview.unit()).c_str(),
-                        readable(preview.sizeMeters(0)).c_str(), readable(preview.sizeMeters(1)).c_str(),
-                        readable(preview.sizeMeters(2)).c_str());
-    const bool changed = !sameWorld(m_pending, scene.worldSpace());
-    ImGui::BeginDisabled(!changed);
-    if (ImGui::Button("Apply")) {
-        if (ctx.setWorldSpace(m_pending)) m_pending = m_loaded = scene.worldSpace();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Revert")) m_pending = m_loaded = scene.worldSpace();
-    ImGui::EndDisabled();
-    ImGui::EndDisabled();
-    if (ctx.isPlaying()) ImGui::TextDisabled("World settings are fixed while playing.");
-
+    ImGui::TextDisabled("Torus: %s per axis, circular  |  step %s", readable(WorldSpace::kLap).c_str(),
+                        readable(WorldSpace::kUnit).c_str());
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Positions are Q13.18 fixed point: leaving one side enters the other");
     ImGui::Separator();
     const glm::dvec3 cam = ctx.camera().position.toMeters();
     ImGui::Text("Camera  %s, %s, %s", readable(cam.x).c_str(), readable(cam.y).c_str(), readable(cam.z).c_str());

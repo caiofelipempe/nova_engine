@@ -39,29 +39,20 @@ Json writeFloat(f32 v) {
     return std::strtod(std::string(buf, end).c_str(), nullptr);
 }
 
-// Positions: meters when they convert back exactly (readable, and what older files contain),
-// otherwise the exact integer steps with meters alongside for readers.
+// Positions and offsets in meters: a Q13.18 step count times 2^-18 is exact in a double, so
+// meters convert back to the same bits.
 Json writePosition(const GlobalPosition& g) {
     const glm::dvec3 m = g.toMeters();
-    Json meters = Json::array({m.x, m.y, m.z});
-    if (GlobalPosition::fromMeters(m) == g) return meters;
-    return Json{{"raw", Json::array({g.raw(0), g.raw(1), g.raw(2)})}, {"meters", std::move(meters)}};
+    return Json::array({m.x, m.y, m.z});
 }
 
 Json writeOffset(const GlobalOffset& o) {
     const glm::dvec3 m = o.toMeters();
-    Json meters = Json::array({m.x, m.y, m.z});
-    if (GlobalOffset::fromMeters(m) == o) return meters;
-    return Json{{"raw", Json::array({o.x, o.y, o.z})}, {"meters", std::move(meters)}};
+    return Json::array({m.x, m.y, m.z});
 }
 
-const char* boundaryName(WorldBoundary b) { return b == WorldBoundary::Wrap ? "Wrap" : "Barrier"; }
-
-Json writeWorld(const WorldSpaceDesc& d) {
-    Json axes = Json::array();
-    for (const WorldAxisDesc& a : d.axes) axes.push_back(Json{{"size", a.size}, {"boundary", boundaryName(a.boundary)}});
-    return Json{{"unit", d.unit}, {"axes", std::move(axes)}};
-}
+// The world block: informative (the world is always the 16 km torus of WorldSpace).
+Json writeWorld() { return Json{{"step", WorldSpace::kUnit}, {"lap", WorldSpace::kLap}}; }
 
 Json writeVec(const f32* v, int n) {
     Json a = Json::array();
@@ -183,15 +174,6 @@ Json writeEntity(Entity e, const SerializeOptions& opt, std::set<std::string>& w
 // ---------------------------------------------------------------- reading --
 void readObject(const reflect::TypeInfo& type, void* object, const Json& j, const SerializeOptions& opt);
 
-bool readRaw(const Json& j, i64 out[3]) {
-    if (!j.is_object() || !j.contains("raw") || !j["raw"].is_array() || j["raw"].size() != 3) return false;
-    for (int i = 0; i < 3; ++i) {
-        if (!j["raw"][i].is_number_integer()) return false;
-        out[i] = j["raw"][i].get<i64>();
-    }
-    return true;
-}
-
 bool readMeters(const Json& j, glm::dvec3& out) {
     const Json& a = j.is_object() && j.contains("meters") ? j["meters"] : j;
     if (!a.is_array() || a.size() != 3) return false;
@@ -202,12 +184,8 @@ bool readMeters(const Json& j, glm::dvec3& out) {
     return true;
 }
 
+// Meters (older files may also carry "raw" steps of another unit: the meters next to them win).
 bool readPosition(const Json& j, GlobalPosition& out) {
-    i64 raw[3];
-    if (readRaw(j, raw)) {
-        out = GlobalPosition::fromRaw(raw[0], raw[1], raw[2]);
-        return true;
-    }
     glm::dvec3 m;
     if (!readMeters(j, m)) return false;
     out = GlobalPosition::fromMeters(m);
@@ -215,29 +193,10 @@ bool readPosition(const Json& j, GlobalPosition& out) {
 }
 
 bool readOffset(const Json& j, GlobalOffset& out) {
-    i64 raw[3];
-    if (readRaw(j, raw)) {
-        out = {raw[0], raw[1], raw[2]};
-        return true;
-    }
     glm::dvec3 m;
     if (!readMeters(j, m)) return false;
     out = GlobalOffset::fromMeters(m);
     return true;
-}
-
-WorldSpaceDesc readWorld(const Json& j) {
-    WorldSpaceDesc d;
-    if (!j.is_object()) return d;
-    if (j.contains("unit") && j["unit"].is_number()) d.unit = j["unit"].get<f64>();
-    if (j.contains("axes") && j["axes"].is_array())
-        for (int i = 0; i < 3 && i < static_cast<int>(j["axes"].size()); ++i) {
-            const Json& a = j["axes"][i];
-            if (!a.is_object()) continue;
-            if (a.contains("size") && a["size"].is_number()) d.axes[i].size = a["size"].get<f64>();
-            d.axes[i].boundary = a.value("boundary", "Barrier") == "Wrap" ? WorldBoundary::Wrap : WorldBoundary::Barrier;
-        }
-    return d;
 }
 
 template <int N>
@@ -431,7 +390,7 @@ std::string serializeScene(Scene& scene, const SerializeOptions& options) {
     root["format"] = kFormat;
     root["version"] = kVersion;
     root["name"] = scene.name();
-    root["world"] = writeWorld(scene.worldSpace());
+    root["world"] = writeWorld();
     root["physics"] = writePhysics(scene.physicsSettings());
     Json entities = Json::array();
     for (entt::entity e : entitiesInOrder(scene)) entities.push_back(writeEntity({e, &scene}, options, warned));
@@ -451,9 +410,7 @@ bool deserializeScene(Scene& scene, std::string_view text, const SerializeOption
 
     scene.clear();
     if (root.contains("name") && root["name"].is_string()) scene.setName(root["name"].get<std::string>());
-    // The world settings come first: positions are stored in its units. Files without them
-    // (older versions) use the default world, where their meter positions mean the same.
-    scene.setWorldSpace(root.contains("world") ? readWorld(root["world"]) : WorldSpaceDesc{});
+    // Positions are read in meters: they land on the 16 km torus whatever world wrote them.
     scene.setPhysicsSettings(root.contains("physics") ? readPhysics(root["physics"]) : PhysicsSettings{});
     std::set<std::string> warned;
     try {

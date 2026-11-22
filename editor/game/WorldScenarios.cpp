@@ -5,6 +5,14 @@
 using namespace nova;
 
 // ------------------------------------------------------------------ scripts --
+bool isWall(Entity e) { return e.valid() && e.name().rfind("Wall", 0) == 0; }
+
+void EdgeFlash::onCollision(const Collision& c) {
+    if (!isWall(c.other)) return;
+    glow = 1.0f;
+    ++touches;
+}
+
 void EdgeFlash::onUpdate(float dt) {
     glow = std::max(0.0f, glow - dt * 2.0f);
     if (auto* mesh = entity().tryGet<MeshComponent>()) {
@@ -27,9 +35,13 @@ void Mover::onUpdate(float dt) {
     if (along < speed) scene().setLinearVelocity(entity(), v + d * (speed - along)); // keep its vertical motion
 }
 
-void Mover::onWorldBoundary(const WorldBoundaryHit& hit) {
-    // Point away from the edge we touched (the physics bounce already did the same to the velocity).
-    if (direction[hit.axis] * hit.normal[hit.axis] < 0.0f) direction[hit.axis] = -direction[hit.axis];
+void Mover::onCollision(const Collision& c) {
+    // Point away from the wall we touched (the physics bounce already did the same to the velocity).
+    if (!isWall(c.other)) return;
+    const glm::vec3 n = c.normal;
+    const float into = glm::dot(direction, n);
+    if (into < 0.0f) direction -= 2.0f * into * n;
+    direction.y = 0.0f;
 }
 
 void reflectScenarioTypes() {
@@ -84,21 +96,26 @@ const glm::vec4 kColors[] = {{0.9f, 0.3f, 0.25f, 1}, {0.25f, 0.6f, 0.95f, 1}, {0
                              {0.4f, 0.85f, 0.4f, 1}, {0.75f, 0.4f, 0.9f, 1}, {0.95f, 0.55f, 0.2f, 1}};
 
 Entity buildClosed(Scene& scene, const ScenarioMeshes& m) {
-    // 60 × 40 × 60 m, barriers everywhere (Y from −20 to +20: the floor sits at y = 0).
-    scene.setWorldSpace(WorldSpaceDesc{}
-                            .setUnit(1, LengthUnit::Millimeter)
-                            .setAxis(0, kSmallWorldSize, LengthUnit::Meter, WorldBoundary::Barrier)
-                            .setAxis(1, 40, LengthUnit::Meter, WorldBoundary::Barrier)
-                            .setAxis(2, kSmallWorldSize, LengthUnit::Meter, WorldBoundary::Barrier));
+    // A 60 × 60 m arena: a floor at y = 0 and four walls.
     common(scene);
-
     Entity floor = mesh(scene, "Floor", m.plane, {0.0, 0.0, 0.0}, {kSmallWorldSize, 1.0f, kSmallWorldSize},
                         {0.78f, 0.78f, 0.8f, 1});
     floor.get<MeshComponent>().material.checker = true;
     floor.add<RigidBodyComponent>(physics::BodyType::Static);
     floor.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
+    const double half = kSmallWorldSize / 2;
+    const std::pair<GlobalPosition, glm::vec3> walls[] = {{{half + 0.5, 2.0, 0.0}, {1.0f, 4.0f, kSmallWorldSize + 2}},
+                                                          {{-half - 0.5, 2.0, 0.0}, {1.0f, 4.0f, kSmallWorldSize + 2}},
+                                                          {{0.0, 2.0, half + 0.5}, {kSmallWorldSize + 2, 4.0f, 1.0f}},
+                                                          {{0.0, 2.0, -half - 0.5}, {kSmallWorldSize + 2, 4.0f, 1.0f}}};
+    for (const auto& [at, size] : walls) {
+        Entity w = mesh(scene, "Wall", m.cube, at, size, {0.45f, 0.5f, 0.6f, 1});
+        auto& rb = w.add<RigidBodyComponent>(physics::BodyType::Static);
+        rb.restitution = 0.0f;
+        w.add<BoxColliderComponent>();
+    }
 
-    // Balls wandering around: they hit the invisible edges and flash.
+    // Balls wandering around: they hit the walls and flash.
     for (int i = 0; i < 12; ++i) {
         const double a = i * 0.5236, r = 6.0 + (i % 3) * 4.0;
         Entity b = ball(scene, m, "Ball " + std::to_string(i), {r * std::cos(a), 1.0 + (i % 4), r * std::sin(a)},
@@ -122,21 +139,15 @@ Entity buildClosed(Scene& scene, const ScenarioMeshes& m) {
 }
 
 Entity buildOpen(Scene& scene, const ScenarioMeshes& m) {
-    // X and Z loop every 60 m; Y is a 40 m barrier.
-    scene.setWorldSpace(WorldSpaceDesc{}
-                            .setUnit(1, LengthUnit::Millimeter)
-                            .setAxis(0, kSmallWorldSize, LengthUnit::Meter, WorldBoundary::Wrap)
-                            .setAxis(1, 40, LengthUnit::Meter, WorldBoundary::Barrier)
-                            .setAxis(2, kSmallWorldSize, LengthUnit::Meter, WorldBoundary::Wrap));
+    // A floor strip across the X seam of the torus (+8 192 m ≡ −8 192 m): 400 m long, 60 m wide.
     common(scene);
-
-    // The floor is 6 × 6 tiles of 10 m: each is drawn and simulated the short way from the
-    // camera, so the floor always surrounds you, across the seams too.
-    const int tiles = 6;
-    const double tile = kSmallWorldSize / tiles;
-    for (int x = 0; x < tiles; ++x)
-        for (int z = 0; z < tiles; ++z) {
-            const GlobalPosition at(-kSmallWorldSize / 2 + tile * (x + 0.5), 0.0, -kSmallWorldSize / 2 + tile * (z + 0.5));
+    const double seam = WorldSpace::kHalfLap, tile = 10.0;
+    const int along = static_cast<int>(kSeamFloorLength / tile), across = static_cast<int>(kSmallWorldSize / tile);
+    for (int x = 0; x < along; ++x)
+        for (int z = 0; z < across; ++z) {
+            // Tile centers from 200 m before the seam to 200 m after it (positions loop by themselves).
+            const GlobalPosition at(seam - kSeamFloorLength / 2 + tile * (x + 0.5), 0.0,
+                                    -kSmallWorldSize / 2 + tile * (z + 0.5));
             const float shade = ((x + z) % 2) ? 0.72f : 0.84f;
             Entity t = mesh(scene, "Tile " + std::to_string(x) + "," + std::to_string(z), m.plane, at,
                             {static_cast<float>(tile), 1.0f, static_cast<float>(tile)}, {shade, shade, shade + 0.03f, 1});
@@ -144,34 +155,33 @@ Entity buildOpen(Scene& scene, const ScenarioMeshes& m) {
             t.add<RigidBodyComponent>(physics::BodyType::Static);
             t.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
         }
-    // Landmarks: a red pillar just before the X seam, a blue one just after it, a yellow one on
-    // the Z seam — fly across and you see them side by side.
-    const std::pair<GlobalPosition, glm::vec4> pillars[] = {{{27.0, 3.0, 0.0}, {0.9f, 0.2f, 0.2f, 1}},
-                                                            {{-27.0, 3.0, 0.0}, {0.2f, 0.4f, 0.95f, 1}},
-                                                            {{0.0, 3.0, 28.0}, {0.95f, 0.85f, 0.2f, 1}},
-                                                            {{12.0, 3.0, -12.0}, {0.3f, 0.85f, 0.4f, 1}}};
+    // Landmarks: a red pillar just before the seam, a blue one just after it (all off the runners'
+    // lanes, which are 6 m apart from z = −21 to +21).
+    const std::pair<GlobalPosition, glm::vec4> pillars[] = {{{seam - 3.0, 3.0, 0.0}, {0.9f, 0.2f, 0.2f, 1}},
+                                                            {{-seam + 3.0, 3.0, 0.0}, {0.2f, 0.4f, 0.95f, 1}},
+                                                            {{seam - 3.0, 3.0, 25.0}, {0.95f, 0.85f, 0.2f, 1}},
+                                                            {{-seam + 3.0, 3.0, -25.0}, {0.3f, 0.85f, 0.4f, 1}}};
     for (const auto& [at, color] : pillars) {
         Entity p = mesh(scene, "Pillar", m.cube, at, {1.0f, 6.0f, 1.0f}, color);
         p.add<RigidBodyComponent>(physics::BodyType::Static);
         p.add<BoxColliderComponent>();
     }
-    // Balls rolling forever: along X, along Z and diagonally, looping through the seams.
-    const glm::vec3 directions[] = {{1, 0, 0}, {0, 0, 1}, {1, 0, 1}, {-1, 0, 0.5f}};
+    // Runners heading through the seam along +X, starting 150 m before it.
     for (int i = 0; i < 8; ++i) {
-        Entity b = ball(scene, m, "Runner " + std::to_string(i), {-20.0 + i * 5.0, 0.5, -15.0 + (i % 3) * 12.0},
+        Entity b = ball(scene, m, "Runner " + std::to_string(i), {seam - 150.0 + (i % 4) * 4.0, 0.5, -21.0 + i * 6.0},
                         kColors[i % 6]);
         b.get<RigidBodyComponent>().restitution = 0.2f;
         auto& mover = b.addScript<Mover>();
-        mover.direction = directions[i % 4];
-        mover.speed = 5.0f + (i % 3) * 2.0f;
+        mover.direction = {1.0f, 0.0f, 0.0f};
+        mover.speed = 7.0f + (i % 3) * 1.5f;
     }
-    return camera(scene, {20.0, 8.0, 10.0}, {28.0, 2.0, 0.0}); // looking at the X seam
+    return camera(scene, {seam - 20.0, 8.0, 10.0}, {seam + 5.0, 2.0, 0.0}); // looking at the seam
 }
 
 } // namespace
 
 Entity buildSmallWorld(Scene& scene, const ScenarioMeshes& meshes, SmallWorld kind) {
     scene.clear();
-    scene.setName(kind == SmallWorld::Closed ? "Small World (closed)" : "Small World (open)");
+    scene.setName(kind == SmallWorld::Closed ? "Arena (walls)" : "Torus seam");
     return kind == SmallWorld::Closed ? buildClosed(scene, meshes) : buildOpen(scene, meshes);
 }
