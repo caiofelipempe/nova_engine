@@ -106,6 +106,13 @@ endif()
 
 if(NOVA_PHYSICS_JOLT)
     find_package(Jolt CONFIG REQUIRED)
+    # The simulation must give the same bits everywhere: Jolt comes from the overlay port in
+    # cmake/vcpkg-ports (CROSS_PLATFORM_DETERMINISTIC=ON), which exports the define to users.
+    get_target_property(NOVA_JOLT_DEFINES Jolt::Jolt INTERFACE_COMPILE_DEFINITIONS)
+    if(NOT "JPH_CROSS_PLATFORM_DETERMINISTIC" IN_LIST NOVA_JOLT_DEFINES)
+        message(FATAL_ERROR "Jolt was built without CROSS_PLATFORM_DETERMINISTIC. Use the overlay port "
+                            "(vcpkg-configuration.json → cmake/vcpkg-ports/joltphysics) and reconfigure.")
+    endif()
     file(GLOB NOVA_JOLT_SOURCES CONFIGURE_DEPENDS ${SRC}/physics/backend/jolt/*.cpp ${SRC}/physics/backend/jolt/*.h)
     target_sources(NovaEngine PRIVATE ${NOVA_JOLT_SOURCES})
     target_link_libraries(NovaEngine PRIVATE Jolt::Jolt)

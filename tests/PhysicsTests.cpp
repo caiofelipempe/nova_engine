@@ -586,6 +586,37 @@ void determinism() {
     CHECK(a.stateHash() != b.stateHash());
 }
 
+// The same simulation gives the same bits in every build and on every platform: Jolt is built with
+// CROSS_PLATFORM_DETERMINISTIC (overlay port) and the state is fixed point. The reference hash was
+// recorded once; Debug and Release must both reach it (a change here means the simulation changed:
+// update the value only on purpose).
+constexpr u64 kReferenceHash = 0xcd6c41137809c457ull; // Windows x64, MSVC, Debug and Release
+
+void crossPlatformDeterminism() {
+    Scene s("reference");
+    auto add = [&](const char* name, u64 uuid) {
+        Entity e = s.createEntity(name);
+        e.get<IdComponent>().uuid = uuid;
+        return e;
+    };
+    Entity ground = add("Ground", 1);
+    ground.transform().position = {0.0, -0.5, 0.0};
+    ground.transform().scale = {40, 1, 40};
+    ground.add<RigidBodyComponent>(BodyType::Static);
+    for (int i = 0; i < 16; ++i) {
+        Entity e = add("Body", 100 + static_cast<u64>(i));
+        e.transform().position = {static_cast<f64>(i % 4) * 0.9 - 1.3, 0.6 + (i / 4) * 1.05, static_cast<f64>(i % 3) * 0.3};
+        e.transform().rotate(0.3f * static_cast<f32>(i), {1, 2, 0});
+        e.add<RigidBodyComponent>().friction = 0.4f + 0.02f * static_cast<f32>(i);
+        if (i % 2) e.add<SphereColliderComponent>().radius = 0.45f;
+    }
+    s.startSimulation();
+    for (int i = 0; i < 180; ++i) s.update(Duration::perSecond(60));
+    const u64 h = s.stateHash();
+    std::printf("  reference hash: 0x%016llx\n", static_cast<unsigned long long>(h));
+    CHECK(h == kReferenceHash);
+}
+
 // ------------------------------------------------------------- more shapes --
 // Meshes the scene's colliders read (as Renderer::meshData would provide).
 struct TestMeshes {
@@ -849,6 +880,7 @@ int main() {
         {"floating origin: rebase keeps positions and velocities", rebase},
         {"wrap seam: neighbours across it collide", wrapSeam},
         {"determinism: two runs agree bit for bit", determinism},
+        {"determinism: the reference hash (every build, every platform)", crossPlatformDeterminism},
         {"global contract: a native integer backend plugs in directly", nativeIntegerBackend},
         {"adapter: invalid shapes refused, sweptPoint on the region origin", adapterRegressions},
         {"shapes: cylinder, convex hull, triangle mesh", moreShapes},

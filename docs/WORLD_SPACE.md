@@ -1,11 +1,12 @@
 # Espaço do mundo: posições globais em inteiros
 
-> **Estado:** o mundo já é o **toro de 16 km em Q13.18** (etapas 1–5 da seção
+> **Estado:** o mundo já é o **toro de 16 km em Q13.18** (etapas 1–6 da seção
 > [Próxima reformulação](#próxima-reformulação-ponto-fixo-e-mundo-de-16-km-planejado)): `math/Fixed.h`
 > (lib `fpm`), `GlobalPosition`/`GlobalOffset` em `int32` com a volta pelo estouro, `WorldSpace` só com
 > constantes, sem `Integer.h`. As seções de "Modelo" a "Fases" descrevem o modelo anterior (`int64`,
 > unidade e bordas configuráveis), mantidas como histórico. A física é o Jolt direto, pelo `TorusWorld`
-> (sem regiões, dormência nem paredes), e o estado da simulação é todo em ponto fixo.
+> (sem regiões, dormência nem paredes), compilado com `CROSS_PLATFORM_DETERMINISTIC`, e o estado da
+> simulação é todo em ponto fixo. Falta a etapa 7 (modo grande, `NOVA_LARGE_WORLDS`).
 
 Objetivo: mundos grandes sem perda de precisão, com escala ajustável e bordas que dão a volta ou
 são barreiras.
@@ -438,6 +439,9 @@ Para um mundo contínuo maior que 16 km, sem tela de carregamento.
    - a conversão para `float` fica no `ScenePhysics.cpp` (o contrato `physics::PhysicsWorld` continua
      em `float` fora das posições: é a fronteira com o motor), no renderer e no ImGui. As consultas
      (raycast, sweep, overlap) recebem direções e distâncias em `float`: não são estado.
-6. Jolt determinístico: overlay port do vcpkg com `CROSS_PLATFORM_DETERMINISTIC=ON`.
+6. ✅ Jolt determinístico: overlay port do vcpkg (`cmake/vcpkg-ports/joltphysics`, a mesma 5.5.0, ligado
+   em `vcpkg-configuration.json`) com `CROSS_PLATFORM_DETERMINISTIC=ON`; o CMake recusa um Jolt sem
+   `JPH_CROSS_PLATFORM_DETERMINISTIC`. O teste `physics` confere um hash de estado de referência,
+   gravado e igual em Debug e Release (MSVC x64); outra plataforma tem de chegar ao mesmo valor.
 7. Modo grande (`NOVA_LARGE_WORLDS`): blocos, janela, histerese, eventos e um preset de build próprio.
    Os testes rodam nos dois modos.
