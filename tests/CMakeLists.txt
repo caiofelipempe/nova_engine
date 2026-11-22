@@ -30,6 +30,11 @@ target_link_libraries(NovaWorldSpaceTests PRIVATE Nova::Engine)
 set_target_properties(NovaWorldSpaceTests PROPERTIES FOLDER "Tests")
 add_test(NAME worldspace COMMAND NovaWorldSpaceTests)
 
+add_executable(NovaFixedTests FixedTests.cpp)
+target_link_libraries(NovaFixedTests PRIVATE Nova::Engine)
+set_target_properties(NovaFixedTests PROPERTIES FOLDER "Tests")
+add_test(NAME fixed COMMAND NovaFixedTests)
+
 add_executable(NovaTimeTests TimeTests.cpp)
 target_link_libraries(NovaTimeTests PRIVATE Nova::Engine)
 set_target_properties(NovaTimeTests PROPERTIES FOLDER "Tests")

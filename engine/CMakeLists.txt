@@ -9,6 +9,17 @@ find_path(CGLTF_INCLUDE_DIRS "cgltf.h" REQUIRED)
 find_path(STB_INCLUDE_DIRS "stb_image.h" REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
+# fpm: header-only fixed-point numbers (deterministic arithmetic, sqrt and trigonometry) for the
+# simulation state. Not in vcpkg; only its headers are used (SOURCE_SUBDIR skips its test build).
+include(FetchContent)
+FetchContent_Declare(fpm
+    GIT_REPOSITORY https://github.com/MikeLankamp/fpm.git
+    GIT_TAG        8b488e3c1f9afb981cad31292b7b0be05926661e # v1.1.0
+    SOURCE_SUBDIR  headers-only)
+FetchContent_MakeAvailable(fpm)
+add_library(nova_fpm INTERFACE)
+target_include_directories(nova_fpm SYSTEM INTERFACE ${fpm_SOURCE_DIR}/include)
+
 set(SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/nova)
 
 # Backend-agnostic engine code.
@@ -42,7 +53,7 @@ add_library(Nova::Engine ALIAS NovaEngine)
 target_include_directories(NovaEngine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src PRIVATE ${CGLTF_INCLUDE_DIRS} ${STB_INCLUDE_DIRS})
 
 target_link_libraries(NovaEngine
-    PUBLIC  glm::glm EnTT::EnTT spdlog::spdlog imgui::imgui
+    PUBLIC  glm::glm EnTT::EnTT spdlog::spdlog imgui::imgui nova_fpm
     PRIVATE nlohmann_json::nlohmann_json)
 
 target_compile_definitions(NovaEngine PUBLIC
