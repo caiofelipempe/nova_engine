@@ -20,13 +20,25 @@ entt::entity fromUserData(u64 v) { return static_cast<entt::entity>(static_cast<
 
 void Scene::startSimulation(physics::Backend backend) {
     if (m_physics) return;
-    startSimulation(physics::PhysicsWorld::create(backend));
+    physics::WorldDesc desc;
+    desc.gravity = m_physicsSettings.gravity;
+    desc.layers = m_physicsSettings.layers;
+    startSimulation(physics::PhysicsWorld::create(backend, desc));
+}
+
+void Scene::setPhysicsSettings(const PhysicsSettings& settings) {
+    m_physicsSettings = settings;
+    if (!m_physics) return;
+    m_physics->setGravity(settings.gravity);
+    m_physics->setCollisionLayers(settings.layers);
 }
 
 void Scene::startSimulation(Scope<physics::PhysicsWorld> world) {
     if (m_physics || !world) return;
     activateWorldSpace();
     m_physics = std::move(world);
+    m_physics->setGravity(m_physicsSettings.gravity); // a world made elsewhere follows the scene too
+    m_physics->setCollisionLayers(m_physicsSettings.layers);
     m_physicsAccumulator = Duration();
     pushPhysicsFocus(); // before the bodies: they are placed where the action is
     for (auto e : m_registry.view<RigidBodyComponent>()) createBody(e);
@@ -154,6 +166,7 @@ void Scene::createBody(entt::entity e) {
     desc.angularDamping = rb.angularDamping;
     desc.gravityFactor = rb.gravityFactor;
     desc.isSensor = rb.isSensor;
+    desc.layer = std::min(rb.layer, physics::kCollisionLayerCount - 2); // the last one is the world edge
     desc.userData = toUserData(e);
     rb.body = m_physics->createBody(desc);
 }
@@ -191,36 +204,59 @@ void Scene::stepPhysics(Duration dt) {
         t.setRotation(q);
     }
 
-    // Collision callbacks for scripts on both entities, each seen from its own side.
+    dispatchContacts();
+}
+
+// Contact events to scripts, on both entities, each seen from its own side.
+void Scene::dispatchContacts() {
+    auto scriptsOf = [&](Entity e) -> ScriptComponent* { return e.valid() ? e.tryGet<ScriptComponent>() : nullptr; };
+    auto each = [&](Entity self, auto&& fn) {
+        if (auto* sc = scriptsOf(self))
+            for (auto& s : sc->scripts)
+                if (s->m_created) fn(*s);
+    };
     for (const physics::ContactEvent& c : m_physics->drainContactEvents()) {
+        const bool began = c.type == physics::ContactEventType::Began;
         if (physics::isWorldBoundary(c.userDataA) || physics::isWorldBoundary(c.userDataB)) { // a barrier edge
+            if (!began) continue;
             const bool wallIsA = physics::isWorldBoundary(c.userDataA);
             const u64 wall = wallIsA ? c.userDataA : c.userDataB;
             const u64 other = wallIsA ? c.userDataB : c.userDataA;
-            Entity self{fromUserData(other), this};
-            if (physics::isWorldBoundary(other) || !self.valid()) continue;
+            if (physics::isWorldBoundary(other)) continue;
             WorldBoundaryHit hit;
             hit.axis = static_cast<int>((wall & 0xFF) / 2);
             hit.side = (wall & 1) ? 1 : -1;
             hit.point = wallIsA ? c.pointB : c.pointA;
             hit.normal = glm::vec3(0.0f);
             hit.normal[hit.axis] = static_cast<f32>(-hit.side);
-            if (auto* sc = self.tryGet<ScriptComponent>())
-                for (auto& s : sc->scripts)
-                    if (s->m_created) s->onWorldBoundary(hit);
+            each(Entity{fromUserData(other), this}, [&](Script& s) { s.onWorldBoundary(hit); });
             continue;
         }
         Entity a{fromUserData(c.userDataA), this};
         Entity b{fromUserData(c.userDataB), this};
-        auto notify = [&](Entity self, const Collision& info) {
-            if (!self.valid() || !info.other.valid()) return;
-            if (auto* sc = self.tryGet<ScriptComponent>())
-                for (auto& s : sc->scripts)
-                    if (s->m_created) s->onCollision(info);
-        };
+        // Ended events may name a destroyed entity: hand it over invalid.
+        const Entity otherOfA = b.valid() ? b : Entity{}, otherOfB = a.valid() ? a : Entity{};
+        if (c.sensor) {
+            if (began) {
+                each(a, [&](Script& s) { s.onTriggerEnter(otherOfA); });
+                each(b, [&](Script& s) { s.onTriggerEnter(otherOfB); });
+            } else {
+                each(a, [&](Script& s) { s.onTriggerExit(otherOfA); });
+                each(b, [&](Script& s) { s.onTriggerExit(otherOfB); });
+            }
+            continue;
+        }
+        if (!began) {
+            each(a, [&](Script& s) { s.onCollisionEnd(otherOfA); });
+            each(b, [&](Script& s) { s.onCollisionEnd(otherOfB); });
+            continue;
+        }
+        if (!a.valid() || !b.valid()) continue;
         // c.normal points from A to B: it pushes B out of A, so A is pushed along -normal.
-        notify(a, Collision{b, -c.normal, c.pointA, c.pointB, c.surfaceNormalA, c.surfaceNormalB});
-        notify(b, Collision{a, c.normal, c.pointB, c.pointA, c.surfaceNormalB, c.surfaceNormalA});
+        const Collision forA{b, -c.normal, c.pointA, c.pointB, c.surfaceNormalA, c.surfaceNormalB};
+        const Collision forB{a, c.normal, c.pointB, c.pointA, c.surfaceNormalB, c.surfaceNormalA};
+        each(a, [&](Script& s) { s.onCollision(forA); });
+        each(b, [&](Script& s) { s.onCollision(forB); });
     }
 }
 
@@ -283,8 +319,9 @@ u64 Scene::stateHash() {
 }
 
 // ----------------------------------------------------------------- queries --
-physics::QueryFilter Scene::filterIgnoring(Entity e) const {
+physics::QueryFilter Scene::filterIgnoring(Entity e, u32 layerMask) const {
     physics::QueryFilter f;
+    f.layerMask = layerMask;
     if (e.valid())
         if (auto* rb = e.tryGet<RigidBodyComponent>()) f.ignoreBody = rb->body;
     return f;
@@ -303,66 +340,99 @@ SceneHit Scene::toSceneHit(const physics::QueryHit& hit) {
 }
 
 std::optional<SceneHit> Scene::raycast(const GlobalPosition& origin, const glm::vec3& direction, f32 maxDistance,
-                                       Entity ignore) {
+                                       Entity ignore, u32 layerMask) {
     if (!m_physics) return std::nullopt;
     physics::RaycastHit hit;
-    if (!m_physics->raycast(origin, direction, maxDistance, hit, filterIgnoring(ignore))) return std::nullopt;
+    if (!m_physics->raycast(origin, direction, maxDistance, hit, filterIgnoring(ignore, layerMask))) return std::nullopt;
     return toSceneHit(hit);
 }
 
 std::optional<SceneHit> Scene::sweep(const physics::ShapeDesc& shape, const GlobalPosition& position,
                                      const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
-                                     Entity ignore) {
+                                     Entity ignore, u32 layerMask) {
     if (!m_physics) return std::nullopt;
     physics::SweepHit hit;
-    if (!m_physics->sweep(shape, position, rotation, direction, maxDistance, hit, filterIgnoring(ignore)))
+    if (!m_physics->sweep(shape, position, rotation, direction, maxDistance, hit, filterIgnoring(ignore, layerMask)))
         return std::nullopt;
     return toSceneHit(hit);
 }
 
 std::vector<SceneHit> Scene::sweepAll(const physics::ShapeDesc& shape, const GlobalPosition& position,
                                       const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
-                                      Entity ignore) {
+                                      Entity ignore, u32 layerMask) {
     std::vector<SceneHit> out;
     if (!m_physics) return out;
-    for (const auto& h : m_physics->sweepAll(shape, position, rotation, direction, maxDistance, filterIgnoring(ignore)))
+    for (const auto& h :
+         m_physics->sweepAll(shape, position, rotation, direction, maxDistance, filterIgnoring(ignore, layerMask)))
         out.push_back(toSceneHit(h));
     return out;
 }
 
 std::optional<SceneHit> Scene::sweepSphere(const GlobalPosition& origin, f32 radius, const glm::vec3& direction,
-                                           f32 maxDistance, Entity ignore) {
+                                           f32 maxDistance, Entity ignore, u32 layerMask) {
     physics::ShapeDesc s;
     s.type = physics::ShapeType::Sphere;
     s.radius = radius;
-    return sweep(s, origin, glm::quat(1, 0, 0, 0), direction, maxDistance, ignore);
+    return sweep(s, origin, glm::quat(1, 0, 0, 0), direction, maxDistance, ignore, layerMask);
 }
 
 std::optional<SceneHit> Scene::sweepBox(const GlobalPosition& center, const glm::vec3& halfExtents,
                                         const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
-                                        Entity ignore) {
+                                        Entity ignore, u32 layerMask) {
     physics::ShapeDesc s;
     s.type = physics::ShapeType::Box;
     s.halfExtents = halfExtents;
-    return sweep(s, center, rotation, direction, maxDistance, ignore);
+    return sweep(s, center, rotation, direction, maxDistance, ignore, layerMask);
 }
 
 std::optional<SceneHit> Scene::sweepCapsule(const GlobalPosition& center, f32 radius, f32 halfHeight,
                                             const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
-                                            Entity ignore) {
+                                            Entity ignore, u32 layerMask) {
     physics::ShapeDesc s;
     s.type = physics::ShapeType::Capsule;
     s.radius = radius;
     s.halfHeight = halfHeight;
-    return sweep(s, center, rotation, direction, maxDistance, ignore);
+    return sweep(s, center, rotation, direction, maxDistance, ignore, layerMask);
 }
 
-std::optional<SceneHit> Scene::sweepEntity(Entity entity, const glm::vec3& direction, f32 maxDistance) {
+std::optional<SceneHit> Scene::sweepEntity(Entity entity, const glm::vec3& direction, f32 maxDistance, u32 layerMask) {
     physics::BodyId body = bodyOf(entity);
     if (!body) return std::nullopt;
     physics::SweepHit hit;
-    if (!m_physics->sweepBody(body, direction, maxDistance, hit)) return std::nullopt;
+    physics::QueryFilter f;
+    f.layerMask = layerMask;
+    if (!m_physics->sweepBody(body, direction, maxDistance, hit, f)) return std::nullopt;
     return toSceneHit(hit);
+}
+
+std::vector<Entity> Scene::overlap(const physics::ShapeDesc& shape, const GlobalPosition& position,
+                                   const glm::quat& rotation, Entity ignore, u32 layerMask, bool includeSensors) {
+    std::vector<Entity> out;
+    if (!m_physics) return out;
+    physics::QueryFilter f = filterIgnoring(ignore, layerMask);
+    f.includeSensors = includeSensors;
+    for (const physics::OverlapHit& h : m_physics->overlap(shape, position, rotation, f)) {
+        if (physics::isWorldBoundary(h.userData)) continue;
+        Entity e{fromUserData(h.userData), this};
+        if (e.valid()) out.push_back(e);
+    }
+    return out;
+}
+
+std::vector<Entity> Scene::overlapSphere(const GlobalPosition& center, f32 radius, Entity ignore, u32 layerMask,
+                                         bool includeSensors) {
+    physics::ShapeDesc s;
+    s.type = physics::ShapeType::Sphere;
+    s.radius = radius;
+    return overlap(s, center, glm::quat(1, 0, 0, 0), ignore, layerMask, includeSensors);
+}
+
+std::vector<Entity> Scene::overlapBox(const GlobalPosition& center, const glm::vec3& halfExtents,
+                                      const glm::quat& rotation, Entity ignore, u32 layerMask, bool includeSensors) {
+    physics::ShapeDesc s;
+    s.type = physics::ShapeType::Box;
+    s.halfExtents = halfExtents;
+    return overlap(s, center, rotation, ignore, layerMask, includeSensors);
 }
 
 } // namespace nova

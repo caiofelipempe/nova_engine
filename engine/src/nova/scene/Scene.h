@@ -147,6 +147,10 @@ public:
     u32 physicsBodyCount() const { return m_physics ? m_physics->bodyCount() : 0; }
     /// @brief True if the entity has a rigid body that is currently outside every region (not simulated).
     bool isPhysicsDormant(Entity e) const;
+    /// @brief Gravity, collision layers and their names (saved with the scene).
+    const PhysicsSettings& physicsSettings() const { return m_physicsSettings; }
+    /// @brief Changes the physics settings (applied to the running simulation right away).
+    void setPhysicsSettings(const PhysicsSettings& settings);
     /// @brief Hash of the simulation state: every entity's exact position, rotation, scale and body
     ///        velocities, in UUID order. Two runs of the same scene with the same inputs give the same
     ///        hash step after step (lockstep / replay desync checks).
@@ -156,34 +160,50 @@ public:
     /// @}
 
     /// @name Queries
-    /// All queries return `std::nullopt` when nothing is hit or when the scene is not simulating.
-    /// `direction` need not be normalized. `ignore` skips one entity (typically the caller).
+    /// All queries return `std::nullopt` / nothing when nothing is hit or when the scene is not
+    /// simulating. `direction` need not be normalized. `ignore` skips one entity (typically the
+    /// caller); `layerMask` keeps only bodies of those layers (physics::layerBit(),
+    /// PhysicsSettings::maskOf()). Sensors are never reported.
     /// @{
     /// @brief Closest entity hit by a ray.
     std::optional<SceneHit> raycast(const GlobalPosition& origin, const glm::vec3& direction, f32 maxDistance = 1000.0f,
-                                    Entity ignore = {});
+                                    Entity ignore = {}, u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps a sphere and returns the first entity it would touch.
     std::optional<SceneHit> sweepSphere(const GlobalPosition& origin, f32 radius, const glm::vec3& direction,
-                                        f32 maxDistance = 1000.0f, Entity ignore = {});
+                                        f32 maxDistance = 1000.0f, Entity ignore = {}, u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps an oriented box and returns the first entity it would touch.
     std::optional<SceneHit> sweepBox(const GlobalPosition& center, const glm::vec3& halfExtents, const glm::quat& rotation,
-                                     const glm::vec3& direction, f32 maxDistance = 1000.0f, Entity ignore = {});
+                                     const glm::vec3& direction, f32 maxDistance = 1000.0f, Entity ignore = {},
+                                     u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps a capsule (axis = local Y of `rotation`) and returns the first entity it would touch.
     std::optional<SceneHit> sweepCapsule(const GlobalPosition& center, f32 radius, f32 halfHeight,
                                          const glm::quat& rotation, const glm::vec3& direction,
-                                         f32 maxDistance = 1000.0f, Entity ignore = {});
+                                         f32 maxDistance = 1000.0f, Entity ignore = {},
+                                         u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps any shape and returns the first entity it would touch.
     std::optional<SceneHit> sweep(const physics::ShapeDesc& shape, const GlobalPosition& position,
                                   const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance = 1000.0f,
-                                  Entity ignore = {});
+                                  Entity ignore = {}, u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps any shape and returns every entity along the way, closest first.
     std::vector<SceneHit> sweepAll(const physics::ShapeDesc& shape, const GlobalPosition& position,
                                    const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance = 1000.0f,
-                                   Entity ignore = {});
+                                   Entity ignore = {}, u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps the entity's own collider from where it is now, ignoring itself.
     ///
     /// Answers "if I move this way, what do I hit first?". Requires a RigidBodyComponent.
-    std::optional<SceneHit> sweepEntity(Entity entity, const glm::vec3& direction, f32 maxDistance = 1000.0f);
+    std::optional<SceneHit> sweepEntity(Entity entity, const glm::vec3& direction, f32 maxDistance = 1000.0f,
+                                        u32 layerMask = physics::kAllLayers);
+    /// @brief Every entity whose collider overlaps `shape` at this pose ("what is inside this area?").
+    /// @param includeSensors Report sensor bodies too.
+    std::vector<Entity> overlap(const physics::ShapeDesc& shape, const GlobalPosition& position,
+                                const glm::quat& rotation, Entity ignore = {}, u32 layerMask = physics::kAllLayers,
+                                bool includeSensors = false);
+    /// @brief Every entity whose collider overlaps a sphere.
+    std::vector<Entity> overlapSphere(const GlobalPosition& center, f32 radius, Entity ignore = {},
+                                      u32 layerMask = physics::kAllLayers, bool includeSensors = false);
+    /// @brief Every entity whose collider overlaps an oriented box.
+    std::vector<Entity> overlapBox(const GlobalPosition& center, const glm::vec3& halfExtents, const glm::quat& rotation,
+                                   Entity ignore = {}, u32 layerMask = physics::kAllLayers, bool includeSensors = false);
     /// @}
 
     /// @brief Fills `out` with the camera, lights and meshes of the scene.
@@ -234,7 +254,8 @@ private:
     physics::BodyId bodyOf(Entity e);
     const MeshData* meshData(MeshHandle mesh) const;
     std::shared_ptr<const physics::ShapeGeometry> meshGeometry(MeshHandle mesh, const glm::vec3& scale, bool triangles);
-    physics::QueryFilter filterIgnoring(Entity e) const;
+    physics::QueryFilter filterIgnoring(Entity e, u32 layerMask = physics::kAllLayers) const;
+    void dispatchContacts();
     SceneHit toSceneHit(const physics::QueryHit& hit);
 
     std::string m_name;
@@ -246,6 +267,7 @@ private:
     // Collider geometry per (mesh, scale, kind): bodies sharing a mesh share one geometry.
     std::map<std::tuple<u32, u32, u32, u32, bool>, std::shared_ptr<const physics::ShapeGeometry>> m_geometry;
     TimePoint m_time;
+    PhysicsSettings m_physicsSettings;
     std::vector<GlobalPosition> m_physicsFoci;
     bool m_hasPhysicsFocus = false;
     Duration m_physicsAccumulator;

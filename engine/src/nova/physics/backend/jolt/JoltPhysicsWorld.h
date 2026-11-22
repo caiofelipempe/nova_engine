@@ -38,6 +38,7 @@ public:
     bool isActive(BodyId body) const override;
 
     void setGravity(const glm::vec3& gravity) override;
+    void setCollisionLayers(const CollisionLayers& layers) override;
     glm::vec3 gravity() const override;
 
     void step(f32 dt) override;
@@ -51,6 +52,8 @@ public:
                                    const QueryFilter& filter) const override;
     bool sweepBody(BodyId body, const glm::vec3& direction, f32 maxDistance, SweepHit& hit,
                    const QueryFilter& filter) const override;
+    std::vector<OverlapHit> overlap(const ShapeDesc& shape, const glm::vec3& position, const glm::quat& rotation,
+                                    const QueryFilter& filter) const override;
     std::vector<ContactEvent> drainContactEvents() override;
 
 private:

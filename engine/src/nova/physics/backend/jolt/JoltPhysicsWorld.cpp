@@ -14,6 +14,7 @@
 #include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
@@ -29,6 +30,7 @@
 
 #include <algorithm>
 #include <cstdarg>
+#include <map>
 #include <cstdio>
 #include <mutex>
 #include <optional>
@@ -39,12 +41,13 @@ namespace nova::physics::local {
 namespace {
 
 // ---------------------------------------------------------------- layers --
-// Two object layers: static geometry never needs to test against itself.
-namespace Layers {
-constexpr JPH::ObjectLayer NonMoving = 0;
-constexpr JPH::ObjectLayer Moving = 1;
-constexpr JPH::ObjectLayer Count = 2;
-} // namespace Layers
+// Object layer = collision layer × moving: `layer * 2 + (moving ? 1 : 0)`. Static geometry never
+// tests against static geometry; other pairs follow the CollisionLayers matrix.
+JPH::ObjectLayer objectLayer(u32 layer, bool moving) {
+    return static_cast<JPH::ObjectLayer>((layer & (kCollisionLayerCount - 1)) * 2 + (moving ? 1 : 0));
+}
+u32 collisionLayerOf(JPH::ObjectLayer l) { return static_cast<u32>(l) >> 1; }
+bool isMovingLayer(JPH::ObjectLayer l) { return (l & 1) != 0; }
 
 namespace BroadPhaseLayers {
 constexpr JPH::BroadPhaseLayer NonMoving(0);
@@ -54,16 +57,31 @@ constexpr JPH::uint Count = 2;
 
 class ObjectLayerPairFilter final : public JPH::ObjectLayerPairFilter {
 public:
+    explicit ObjectLayerPairFilter(const CollisionLayers& layers) : m_layers(layers) {}
     bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
-        return a == Layers::Moving || b == Layers::Moving;
+        if (!isMovingLayer(a) && !isMovingLayer(b)) return false;
+        return m_layers.collides(collisionLayerOf(a), collisionLayerOf(b));
     }
+
+private:
+    const CollisionLayers& m_layers; // owned by the world; changed only between steps
+};
+
+// Queries: only bodies whose collision layer is in the mask.
+class QueryLayerFilter final : public JPH::ObjectLayerFilter {
+public:
+    explicit QueryLayerFilter(u32 mask) : m_mask(mask) {}
+    bool ShouldCollide(JPH::ObjectLayer l) const override { return (m_mask & layerBit(collisionLayerOf(l))) != 0; }
+
+private:
+    u32 m_mask;
 };
 
 class BroadPhaseLayerInterface final : public JPH::BroadPhaseLayerInterface {
 public:
     JPH::uint GetNumBroadPhaseLayers() const override { return BroadPhaseLayers::Count; }
     JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
-        return layer == Layers::NonMoving ? BroadPhaseLayers::NonMoving : BroadPhaseLayers::Moving;
+        return isMovingLayer(layer) ? BroadPhaseLayers::Moving : BroadPhaseLayers::NonMoving;
     }
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
     const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override {
@@ -75,7 +93,7 @@ public:
 class ObjectVsBroadPhaseLayerFilter final : public JPH::ObjectVsBroadPhaseLayerFilter {
 public:
     bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer bp) const override {
-        return layer == Layers::Moving || bp == BroadPhaseLayers::Moving;
+        return isMovingLayer(layer) || bp == BroadPhaseLayers::Moving;
     }
 };
 
@@ -112,15 +130,39 @@ JPH::Vec3 bodyContactSurfaceNormal(const JPH::Body& body, const JPH::SubShapeID&
     return contactSurfaceNormal(face, towardOther, body.GetWorldSpaceSurfaceNormal(subShape, point));
 }
 
-// Collects "contact began" events. Called from Jolt worker threads.
+// Collects contact events, one Began / Ended per pair of bodies. Jolt reports contacts per pair
+// of sub-shapes (mesh triangles, compound parts): they are counted, so a body sliding across
+// triangles of a mesh stays one continuous touch. Called from Jolt worker threads.
 class ContactListener final : public JPH::ContactListener {
 public:
+    using Key = std::pair<u32, u32>; // body ids, smaller first
+    static Key key(const JPH::BodyID& a, const JPH::BodyID& b) {
+        const u32 x = a.GetIndexAndSequenceNumber(), y = b.GetIndexAndSequenceNumber();
+        return x < y ? Key{x, y} : Key{y, x};
+    }
+
     void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
                         JPH::ContactSettings&) override {
         auto vec = [](const auto& v) {
             return glm::vec3(static_cast<f32>(v.GetX()), static_cast<f32>(v.GetY()), static_cast<f32>(v.GetZ()));
         };
+        {
+            std::lock_guard lock(mutex);
+            Pair& p = pairs[key(a.GetID(), b.GetID())];
+            if (p.asleep > 0) { // a sub-shape pair coming back after sleeping: it never stopped touching
+                --p.asleep;
+                return;
+            }
+            if (p.count++ > 0) return; // another sub-shape of a pair already touching
+            p.ended.type = ContactEventType::Ended;
+            p.ended.sensor = a.IsSensor() || b.IsSensor();
+            p.ended.bodyA = {a.GetID().GetIndexAndSequenceNumber()};
+            p.ended.bodyB = {b.GetID().GetIndexAndSequenceNumber()};
+            p.ended.userDataA = a.GetUserData();
+            p.ended.userDataB = b.GetUserData();
+        }
         ContactEvent e;
+        e.sensor = a.IsSensor() || b.IsSensor();
         e.bodyA = {a.GetID().GetIndexAndSequenceNumber()};
         e.bodyB = {b.GetID().GetIndexAndSequenceNumber()};
         e.userDataA = a.GetUserData();
@@ -138,8 +180,70 @@ public:
         events.push_back(e);
     }
 
+    // Jolt also removes contacts when bodies fall asleep (and adds them back when they wake), and
+    // bodies cannot be read here: removals are resolved after the step (resolveRemovals).
+    void OnContactRemoved(const JPH::SubShapeIDPair& pair) override {
+        std::lock_guard lock(mutex);
+        removed.push_back(key(pair.GetBody1ID(), pair.GetBody2ID()));
+    }
+
+    // After PhysicsSystem::Update, single-threaded. A removal where neither body is active (and
+    // both still exist) is a pair falling asleep: still touching. A sleeping pair that woke up
+    // without its contacts coming back has separated.
+    void resolveRemovals(const JPH::BodyInterface& bodies) {
+        auto awake = [&](u32 id) { return bodies.IsActive(JPH::BodyID(id)); };
+        auto exists = [&](u32 id) { return bodies.IsAdded(JPH::BodyID(id)); };
+        std::lock_guard lock(mutex);
+        for (const Key& k : removed) {
+            auto it = pairs.find(k);
+            if (it == pairs.end()) continue; // already ended (destroyed body)
+            Pair& p = it->second;
+            if (exists(k.first) && exists(k.second) && !awake(k.first) && !awake(k.second)) {
+                ++p.asleep;
+            } else if (--p.count <= 0) {
+                events.push_back(p.ended);
+                pairs.erase(it);
+            }
+        }
+        removed.clear();
+        for (auto it = pairs.begin(); it != pairs.end();) {
+            Pair& p = it->second;
+            if (p.asleep > 0 && (awake(it->first.first) || awake(it->first.second))) {
+                p.count -= p.asleep; // woke up, and these did not come back
+                p.asleep = 0;
+                if (p.count <= 0) {
+                    events.push_back(p.ended);
+                    it = pairs.erase(it);
+                    continue;
+                }
+            }
+            ++it;
+        }
+    }
+
+    // A destroyed body ends every touch it had (whether or not Jolt reports it later).
+    void bodyRemoved(const JPH::BodyID& id) {
+        const u32 v = id.GetIndexAndSequenceNumber();
+        std::lock_guard lock(mutex);
+        for (auto it = pairs.begin(); it != pairs.end();) {
+            if (it->first.first == v || it->first.second == v) {
+                events.push_back(it->second.ended);
+                it = pairs.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    struct Pair {
+        int count = 0;      // touching sub-shape pairs (asleep ones included)
+        int asleep = 0;     // of those, removed by Jolt because the pair fell asleep
+        ContactEvent ended; // the event to send when the last one goes
+    };
     std::mutex mutex;
     std::vector<ContactEvent> events;
+    std::map<Key, Pair> pairs;
+    std::vector<Key> removed; // reported during the step, resolved after it
 };
 
 // ------------------------------------------------------- global Jolt init --
@@ -307,9 +411,10 @@ private:
 
 // ------------------------------------------------------------------ Impl --
 struct JoltPhysicsWorld::Impl {
+    CollisionLayers layers;
     BroadPhaseLayerInterface broadPhaseLayers;
     ObjectVsBroadPhaseLayerFilter objectVsBroadPhase;
-    ObjectLayerPairFilter objectPairs;
+    ObjectLayerPairFilter objectPairs{layers};
     ContactListener contacts;
     Scope<JPH::TempAllocatorImpl> tempAllocator;
     Scope<JPH::JobSystemThreadPool> jobSystem;
@@ -323,6 +428,7 @@ struct JoltPhysicsWorld::Impl {
 JoltPhysicsWorld::JoltPhysicsWorld(const WorldDesc& desc) {
     acquireJolt();
     m_impl = makeScope<Impl>();
+    m_impl->layers = desc.layers;
 
     u32 threads = desc.workerThreads;
     if (threads == 0) threads = std::max(1u, std::thread::hardware_concurrency() - 1);
@@ -360,7 +466,7 @@ BodyId JoltPhysicsWorld::createBody(const BodyDesc& desc) {
 
     const bool moving = desc.type != BodyType::Static;
     JPH::BodyCreationSettings bcs(shape, toJR(desc.position), toJ(desc.rotation), toJ(desc.type),
-                                  moving ? Layers::Moving : Layers::NonMoving);
+                                  objectLayer(desc.layer, moving));
     bcs.mFriction = desc.friction;
     bcs.mRestitution = desc.restitution;
     bcs.mLinearDamping = desc.linearDamping;
@@ -372,6 +478,8 @@ BodyId JoltPhysicsWorld::createBody(const BodyDesc& desc) {
     if (desc.type == BodyType::Dynamic) {
         bcs.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
         bcs.mMassPropertiesOverride.mMass = std::max(desc.mass, 0.001f);
+        // No bumps on the internal edges of meshes (a ball rolling across triangles stays down).
+        bcs.mEnhancedInternalEdgeRemoval = true;
     }
     if (desc.type == BodyType::Kinematic && desc.isSensor) bcs.mCollideKinematicVsNonDynamic = true;
 
@@ -391,6 +499,7 @@ void JoltPhysicsWorld::destroyBody(BodyId body) {
     if (!m_impl->bodies().IsAdded(id)) return;
     m_impl->bodies().RemoveBody(id);
     m_impl->bodies().DestroyBody(id);
+    m_impl->contacts.bodyRemoved(id);
 }
 
 u32 JoltPhysicsWorld::bodyCount() const { return m_impl->system.GetNumBodies(); }
@@ -429,6 +538,7 @@ void JoltPhysicsWorld::addTorque(BodyId body, const glm::vec3& t) { m_impl->bodi
 bool JoltPhysicsWorld::isActive(BodyId body) const { return m_impl->bodies().IsActive(toJ(body)); }
 
 void JoltPhysicsWorld::setGravity(const glm::vec3& g) { m_impl->system.SetGravity(toJ(g)); }
+void JoltPhysicsWorld::setCollisionLayers(const CollisionLayers& layers) { m_impl->layers = layers; }
 glm::vec3 JoltPhysicsWorld::gravity() const { return toG(m_impl->system.GetGravity()); }
 
 void JoltPhysicsWorld::shiftOrigin(const glm::vec3& newOrigin) {
@@ -451,6 +561,7 @@ void JoltPhysicsWorld::step(f32 dt) {
         m_impl->system.Update(dt, 1, m_impl->tempAllocator.get(), m_impl->jobSystem.get());
     if (err != JPH::EPhysicsUpdateError::None)
         NOVA_CORE_WARN("[physics] update error flags 0x{:x} (increase world limits)", static_cast<u32>(err));
+    m_impl->contacts.resolveRemovals(m_impl->bodies());
 }
 
 bool JoltPhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction, f32 maxDistance,
@@ -460,7 +571,8 @@ bool JoltPhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& directi
     JPH::RRayCast ray{toJR(origin), toJ(dir * maxDistance)};
     JPH::RayCastResult result;
     QueryBodyFilter bodyFilter(filter);
-    if (!m_impl->system.GetNarrowPhaseQuery().CastRay(ray, result, {}, {}, bodyFilter)) return false;
+    QueryLayerFilter layerFilter(filter.layerMask);
+    if (!m_impl->system.GetNarrowPhaseQuery().CastRay(ray, result, {}, layerFilter, bodyFilter)) return false;
 
     JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
     hit = {};
@@ -506,7 +618,8 @@ template <typename Collector>
 void sweepWorld(const JPH::PhysicsSystem& system, const PreparedSweep& s, const QueryFilter& filter,
                 Collector& collector) {
     QueryBodyFilter bodyFilter(filter);
-    system.GetNarrowPhaseQuery().CastShape(s.cast, s.settings, s.baseOffset, collector, {}, {}, bodyFilter);
+    QueryLayerFilter layerFilter(filter.layerMask);
+    system.GetNarrowPhaseQuery().CastShape(s.cast, s.settings, s.baseOffset, collector, {}, layerFilter, bodyFilter);
 }
 
 QueryHit toQueryHit(const JPH::PhysicsSystem& system, const JPH::ShapeCastResult& r, const PreparedSweep& s) {
@@ -613,6 +726,34 @@ bool JoltPhysicsWorld::sweepBody(BodyId body, const glm::vec3& direction, f32 ma
     if (!collector.HadHit()) return false;
     hit = toQueryHit(m_impl->system, collector.mHit, *s);
     return true;
+}
+
+std::vector<OverlapHit> JoltPhysicsWorld::overlap(const ShapeDesc& shapeDesc, const glm::vec3& position,
+                                                  const glm::quat& rotation, const QueryFilter& filter) const {
+    std::vector<OverlapHit> out;
+    JPH::ShapeRefC shape = buildShape(shapeDesc);
+    if (!shape) return out;
+    // CollideShape takes the shape's center-of-mass transform (offset shapes move it).
+    const JPH::RMat44 com = poseMatrix(position, rotation).PreTranslated(shape->GetCenterOfMass());
+    JPH::CollideShapeSettings settings;
+    settings.mBackFaceMode = JPH::EBackFaceMode::CollideWithBackFaces; // inside a mesh's triangles too
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+    QueryBodyFilter bodyFilter(filter);
+    QueryLayerFilter layerFilter(filter.layerMask);
+    m_impl->system.GetNarrowPhaseQuery().CollideShape(shape, JPH::Vec3::sOne(), com, settings, com.GetTranslation(),
+                                                      collector, {}, layerFilter, bodyFilter);
+    for (const JPH::CollideShapeResult& r : collector.mHits) {
+        const BodyId id{r.mBodyID2.GetIndexAndSequenceNumber()};
+        if (std::any_of(out.begin(), out.end(), [&](const OverlapHit& h) { return h.body == id; })) continue;
+        OverlapHit h;
+        h.body = id;
+        JPH::BodyLockRead lock(m_impl->system.GetBodyLockInterface(), r.mBodyID2);
+        if (lock.Succeeded()) h.userData = lock.GetBody().GetUserData();
+        out.push_back(h);
+    }
+    // Deterministic order whatever the broad phase visited first.
+    std::sort(out.begin(), out.end(), [](const OverlapHit& a, const OverlapHit& b) { return a.body.value < b.body.value; });
+    return out;
 }
 
 std::vector<ContactEvent> JoltPhysicsWorld::drainContactEvents() {

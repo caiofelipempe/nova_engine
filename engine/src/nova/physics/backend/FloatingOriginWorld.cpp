@@ -70,6 +70,7 @@ local::BodyDesc toLocalDesc(const BodyDesc& d, const glm::vec3& position, u64 us
     l.angularDamping = d.angularDamping;
     l.gravityFactor = d.gravityFactor;
     l.isSensor = d.isSensor;
+    l.layer = d.layer;
     l.userData = userData;
     return l;
 }
@@ -103,6 +104,7 @@ FloatingOriginWorld::Region& FloatingOriginWorld::createRegion(const GlobalPosit
     r.id = m_nextRegionId++;
     r.world = local::World::create(m_backend, m_desc);
     r.world->setGravity(m_gravity);
+    r.world->setCollisionLayers(m_desc.layers);
     r.origin = origin;
     m_regions.push_back(std::move(r));
     rebuildWalls(m_regions.back());
@@ -189,6 +191,7 @@ void FloatingOriginWorld::rebuildWalls(Region& r) {
             d.position[axis] = static_cast<f32>(toEdge) + side * thickness; // just outside the edge
             d.friction = 0.5f;
             d.restitution = 0.0f; // the edge adds no bounce of its own
+            d.layer = kWorldBoundaryLayer; // collides with every layer
             d.userData = kWorldBoundaryUserData | static_cast<u64>(axis * 2 + (side > 0 ? 1 : 0));
             if (BodyId wall = r.world->createBody(d)) r.walls.push_back(wall);
         }
@@ -316,6 +319,7 @@ void FloatingOriginWorld::assign(u32 index) {
 void FloatingOriginWorld::removeInstance(u32 index, size_t k) {
     Body& b = m_bodies[index];
     const Instance inst = b.instances[k];
+    endPairs(index, inst.region, false);
     if (Region* r = findRegion(inst.region)) {
         if (b.desc.type == BodyType::Dynamic && k == 0) { // keep its pose and motion for later
             glm::vec3 p;
@@ -366,6 +370,7 @@ BodyId FloatingOriginWorld::createBody(const BodyDesc& desc) {
 void FloatingOriginWorld::destroyBody(BodyId id) {
     Body* b = body(id);
     if (!b) return;
+    endPairs(id.value, 0, true);
     for (const Instance& inst : b->instances)
         if (Region* r = findRegion(inst.region)) r->world->destroyBody(inst.local);
     *b = Body{};
@@ -479,32 +484,84 @@ void FloatingOriginWorld::setGravity(const glm::vec3& gravity) {
     for (Region& r : m_regions) r.world->setGravity(gravity);
 }
 
+void FloatingOriginWorld::setCollisionLayers(const CollisionLayers& layers) {
+    m_desc.layers = layers;
+    for (Region& r : m_regions) r.world->setCollisionLayers(layers);
+}
+
 void FloatingOriginWorld::step(Duration dt) {
     if (m_regions.empty()) updateRegions();
     const f32 seconds = dt.secondsF();
     for (Region& r : m_regions) r.world->step(seconds);
-    // Contacts back to global: local userData is the body index (or a world-edge code).
     for (Region& r : m_regions)
-        for (const local::ContactEvent& c : r.world->drainContactEvents()) {
-            ContactEvent e;
-            auto map = [this](u64 localUser, BodyId& id, u64& user) {
-                if (isWorldBoundary(localUser)) {
-                    id = {};
-                    user = localUser;
-                } else {
-                    id = {static_cast<u32>(localUser)};
-                    user = localUser < m_bodies.size() ? m_bodies[localUser].desc.userData : 0;
-                }
-            };
-            map(c.userDataA, e.bodyA, e.userDataA);
-            map(c.userDataB, e.bodyB, e.userDataB);
-            e.normal = c.normal;
-            e.pointA = r.toGlobal(c.pointA);
-            e.pointB = r.toGlobal(c.pointB);
-            e.surfaceNormalA = c.surfaceNormalA;
-            e.surfaceNormalB = c.surfaceNormalB;
-            m_events.push_back(e);
+        for (const local::ContactEvent& c : r.world->drainContactEvents()) onLocalContact(r.id, c);
+}
+
+// ---------------------------------------------------------------- contacts --
+// Local userData is the global body index (or a world-edge code).
+void FloatingOriginWorld::toGlobalIds(u64 localUser, BodyId& id, u64& user) const {
+    if (isWorldBoundary(localUser)) {
+        id = {};
+        user = localUser;
+    } else {
+        id = {static_cast<u32>(localUser)};
+        user = localUser < m_bodies.size() ? m_bodies[localUser].desc.userData : 0;
+    }
+}
+
+void FloatingOriginWorld::onLocalContact(u32 region, const local::ContactEvent& c) {
+    const PairKey k = std::minmax(c.userDataA, c.userDataB);
+    const auto regionKey = std::make_tuple(region, k.first, k.second);
+    if (c.type == ContactEventType::Ended) {
+        auto it = m_regionPairs.find(regionKey);
+        if (it == m_regionPairs.end()) return; // already ended (body destroyed or left the region)
+        const ContactEvent ended = it->second;
+        m_regionPairs.erase(it);
+        if (--m_pairs[k] == 0) {
+            m_pairs.erase(k);
+            m_events.push_back(ended);
         }
+        return;
+    }
+    const Region* r = findRegion(region);
+    if (!r || m_regionPairs.contains(regionKey)) return;
+    ContactEvent e;
+    e.type = ContactEventType::Began;
+    e.sensor = c.sensor;
+    toGlobalIds(c.userDataA, e.bodyA, e.userDataA);
+    toGlobalIds(c.userDataB, e.bodyB, e.userDataB);
+    e.normal = c.normal;
+    e.pointA = r->toGlobal(c.pointA);
+    e.pointB = r->toGlobal(c.pointB);
+    e.surfaceNormalA = c.surfaceNormalA;
+    e.surfaceNormalB = c.surfaceNormalB;
+    ContactEvent ended;
+    ended.type = ContactEventType::Ended;
+    ended.sensor = e.sensor;
+    ended.bodyA = e.bodyA;
+    ended.bodyB = e.bodyB;
+    ended.userDataA = e.userDataA;
+    ended.userDataB = e.userDataB;
+    m_regionPairs.emplace(regionKey, ended);
+    if (m_pairs[k]++ == 0) m_events.push_back(e); // first region where the pair touches
+}
+
+// Ends the touches of a body (in one region, or everywhere): it was destroyed or left it.
+void FloatingOriginWorld::endPairs(u64 index, u32 region, bool anyRegion) {
+    for (auto it = m_regionPairs.begin(); it != m_regionPairs.end();) {
+        const auto& [r, a, b] = it->first;
+        if ((anyRegion || r == region) && (a == index || b == index)) {
+            const PairKey k{a, b};
+            const ContactEvent ended = it->second;
+            it = m_regionPairs.erase(it);
+            if (--m_pairs[k] == 0) {
+                m_pairs.erase(k);
+                m_events.push_back(ended);
+            }
+        } else {
+            ++it;
+        }
+    }
 }
 
 std::vector<ContactEvent> FloatingOriginWorld::drainContactEvents() { return std::exchange(m_events, {}); }
@@ -513,6 +570,7 @@ std::vector<ContactEvent> FloatingOriginWorld::drainContactEvents() { return std
 QueryFilter FloatingOriginWorld::toLocal(const QueryFilter& filter, const Region& region) const {
     QueryFilter out;
     out.includeSensors = filter.includeSensors;
+    out.layerMask = filter.layerMask;
     if (const Body* b = body(filter.ignoreBody))
         for (const Instance& inst : b->instances)
             if (inst.region == region.id) out.ignoreBody = inst.local;
@@ -567,6 +625,19 @@ std::vector<SweepHit> FloatingOriginWorld::sweepAll(const ShapeDesc& shape, cons
     for (const local::SweepHit& h :
          r->world->sweepAll(shape, r->toLocal(position), rotation, direction, maxDistance, toLocal(filter, *r)))
         out.push_back(toGlobal(h, *r, position, false));
+    return out;
+}
+
+std::vector<OverlapHit> FloatingOriginWorld::overlap(const ShapeDesc& shape, const GlobalPosition& position,
+                                                     const glm::quat& rotation, const QueryFilter& filter) const {
+    std::vector<OverlapHit> out;
+    const Region* r = regionAt(position);
+    if (!r) return out;
+    for (const OverlapHit& h : r->world->overlap(shape, r->toLocal(position), rotation, toLocal(filter, *r))) {
+        OverlapHit g;
+        toGlobalIds(h.userData, g.body, g.userData);
+        out.push_back(g);
+    }
     return out;
 }
 

@@ -836,6 +836,9 @@ public:
     bool isActive(BodyId b) const override { return bodies[b.value].desc.type == BodyType::Dynamic; }
     void setGravity(const glm::vec3& gravity) override { g = gravity; }
     glm::vec3 gravity() const override { return g; }
+    void setCollisionLayers(const CollisionLayers&) override {}
+    std::vector<OverlapHit> overlap(const ShapeDesc&, const GlobalPosition&, const glm::quat&,
+                                    const QueryFilter&) const override { return {}; }
     void step(Duration dt) override {
         // Semi-implicit Euler with the step taken in exact integer offsets.
         for (Body& b : bodies) {
@@ -906,9 +909,11 @@ void nativeIntegerBackend() {
     CHECK(raw->lastFocus.foci.size() == 1 && raw->lastFocus.foci[0] == cam.transform().position);
 
     for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
-    // Fell ~5 m (semi-implicit Euler: g/2 · t² · (1 + 1/60)), written back exactly from the backend.
+    // The scene's gravity (−9.81, not the backend's own −10) applies; fell g/2 · t² · (1 + 1/60)
+    // (semi-implicit Euler), written back exactly from the backend.
+    CHECK(raw->g == glm::vec3(0.0f, -9.81f, 0.0f));
     const f64 fallen = (ball.transform().position - base).toMeters().y;
-    CHECK_NEAR(fallen, -5.0 * (61.0 / 60.0), 1e-3);
+    CHECK_NEAR(fallen, -9.81 / 2.0 * (61.0 / 60.0), 1e-3);
     CHECK(ball.transform().position == raw->bodies[0].desc.position);
     CHECK((ball.transform().position - base).x == 0 && (ball.transform().position - base).z == 0); // no drift sideways
     CHECK(scene.physicsRegionCount() == 1 && scene.physicsOrigin() == GlobalPosition()); // no floating origin

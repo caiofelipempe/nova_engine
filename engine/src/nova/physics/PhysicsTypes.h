@@ -9,6 +9,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -68,10 +69,61 @@ struct BodyId {
     bool operator==(const BodyId&) const = default;
 };
 
+/// @name Collision layers
+/// @{
+/// @brief Number of collision layers (a body is in one: BodyDesc::layer).
+constexpr u32 kCollisionLayerCount = 32;
+/// @brief Layer reserved for the world's barrier edges: it collides with every layer.
+constexpr u32 kWorldBoundaryLayer = kCollisionLayerCount - 1;
+/// @brief Layer mask with every layer (queries: QueryFilter::layerMask).
+constexpr u32 kAllLayers = ~0u;
+/// @brief Mask of one layer.
+constexpr u32 layerBit(u32 layer) { return 1u << (layer & (kCollisionLayerCount - 1)); }
+
+/// @brief Which layers collide with which: a symmetric matrix of bits (default: all of them).
+struct CollisionLayers {
+    std::array<u32, kCollisionLayerCount> mask; ///< `mask[a]` bit `b`: layers `a` and `b` collide.
+
+    CollisionLayers() { mask.fill(kAllLayers); }
+    /// @brief True if bodies of layers `a` and `b` collide (the world-edge layer always does).
+    bool collides(u32 a, u32 b) const {
+        if (a == kWorldBoundaryLayer || b == kWorldBoundaryLayer) return true;
+        return (mask[a & (kCollisionLayerCount - 1)] & layerBit(b)) != 0;
+    }
+    /// @brief Makes layers `a` and `b` collide or not (both directions).
+    CollisionLayers& set(u32 a, u32 b, bool collide) {
+        a &= kCollisionLayerCount - 1;
+        b &= kCollisionLayerCount - 1;
+        if (collide) {
+            mask[a] |= layerBit(b);
+            mask[b] |= layerBit(a);
+        } else {
+            mask[a] &= ~layerBit(b);
+            mask[b] &= ~layerBit(a);
+        }
+        return *this;
+    }
+    bool operator==(const CollisionLayers&) const = default;
+};
+/// @}
+
 /// @brief Which bodies a query may report.
 struct QueryFilter {
     BodyId ignoreBody;           ///< Body to skip, e.g. the caller itself.
     bool includeSensors = false; ///< Report sensor bodies too.
+    u32 layerMask = kAllLayers;  ///< Only bodies whose layer is in this mask (layerBit()).
+};
+
+/// @brief A body found by an overlap query.
+struct OverlapHit {
+    BodyId body;      ///< The body (invalid for a world barrier edge).
+    u64 userData = 0; ///< Its BodyDesc::userData (kWorldBoundaryUserData... for edges).
+};
+
+/// @brief Whether a contact event starts or ends a touch.
+enum class ContactEventType : u8 {
+    Began, ///< The pair started touching (or overlapping, for sensors).
+    Ended, ///< The pair stopped touching (also when one of them is destroyed or stops simulating).
 };
 
 /// @brief World creation parameters.
@@ -79,6 +131,7 @@ struct WorldDesc {
     glm::vec3 gravity{0.0f, -9.81f, 0.0f}; ///< Gravity acceleration (m/s²).
     u32 maxBodies = 65536;                 ///< Body capacity.
     u32 workerThreads = 0;                 ///< Simulation threads; 0 = hardware threads − 1.
+    CollisionLayers layers;                ///< Which layers collide.
 };
 
 /// @brief userData of contacts/hits against a barrier edge of the world (see WorldSpace).

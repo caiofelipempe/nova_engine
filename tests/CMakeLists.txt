@@ -3,6 +3,12 @@ target_link_libraries(NovaTests PRIVATE Nova::Engine)
 set_target_properties(NovaTests PROPERTIES FOLDER "Tests")
 add_test(NAME physics COMMAND NovaTests)
 
+# Physics features through the Scene: contacts, triggers, layers, overlaps, joints, characters...
+add_executable(NovaPhysicsFeatureTests PhysicsFeatureTests.cpp)
+target_link_libraries(NovaPhysicsFeatureTests PRIVATE Nova::Engine)
+set_target_properties(NovaPhysicsFeatureTests PROPERTIES FOLDER "Tests")
+add_test(NAME physics_features COMMAND NovaPhysicsFeatureTests)
+
 add_executable(NovaSceneTests SceneTests.cpp)
 target_link_libraries(NovaSceneTests PRIVATE Nova::Engine)
 set_target_properties(NovaSceneTests PROPERTIES FOLDER "Tests")

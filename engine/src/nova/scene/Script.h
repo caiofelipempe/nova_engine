@@ -49,8 +49,15 @@ public:
     virtual void onUpdate(f32 /*dt*/) {}
     /// @brief Called when the entity is destroyed or the scene is cleared (only if onCreate ran).
     virtual void onDestroy() {}
-    /// @brief Called when this entity's rigid body starts touching another one.
+    /// @brief Called when this entity's rigid body starts touching another one (not sensors).
     virtual void onCollision(const Collision& /*collision*/) {}
+    /// @brief Called when this entity's rigid body stops touching `other` (also when either one is
+    ///        destroyed or stops simulating; `other` is then possibly invalid).
+    virtual void onCollisionEnd(Entity /*other*/) {}
+    /// @brief A sensor and a body started overlapping: called on both (`other` is the other one).
+    virtual void onTriggerEnter(Entity /*other*/) {}
+    /// @brief A sensor and a body stopped overlapping (or one was destroyed: `other` may be invalid).
+    virtual void onTriggerExit(Entity /*other*/) {}
     /// @brief Called when this entity's rigid body touches a barrier edge of the world
     ///        (e.g. destroy whatever falls off the map).
     virtual void onWorldBoundary(const WorldBoundaryHit& /*hit*/) {}

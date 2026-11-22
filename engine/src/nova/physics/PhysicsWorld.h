@@ -38,6 +38,7 @@ struct BodyDesc {
     f32 angularDamping = 0.05f;                 ///< Angular velocity damping.
     f32 gravityFactor = 1.0f;                   ///< Gravity multiplier (0 = floats).
     bool isSensor = false;                      ///< Reports contacts but has no collision response (trigger).
+    u32 layer = 0;                              ///< Collision layer (0..kCollisionLayerCount − 2; see CollisionLayers).
     u64 userData = 0;                           ///< Opaque value returned in hits/contacts (the Scene stores the entity).
 };
 
@@ -59,8 +60,14 @@ struct QueryHit {
 using RaycastHit = QueryHit; ///< Result of PhysicsWorld::raycast.
 using SweepHit = QueryHit;   ///< Result of the PhysicsWorld::sweep family.
 
-/// @brief A pair of bodies that started touching during the last step.
+/// @brief A pair of bodies that started or stopped touching during the last steps.
+///
+/// One Began and one Ended per pair of bodies, whatever the number of sub-shapes (mesh
+/// triangles) involved. Ended events carry only the bodies and their user data (the points and
+/// normals are zero); one also comes when a body of the pair is destroyed or goes dormant.
 struct ContactEvent {
+    ContactEventType type = ContactEventType::Began; ///< Start or end of the touch.
+    bool sensor = false;            ///< One of the bodies is a sensor (an overlap, not a collision).
     BodyId bodyA;                   ///< First body (invalid for a world barrier edge).
     BodyId bodyB;                   ///< Second body.
     u64 userDataA = 0;              ///< BodyDesc::userData of A.
@@ -141,6 +148,8 @@ public:
     virtual void setGravity(const glm::vec3& gravity) = 0;
     /// @brief Current world gravity.
     virtual glm::vec3 gravity() const = 0;
+    /// @brief Changes which layers collide (applies from the next step).
+    virtual void setCollisionLayers(const CollisionLayers& layers) = 0;
 
     /// @brief Advances the simulation by exactly `dt` (callers should use a fixed timestep).
     virtual void step(Duration dt) = 0;
@@ -173,9 +182,12 @@ public:
     /// @brief Sweeps a body's own shape from its current pose, ignoring the body itself.
     virtual bool sweepBody(BodyId body, const glm::vec3& direction, f32 maxDistance, SweepHit& hit,
                            const QueryFilter& filter = {}) const = 0;
+    /// @brief Every body overlapping `shape` at this pose (one entry per body).
+    virtual std::vector<OverlapHit> overlap(const ShapeDesc& shape, const GlobalPosition& position,
+                                            const glm::quat& rotation, const QueryFilter& filter = {}) const = 0;
     /// @}
 
-    /// @brief Returns (and clears) the contacts that began during the steps since the last call.
+    /// @brief Returns (and clears) the contacts that began or ended since the last call, in order.
     virtual std::vector<ContactEvent> drainContactEvents() = 0;
 };
 

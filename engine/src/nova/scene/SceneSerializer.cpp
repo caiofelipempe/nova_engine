@@ -66,6 +66,22 @@ Json writeVec(const f32* v, int n) {
     return a;
 }
 
+// Physics settings: gravity, named layers and (when not the default) the collision matrix.
+Json writePhysics(const PhysicsSettings& s) {
+    Json j = Json::object();
+    j["gravity"] = writeVec(&s.gravity.x, 3);
+    Json names = Json::object();
+    for (u32 i = 0; i < physics::kCollisionLayerCount; ++i)
+        if (!s.layerNames[i].empty()) names[std::to_string(i)] = s.layerNames[i];
+    if (!names.empty()) j["layerNames"] = std::move(names);
+    if (!(s.layers == physics::CollisionLayers{})) {
+        Json m = Json::array();
+        for (u32 mask : s.layers.mask) m.push_back(mask);
+        j["collisionMatrix"] = std::move(m);
+    }
+    return j;
+}
+
 Json writeField(const reflect::FieldInfo& f, void* p, const SerializeOptions& opt) {
     using K = reflect::FieldKind;
     switch (f.kind) {
@@ -227,6 +243,22 @@ void readVec(f32* out, const Json& j) {
         if (j[i].is_number()) out[i] = j[i].get<f32>();
 }
 
+PhysicsSettings readPhysics(const Json& j) {
+    PhysicsSettings s;
+    if (!j.is_object()) return s;
+    if (j.contains("gravity")) readVec<3>(&s.gravity.x, j["gravity"]);
+    if (j.contains("layerNames") && j["layerNames"].is_object())
+        for (auto it = j["layerNames"].begin(); it != j["layerNames"].end(); ++it) {
+            const int i = std::atoi(it.key().c_str());
+            if (i >= 0 && i < static_cast<int>(physics::kCollisionLayerCount) && it.value().is_string())
+                s.layerNames[static_cast<size_t>(i)] = it.value().get<std::string>();
+        }
+    if (j.contains("collisionMatrix") && j["collisionMatrix"].is_array())
+        for (u32 i = 0; i < physics::kCollisionLayerCount && i < j["collisionMatrix"].size(); ++i)
+            if (j["collisionMatrix"][i].is_number_unsigned()) s.layers.mask[i] = j["collisionMatrix"][i].get<u32>();
+    return s;
+}
+
 void readField(const reflect::FieldInfo& f, void* p, const Json& j, const SerializeOptions& opt) {
     using K = reflect::FieldKind;
     switch (f.kind) {
@@ -371,6 +403,7 @@ std::string serializeScene(Scene& scene, const SerializeOptions& options) {
     root["version"] = kVersion;
     root["name"] = scene.name();
     root["world"] = writeWorld(scene.worldSpace());
+    root["physics"] = writePhysics(scene.physicsSettings());
     Json entities = Json::array();
     for (entt::entity e : entitiesInOrder(scene)) entities.push_back(writeEntity({e, &scene}, options, warned));
     root["entities"] = std::move(entities);
@@ -392,6 +425,7 @@ bool deserializeScene(Scene& scene, std::string_view text, const SerializeOption
     // The world settings come first: positions are stored in its units. Files without them
     // (older versions) use the default world, where their meter positions mean the same.
     scene.setWorldSpace(root.contains("world") ? readWorld(root["world"]) : WorldSpaceDesc{});
+    scene.setPhysicsSettings(root.contains("physics") ? readPhysics(root["physics"]) : PhysicsSettings{});
     std::set<std::string> warned;
     try {
         if (root.contains("entities") && root["entities"].is_array())

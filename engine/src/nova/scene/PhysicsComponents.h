@@ -7,6 +7,10 @@
 #include "nova/physics/PhysicsWorld.h"
 #include "nova/renderer/Mesh.h"
 
+#include <array>
+#include <string>
+#include <string_view>
+
 namespace nova {
 
 /// @brief Makes the entity a physics rigid body while the scene is simulating.
@@ -23,7 +27,8 @@ struct RigidBodyComponent {
     f32 linearDamping = 0.05f;                           ///< Linear velocity damping.
     f32 angularDamping = 0.05f;                          ///< Angular velocity damping.
     f32 gravityFactor = 1.0f;                            ///< Gravity multiplier.
-    bool isSensor = false;                               ///< Trigger: reports collisions, no response.
+    bool isSensor = false;                               ///< Trigger: reports overlaps (Script::onTriggerEnter/Exit), no response.
+    u32 layer = 0;                                       ///< Collision layer (Scene::physicsSettings() says which collide).
 
     physics::BodyId body; ///< Runtime body; valid while the scene is simulating. Managed by Scene.
 };
@@ -65,6 +70,37 @@ struct ConvexHullColliderComponent {
 ///        bodies only: on a dynamic body it falls back to the mesh's convex hull.
 struct MeshColliderComponent {
     MeshHandle mesh; ///< Source mesh; invalid = the entity's MeshComponent mesh.
+};
+
+/// @brief Scene-wide physics settings (saved with the scene).
+struct PhysicsSettings {
+    glm::vec3 gravity{0.0f, -9.81f, 0.0f}; ///< Gravity acceleration (m/s²).
+    physics::CollisionLayers layers;       ///< Which layers collide (default: all).
+    /// @brief Display names; empty = "Layer N" (layer 0 is "Default", the last one is the world edge).
+    std::array<std::string, physics::kCollisionLayerCount> layerNames;
+
+    /// @brief Name to show for layer `i`.
+    std::string layerName(u32 i) const {
+        if (i >= physics::kCollisionLayerCount) return {};
+        if (!layerNames[i].empty()) return layerNames[i];
+        if (i == 0) return "Default";
+        if (i == physics::kWorldBoundaryLayer) return "World Edge";
+        return "Layer " + std::to_string(i);
+    }
+    /// @brief Index of the layer with this name (as layerName() shows it), or −1.
+    int findLayer(std::string_view name) const {
+        for (u32 i = 0; i < physics::kCollisionLayerCount; ++i)
+            if (layerName(i) == name) return static_cast<int>(i);
+        return -1;
+    }
+    /// @brief Mask of the named layers (unknown names are ignored).
+    u32 maskOf(std::initializer_list<std::string_view> names) const {
+        u32 m = 0;
+        for (std::string_view n : names)
+            if (const int i = findLayer(n); i >= 0) m |= physics::layerBit(static_cast<u32>(i));
+        return m;
+    }
+    bool operator==(const PhysicsSettings&) const = default;
 };
 
 } // namespace nova

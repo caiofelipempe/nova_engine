@@ -66,7 +66,8 @@ void registerEngineTypes() {
         .field("linearDamping", &RigidBodyComponent::linearDamping, {.min = 0.0f, .max = 1.0f})
         .field("angularDamping", &RigidBodyComponent::angularDamping, {.min = 0.0f, .max = 1.0f})
         .field("gravityFactor", &RigidBodyComponent::gravityFactor, {.speed = 0.01f})
-        .field("isSensor", &RigidBodyComponent::isSensor, {.tooltip = "Reports contacts, no collision response", .label = "Sensor"})
+        .field("isSensor", &RigidBodyComponent::isSensor, {.tooltip = "Reports overlaps (onTriggerEnter/Exit), no collision response", .label = "Sensor"})
+        .field("layer", &RigidBodyComponent::layer, {.tooltip = "Collision layer (Physics settings say which collide)"})
         .field("body", &RigidBodyComponent::body, {.transient = true})
         .component();
 

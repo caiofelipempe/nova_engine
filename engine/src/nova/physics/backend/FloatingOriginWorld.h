@@ -6,6 +6,8 @@
 #include "nova/physics/backend/LocalPhysicsWorld.h"
 #include "nova/physics/PhysicsWorld.h"
 
+#include <map>
+#include <tuple>
 #include <vector>
 
 namespace nova::physics {
@@ -49,6 +51,7 @@ public:
     bool isActive(BodyId body) const override;
 
     void setGravity(const glm::vec3& gravity) override;
+    void setCollisionLayers(const CollisionLayers& layers) override;
     glm::vec3 gravity() const override { return m_gravity; }
     void step(Duration dt) override;
 
@@ -66,6 +69,8 @@ public:
                                    const QueryFilter& filter) const override;
     bool sweepBody(BodyId body, const glm::vec3& direction, f32 maxDistance, SweepHit& hit,
                    const QueryFilter& filter) const override;
+    std::vector<OverlapHit> overlap(const ShapeDesc& shape, const GlobalPosition& position, const glm::quat& rotation,
+                                    const QueryFilter& filter) const override;
     std::vector<ContactEvent> drainContactEvents() override;
 
 private:
@@ -109,6 +114,9 @@ private:
     QueryHit toGlobal(const local::QueryHit& hit, const Region& region, const GlobalPosition& queryOrigin,
                       bool ray) const;
     QueryFilter toLocal(const QueryFilter& filter, const Region& region) const;
+    void toGlobalIds(u64 localUser, BodyId& id, u64& user) const;
+    void onLocalContact(u32 region, const local::ContactEvent& c);
+    void endPairs(u64 index, u32 region, bool anyRegion);
 
     Backend m_backend;
     WorldDesc m_desc;
@@ -120,6 +128,11 @@ private:
     std::vector<Body> m_bodies;
     std::vector<u32> m_freeBodies;
     std::vector<ContactEvent> m_events;
+    // Touching pairs (global body index or world-edge code, smaller first), per region, with the
+    // event to send when they stop; and how many regions each pair touches in.
+    using PairKey = std::pair<u64, u64>;
+    std::map<std::tuple<u32, u64, u64>, ContactEvent> m_regionPairs;
+    std::map<PairKey, u32> m_pairs;
 };
 
 } // namespace nova::physics
