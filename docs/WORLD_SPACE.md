@@ -414,6 +414,21 @@ Para um mundo contínuo maior que 16 km, sem tela de carregamento.
   `onChunkLoad`/`onChunkUnload`) fica na engine, porque precisa manter física, renderização e consultas
   consistentes. O **conteúdo** de cada bloco (entidades, terreno, de onde vem) é do jogo.
 
+### Bordas do mundo (feito, depois das etapas 1–6)
+O toro de 16 km continua sendo o espaço das posições; `Scene::worldBounds()` (`scene/WorldBounds.h`)
+recorta dele um mundo menor, por eixo, centrado na origem:
+- **`Wrap`** (circular): até 16.384 m. No tamanho do toro não há nada a fazer (o estouro dá a volta);
+  menor que isso, o centro que passa de ±tamanho/2 é levado para o outro lado, com a mesma velocidade,
+  fora do motor físico (corpos não colidem através dessa borda).
+- **`Barrier`** (não circular): até 15.360 m. Com a simulação rodando, a cena cria paredes estáticas
+  de 4 m logo fora das bordas (cobrindo o mundo nos outros eixos, ou 4 km nos eixos que são o toro
+  inteiro); os corpos batem nelas e o contato vira `Script::onWorldEdge`, sem `onCollision` (a parede não
+  é uma entidade). Para o que as paredes não seguram, o centro volta ao limite e a velocidade naquele
+  eixo é zerada.
+- As regras de centro rodam depois de cada passo da física (corpos dinâmicos e personagens) e uma vez
+  por update para as demais entidades (sem corpo, estáticas, cinemáticas, que são teletransportadas).
+- Salvo no bloco `"world"` da cena (`"axes": [{"size", "edge"}]`); editado no painel World com undo.
+
 ### Etapas de implementação
 1. ✅ Ponto fixo: `fpm` via `FetchContent`, `math/Fixed.h` (aliases, `FixedVec3`, `FixedQuat`), testes de
    exatidão e de limites (`tests/FixedTests.cpp`).

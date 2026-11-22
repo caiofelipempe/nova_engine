@@ -1,5 +1,6 @@
-// Headless runs of the scenarios (the same code the editor's Game/Scenarios commands use): the
-// arena's walls stop and report bodies; at the torus seam bodies run through and keep going.
+// Headless runs of the scenarios (the same code the editor's Game/Scenarios commands use): in the
+// small world, barrier walls hold bodies in and wrapping edges send them to the other side;
+// at the seam of the whole torus bodies run through and keep going.
 #include <nova/Nova.h>
 
 #include "../editor/game/WorldScenarios.h"
@@ -34,9 +35,27 @@ std::vector<Entity> withScript(Scene& scene, const char* prefix) {
     return out;
 }
 
-void closedWorld() {
+struct EdgeCounts {
+    int barrierHits = 0, wraps = 0, ballsBarrier = 0, ballsWrapped = 0;
+};
+EdgeCounts countEdges(const std::vector<Entity>& entities) {
+    EdgeCounts c;
+    for (Entity e : entities)
+        for (auto& s : e.get<ScriptComponent>().scripts)
+            if (auto* flash = dynamic_cast<EdgeFlash*>(s.get())) {
+                c.barrierHits += flash->barrierHits;
+                c.wraps += flash->wraps;
+                c.ballsBarrier += flash->barrierHits > 0;
+                c.ballsWrapped += flash->wraps > 0;
+            }
+    return c;
+}
+
+void barrierWorld() {
     Scene scene;
-    buildSmallWorld(scene, kMeshes, SmallWorld::Closed);
+    buildSmallWorld(scene, kMeshes, SmallWorld::Barrier);
+    CHECK(scene.worldBounds().axes[0].edge == WorldEdge::Barrier && scene.worldBounds().axes[0].size == kSmallWorldSize);
+    CHECK(scene.worldBounds().isNative(1));
 
     auto balls = withScript(scene, "Ball ");
     auto crates = withScript(scene, "Crate ");
@@ -48,32 +67,53 @@ void closedWorld() {
         scene.update(Duration::perSecond(60));
         for (Entity e : balls) {
             const glm::dvec3 p = e.transform().position.toMeters();
-            inside &= std::abs(p.x) <= half && std::abs(p.z) <= half;
+            inside &= std::abs(p.x) <= half && std::abs(p.z) <= half; // the center, exactly
             aboveFloor &= p.y > 0.3; // radius 0.5 on the floor at y = 0
         }
     }
     CHECK(inside);
     CHECK(aboveFloor);
-    int touches = 0, ballsThatTouched = 0;
-    for (Entity e : balls) {
-        auto* sc = e.tryGet<ScriptComponent>();
-        for (auto& s : sc->scripts)
-            if (auto* flash = dynamic_cast<EdgeFlash*>(s.get())) {
-                touches += flash->touches;
-                ballsThatTouched += flash->touches > 0;
-            }
-    }
-    std::printf("  arena: %d wall touches by %d of 12 balls in 20 s\n", touches, ballsThatTouched);
-    CHECK(ballsThatTouched >= 6); // the walls are hit, reported, and hold
-    for (Entity c : crates) {
-        const glm::dvec3 p = c.transform().position.toMeters();
+    const EdgeCounts c = countEdges(balls);
+    std::printf("  barriers: %d wall touches by %d of 12 balls in 20 s, no wraps (%d)\n", c.barrierHits, c.ballsBarrier, c.wraps);
+    CHECK(c.ballsBarrier >= 6 && c.wraps == 0); // the barriers are reached, reported, and hold
+    for (Entity e : crates) {
+        const glm::dvec3 p = e.transform().position.toMeters();
         CHECK(std::abs(p.x) <= half && std::abs(p.z) <= half && p.y > 0.2);
     }
 }
 
+void wrapWorld() {
+    Scene scene;
+    buildSmallWorld(scene, kMeshes, SmallWorld::Wrap);
+    CHECK(scene.worldBounds().axes[2].edge == WorldEdge::Wrap && scene.worldBounds().axes[2].size == kSmallWorldSize);
+    auto balls = withScript(scene, "Ball ");
+    scene.startSimulation();
+    bool inside = true, aboveFloor = true, jumped = false;
+    const double half = kSmallWorldSize / 2;
+    std::vector<glm::dvec3> last;
+    for (Entity e : balls) last.push_back(e.transform().position.toMeters());
+    for (int step = 0; step < 60 * 20; ++step) {
+        scene.update(Duration::perSecond(60));
+        for (size_t i = 0; i < balls.size(); ++i) {
+            const glm::dvec3 p = balls[i].transform().position.toMeters();
+            inside &= p.x >= -half && p.x < half && p.z >= -half && p.z < half;
+            aboveFloor &= p.y > 0.3;
+            // A wrap moves the center by almost a whole world size in one step.
+            jumped |= std::abs(p.x - last[i].x) > kSmallWorldSize - 2.0 || std::abs(p.z - last[i].z) > kSmallWorldSize - 2.0;
+            last[i] = p;
+        }
+    }
+    CHECK(inside);
+    CHECK(aboveFloor); // the floor is 1 m larger on each side: a wrapped ball lands on it
+    CHECK(jumped);
+    const EdgeCounts c = countEdges(balls);
+    std::printf("  wrap-around: %d wraps by %d of 12 balls in 20 s, no stops (%d)\n", c.wraps, c.ballsWrapped, c.barrierHits);
+    CHECK(c.ballsWrapped >= 6 && c.barrierHits == 0);
+}
+
 void openWorld() {
     Scene scene;
-    Entity cam = buildSmallWorld(scene, kMeshes, SmallWorld::Open);
+    Entity cam = buildSmallWorld(scene, kMeshes, SmallWorld::TorusSeam);
     auto runners = withScript(scene, "Runner ");
     CHECK(runners.size() == 8);
     scene.startSimulation();
@@ -128,7 +168,8 @@ int main() {
     Log::init();
     Log::core().set_level(spdlog::level::warn);
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
-        {"arena: walls stop and report bodies", closedWorld},
+        {"small world, barriers: the walls hold them", barrierWorld},
+        {"small world, wrap-around: out one side, in the other", wrapWorld},
         {"torus seam: bodies run through it", openWorld},
     };
     for (auto& [name, fn] : tests) {

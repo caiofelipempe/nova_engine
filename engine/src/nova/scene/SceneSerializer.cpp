@@ -83,8 +83,13 @@ Json writeSpeedVec(const SpeedVec& v) {
                         writeFixed(v.z.raw_value(), kBits)});
 }
 
-// The world block: informative (the world is always the 16 km torus of WorldSpace).
-Json writeWorld() { return Json{{"step", WorldSpace::kUnit}, {"lap", WorldSpace::kLap}}; }
+// The world block: the step and the torus lap (informative), and the size and edge of each axis.
+Json writeWorld(const WorldBounds& b) {
+    Json axes = Json::array();
+    for (const WorldAxis& a : b.axes)
+        axes.push_back(Json{{"size", a.size}, {"edge", a.edge == WorldEdge::Barrier ? "Barrier" : "Wrap"}});
+    return Json{{"step", WorldSpace::kUnit}, {"lap", WorldSpace::kLap}, {"axes", std::move(axes)}};
+}
 
 Json writeVec(const f32* v, int n) {
     Json a = Json::array();
@@ -276,6 +281,19 @@ void readFixedQuat(FixedQuat& q, const Json& j) {
     }
 }
 
+// Axes of the world block (older files: no "edge" key, so the whole torus).
+WorldBounds readWorld(const Json& j) {
+    WorldBounds b;
+    if (!j.is_object() || !j.contains("axes") || !j["axes"].is_array()) return b;
+    for (size_t i = 0; i < 3 && i < j["axes"].size(); ++i) {
+        const Json& a = j["axes"][i];
+        if (!a.is_object() || !a.contains("edge") || !a["size"].is_number()) continue;
+        b.axes[i].size = a["size"].get<f64>();
+        b.axes[i].edge = a.value("edge", "Wrap") == "Barrier" ? WorldEdge::Barrier : WorldEdge::Wrap;
+    }
+    return b;
+}
+
 PhysicsSettings readPhysics(const Json& j) {
     PhysicsSettings s;
     if (!j.is_object()) return s;
@@ -463,7 +481,7 @@ std::string serializeScene(Scene& scene, const SerializeOptions& options) {
     root["format"] = kFormat;
     root["version"] = kVersion;
     root["name"] = scene.name();
-    root["world"] = writeWorld();
+    root["world"] = writeWorld(scene.worldBounds());
     root["physics"] = writePhysics(scene.physicsSettings());
     Json entities = Json::array();
     for (entt::entity e : entitiesInOrder(scene)) entities.push_back(writeEntity({e, &scene}, options, warned));
@@ -485,6 +503,7 @@ bool deserializeScene(Scene& scene, std::string_view text, const SerializeOption
     if (root.contains("name") && root["name"].is_string()) scene.setName(root["name"].get<std::string>());
     // Positions are read in meters: they land on the 16 km torus whatever world wrote them.
     scene.setPhysicsSettings(root.contains("physics") ? readPhysics(root["physics"]) : PhysicsSettings{});
+    scene.setWorldBounds(root.contains("world") ? readWorld(root["world"]) : WorldBounds{});
     std::set<std::string> warned;
     try {
         if (root.contains("entities") && root["entities"].is_array())

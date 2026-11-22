@@ -111,7 +111,9 @@ void Scene::update(Duration frame) {
         t.rotate(r.speed * dt, r.axis);
     }
 
+    if (!m_worldBounds.isNative()) constrainEntities(); // before the steps: kinematic bodies move from here
     if (m_physics) stepPhysics(frame);
+    dispatchEdgeHits();
 }
 
 Entity Scene::primaryCamera() {

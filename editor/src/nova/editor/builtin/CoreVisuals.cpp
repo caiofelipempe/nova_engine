@@ -45,33 +45,56 @@ void drawLight(DebugDraw& dd, Entity e) {
 }
 // The torus seams (cyan, where +8 192 m meets −8 192 m) within reach of the camera, as a
 // world-anchored grid patch on the seam plane.
-void drawWorldBounds(DebugDraw& dd, const GlobalPosition& camera) {
-    constexpr f64 kReach = 300.0;  // draw seams closer than this to the camera
-    constexpr f32 kHalf = 120.0f;  // half size of the drawn patch
-    constexpr f32 kStep = 10.0f;   // grid spacing
-    const glm::vec4 color(0.2f, 0.85f, 1.0f, 0.8f);
-    const glm::dvec3 camMeters = camera.toMeters();
+// The world's edges near the camera: barriers in red, wrapped edges and the torus seam in cyan. A
+// grid patch on each edge plane, clipped to the world on the limited axes.
+void drawWorldBounds(DebugDraw& dd, const GlobalPosition& camera, const WorldBounds& bounds) {
+    constexpr f64 kReach = 300.0; // draw edges closer than this to the camera
+    constexpr f64 kHalf = 120.0;  // half size of the drawn patch on unlimited axes
+    constexpr f64 kStep = 10.0;   // grid spacing
+    const glm::vec4 wrapColor(0.2f, 0.85f, 1.0f, 0.8f), barrierColor(1.0f, 0.3f, 0.25f, 0.9f);
+    const glm::dvec3 cam = camera.toMeters();
+    // Range of an axis on the plane, relative to the camera.
+    auto range = [&](int u, f64& lo, f64& hi) {
+        if (bounds.isNative(u)) {
+            lo = -kHalf, hi = kHalf;
+            return false;
+        }
+        const f64 h = bounds.axes[static_cast<size_t>(u)].size * 0.5;
+        lo = std::max(-h - cam[u], -kHalf), hi = std::min(h - cam[u], kHalf);
+        return true;
+    };
     for (int axis = 0; axis < 3; ++axis) {
-        // The seam is at −kHalfLap ≡ +kHalfLap: the shortest way there from the camera.
-        GlobalPosition seam = camera;
-        glm::i32vec3 raw = camera.raw();
-        raw[axis] = std::numeric_limits<i32>::min();
-        seam = GlobalPosition::fromRaw(raw);
-        const f64 d = (seam - camera).toMeters()[axis];
-        if (std::abs(d) > kReach) continue;
+        f64 planes[2];
+        int count = 0;
+        if (bounds.isNative(axis)) { // the seam, the shortest way from the camera
+            glm::i32vec3 raw = camera.raw();
+            raw[axis] = std::numeric_limits<i32>::min();
+            planes[count++] = (GlobalPosition::fromRaw(raw) - camera).toMeters()[axis];
+        } else {
+            const f64 h = bounds.axes[static_cast<size_t>(axis)].size * 0.5;
+            planes[count++] = h - cam[axis];
+            planes[count++] = -h - cam[axis];
+        }
+        const glm::vec4 color = bounds.axes[static_cast<size_t>(axis)].edge == WorldEdge::Barrier ? barrierColor : wrapColor;
         const int u = (axis + 1) % 3, v = (axis + 2) % 3;
-        glm::vec3 toPlane(0.0f);
-        toPlane[axis] = static_cast<f32>(d);
-        // Snap the grid to world multiples of kStep so it does not slide with the camera.
-        toPlane[u] = -static_cast<f32>(std::fmod(camMeters[u], static_cast<f64>(kStep)));
-        toPlane[v] = -static_cast<f32>(std::fmod(camMeters[v], static_cast<f64>(kStep)));
-        const GlobalPosition center = camera + toPlane;
-        for (f32 o = -kHalf; o <= kHalf; o += kStep) {
-            glm::vec3 a0(0.0f), a1(0.0f), b0(0.0f), b1(0.0f);
-            a0[u] = -kHalf, a1[u] = kHalf, a0[v] = a1[v] = o;
-            b0[v] = -kHalf, b1[v] = kHalf, b0[u] = b1[u] = o;
-            dd.line(center + a0, center + a1, color);
-            dd.line(center + b0, center + b1, color);
+        f64 ulo, uhi, vlo, vhi;
+        const bool uLimited = range(u, ulo, uhi), vLimited = range(v, vlo, vhi);
+        if (ulo >= uhi || vlo >= vhi) continue;
+        for (int k = 0; k < count; ++k) {
+            const f64 d = planes[k];
+            if (std::abs(d) > kReach) continue;
+            auto at = [&](f64 a, f64 b) {
+                glm::vec3 o(0.0f);
+                o[axis] = static_cast<f32>(d), o[u] = static_cast<f32>(a), o[v] = static_cast<f32>(b);
+                return camera + o;
+            };
+            // Grid lines on world multiples of kStep (they do not slide with the camera).
+            for (f64 x = std::ceil((cam[u] + ulo) / kStep) * kStep - cam[u]; x <= uhi; x += kStep)
+                dd.line(at(x, vlo), at(x, vhi), color);
+            for (f64 y = std::ceil((cam[v] + vlo) / kStep) * kStep - cam[v]; y <= vhi; y += kStep)
+                dd.line(at(ulo, y), at(uhi, y), color);
+            if (uLimited) dd.line(at(uhi, vlo), at(uhi, vhi), color), dd.line(at(ulo, vlo), at(ulo, vhi), color);
+            if (vLimited) dd.line(at(ulo, vhi), at(uhi, vhi), color), dd.line(at(ulo, vlo), at(uhi, vlo), color);
         }
     }
 }
@@ -153,7 +176,7 @@ void CoreVisualsPlugin::onRegister(Registry& r) {
         DebugDraw& dd = ctx.renderer().debugDraw();
         Scene& scene = ctx.scene();
         if (settings.grid) dd.grid({0.0f, 0.002f, 0.0f}, 40.0f, 40, {0.45f, 0.45f, 0.5f, 0.6f});
-        if (settings.worldBounds) drawWorldBounds(dd, ctx.camera().position);
+        if (settings.worldBounds) drawWorldBounds(dd, ctx.camera().position, scene.worldBounds());
 
         if (settings.allColliders)
             for (auto [h, rb] : scene.registry().view<RigidBodyComponent>().each())

@@ -291,7 +291,7 @@ if (auto* vp = r.findPanel<nova::editor::builtin::ViewportPanel>()) vp->useScene
 | Arquivos de cena | `ctx.newScene()`, `ctx.openScene(path)`, `ctx.saveScene(path)`, `ctx.scenePath()` |
 | Assets | `ctx.assets()` (`AssetDatabase`: `find`, `findByPath`, `load`, `instantiate`, `import`, `createPrefab`, `addImporter`), `ctx.instantiateAsset(guid, pos)`, `ctx.spawnPoint()` |
 | Câmera do editor | `ctx.camera()` (`focus(pos)`, `position` — uma `GlobalPosition`, `yaw`, `pitch`) |
-| Mundo | o toro de 16 km de `WorldSpace` (fixo); painel **World** (câmera e física); *View/Show World Bounds* desenha as emendas (ciano) perto da câmera |
+| Mundo | painel **World**: tamanho e borda por eixo (`Wrap` circular ou `Barrier` com paredes; "Whole torus" volta ao toro de 16 km), com undo; câmera e origem da física. *View/Show World Bounds* desenha barreiras (vermelho), bordas com volta e a emenda do toro (ciano) perto da câmera. Cenários em *Game/Scenarios*: mundo pequeno com barreiras, o mesmo com volta, e a emenda do toro |
 | Código do jogo | `ctx.gameModule()` (`GameModuleHost`: `reload()`, `build()`, `isBuilding()`, `reloadCount()`, sinal `reloaded`) |
 | Engine | `ctx.app()`, `ctx.renderer()` |
 | Extensões | `ctx.registry()` (`execute("id")`, `findPanel<T>()`...) |

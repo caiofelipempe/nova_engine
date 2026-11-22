@@ -5,18 +5,16 @@
 using namespace nova;
 
 // ------------------------------------------------------------------ scripts --
-bool isWall(Entity e) { return e.valid() && e.name().rfind("Wall", 0) == 0; }
-
-void EdgeFlash::onCollision(const Collision& c) {
-    if (!isWall(c.other)) return;
+void EdgeFlash::onWorldEdge(const WorldEdgeHit& hit) {
     glow = 1.0f;
-    ++touches;
+    lastWasBarrier = hit.edge == WorldEdge::Barrier;
+    (lastWasBarrier ? barrierHits : wraps) += 1;
 }
 
 void EdgeFlash::onUpdate(float dt) {
     glow = std::max(0.0f, glow - dt * 2.0f);
     if (auto* mesh = entity().tryGet<MeshComponent>()) {
-        mesh->material.emissive = {1.0f, 0.25f, 0.15f};
+        mesh->material.emissive = lastWasBarrier ? glm::vec3(1.0f, 0.25f, 0.15f) : glm::vec3(0.2f, 0.85f, 1.0f);
         mesh->material.emissiveStrength = glow * 6.0f;
     }
 }
@@ -35,17 +33,17 @@ void Mover::onUpdate(float dt) {
     if (along < speed) scene().setLinearVelocity(entity(), v + d * (speed - along)); // keep its vertical motion
 }
 
-void Mover::onCollision(const Collision& c) {
-    // Point away from the wall we touched (the physics bounce already did the same to the velocity).
-    if (!isWall(c.other)) return;
-    const glm::vec3 n = c.normal;
-    const float into = glm::dot(direction, n);
-    if (into < 0.0f) direction -= 2.0f * into * n;
-    direction.y = 0.0f;
+void Mover::onWorldEdge(const WorldEdgeHit& hit) {
+    // The barrier zeroed the velocity along its axis: head back inside (like a billiard ball).
+    if (hit.edge != WorldEdge::Barrier) return;
+    if ((direction[hit.axis] > 0.0f) == (hit.side > 0)) direction[hit.axis] = -direction[hit.axis];
 }
 
 void reflectScenarioTypes() {
-    reflect::type<EdgeFlash>("EdgeFlash").field("touches", &EdgeFlash::touches, {.readOnly = true}).script();
+    reflect::type<EdgeFlash>("EdgeFlash")
+        .field("barrierHits", &EdgeFlash::barrierHits, {.readOnly = true})
+        .field("wraps", &EdgeFlash::wraps, {.readOnly = true})
+        .script();
     reflect::type<Mover>("Mover")
         .field("direction", &Mover::direction, {.speed = 0.01f})
         .field("speed", &Mover::speed, {.min = 0.0f, .max = 30.0f})
@@ -95,27 +93,26 @@ Entity camera(Scene& scene, const GlobalPosition& at, const GlobalPosition& look
 const glm::vec4 kColors[] = {{0.9f, 0.3f, 0.25f, 1}, {0.25f, 0.6f, 0.95f, 1}, {0.95f, 0.8f, 0.2f, 1},
                              {0.4f, 0.85f, 0.4f, 1}, {0.75f, 0.4f, 0.9f, 1}, {0.95f, 0.55f, 0.2f, 1}};
 
-Entity buildClosed(Scene& scene, const ScenarioMeshes& m) {
-    // A 60 × 60 m arena: a floor at y = 0 and four walls.
+// A 60 × 60 m world on X and Z (Y is the whole torus): barriers or wrapping edges, no walls. The
+// floor is 2 m larger, so a center at the edge still stands on it.
+Entity buildSmall(Scene& scene, const ScenarioMeshes& m, WorldEdge edge) {
     common(scene);
-    Entity floor = mesh(scene, "Floor", m.plane, {0.0, 0.0, 0.0}, {kSmallWorldSize, 1.0f, kSmallWorldSize},
-                        {0.78f, 0.78f, 0.8f, 1});
+    scene.setWorldBounds(WorldBounds::box(kSmallWorldSize, 0.0, kSmallWorldSize, edge));
+    const double floorSize = kSmallWorldSize + 2.0;
+    Entity floor = mesh(scene, "Floor", m.plane, {0.0, 0.0, 0.0}, {floorSize, 1.0f, floorSize},
+                        edge == WorldEdge::Barrier ? glm::vec4(0.8f, 0.76f, 0.74f, 1) : glm::vec4(0.74f, 0.79f, 0.82f, 1));
     floor.get<MeshComponent>().material.checker = true;
     floor.add<RigidBodyComponent>(physics::BodyType::Static);
     floor.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
+    // Corner posts mark the edges (decoration: they do not collide).
     const double half = kSmallWorldSize / 2;
-    const std::pair<GlobalPosition, glm::vec3> walls[] = {{{half + 0.5, 2.0, 0.0}, {1.0f, 4.0f, kSmallWorldSize + 2}},
-                                                          {{-half - 0.5, 2.0, 0.0}, {1.0f, 4.0f, kSmallWorldSize + 2}},
-                                                          {{0.0, 2.0, half + 0.5}, {kSmallWorldSize + 2, 4.0f, 1.0f}},
-                                                          {{0.0, 2.0, -half - 0.5}, {kSmallWorldSize + 2, 4.0f, 1.0f}}};
-    for (const auto& [at, size] : walls) {
-        Entity w = mesh(scene, "Wall", m.cube, at, size, {0.45f, 0.5f, 0.6f, 1});
-        auto& rb = w.add<RigidBodyComponent>(physics::BodyType::Static);
-        rb.restitution = 0.0f;
-        w.add<BoxColliderComponent>();
+    for (int i = 0; i < 4; ++i) {
+        const double x = (i & 1) ? half : -half, z = (i & 2) ? half : -half;
+        mesh(scene, "Corner", m.cube, {x, 1.5, z}, {0.3f, 3.0f, 0.3f},
+             edge == WorldEdge::Barrier ? glm::vec4(0.9f, 0.25f, 0.2f, 1) : glm::vec4(0.2f, 0.75f, 0.95f, 1));
     }
 
-    // Balls wandering around: they hit the walls and flash.
+    // Balls wandering around: they reach the edges and flash (red: stopped, cyan: wrapped).
     for (int i = 0; i < 12; ++i) {
         const double a = i * 0.5236, r = 6.0 + (i % 3) * 4.0;
         Entity b = ball(scene, m, "Ball " + std::to_string(i), {r * std::cos(a), 1.0 + (i % 4), r * std::sin(a)},
@@ -127,7 +124,7 @@ Entity buildClosed(Scene& scene, const ScenarioMeshes& m) {
         mover.seed = 17u + static_cast<unsigned>(i) * 31u;
         mover.direction = {std::cos(a), 0.0f, std::sin(a)};
     }
-    // Crates to knock around.
+    // Crates to knock around (and out of the world, when it wraps).
     for (int i = 0; i < 8; ++i) {
         Entity c = mesh(scene, "Crate " + std::to_string(i), m.cube, {-12.0 + i * 3.4, 0.6, -4.0 + (i % 2) * 8.0},
                         glm::vec3(1.2f), {0.55f, 0.38f, 0.2f, 1});
@@ -135,7 +132,7 @@ Entity buildClosed(Scene& scene, const ScenarioMeshes& m) {
         c.add<BoxColliderComponent>();
         c.addScript<EdgeFlash>();
     }
-    return camera(scene, {0.0, 16.0, 26.0}, {0.0, 0.0, 0.0});
+    return camera(scene, {0.0, 22.0, 40.0}, {0.0, 0.0, 0.0});
 }
 
 Entity buildOpen(Scene& scene, const ScenarioMeshes& m) {
@@ -182,6 +179,12 @@ Entity buildOpen(Scene& scene, const ScenarioMeshes& m) {
 
 Entity buildSmallWorld(Scene& scene, const ScenarioMeshes& meshes, SmallWorld kind) {
     scene.clear();
-    scene.setName(kind == SmallWorld::Closed ? "Arena (walls)" : "Torus seam");
-    return kind == SmallWorld::Closed ? buildClosed(scene, meshes) : buildOpen(scene, meshes);
+    scene.setWorldBounds({});
+    switch (kind) {
+        case SmallWorld::Barrier: scene.setName("Small world (barriers)"); return buildSmall(scene, meshes, WorldEdge::Barrier);
+        case SmallWorld::Wrap: scene.setName("Small world (wrap-around)"); return buildSmall(scene, meshes, WorldEdge::Wrap);
+        case SmallWorld::TorusSeam: break;
+    }
+    scene.setName("Torus seam");
+    return buildOpen(scene, meshes);
 }

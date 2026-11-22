@@ -134,8 +134,9 @@ void ExamplePlugin::onRegister(Registry& r) {
         });
     }, "Ctrl+T");
 
-    // Scenarios: a walled arena and the seam of the 16 km torus. Fly with RMB + WASD, press Play
-    // to run them; the World panel shows the camera and the physics origin.
+    // Scenarios: a small world with barriers, the same one wrapping around, and the seam of the
+    // whole 16 km torus. Fly with RMB + WASD, press Play to run them; the World panel shows and
+    // edits the edges (View/Show World Bounds draws them).
     auto openScenario = [](EditorContext& ctx, SmallWorld kind) {
         ctx.newScene();
         Renderer& renderer = ctx.renderer();
@@ -147,10 +148,13 @@ void ExamplePlugin::onRegister(Registry& r) {
         view.yaw = std::atan2(-f.x, -f.z);
         view.pitch = std::asin(glm::clamp(f.y, -1.0f, 1.0f));
     };
-    r.command("Game/Scenarios/Arena (walls)", [openScenario](EditorContext& ctx) {
-        openScenario(ctx, SmallWorld::Closed);
+    r.command("Game/Scenarios/Small World (Barriers)", [openScenario](EditorContext& ctx) {
+        openScenario(ctx, SmallWorld::Barrier);
+    });
+    r.command("Game/Scenarios/Small World (Wrap-around)", [openScenario](EditorContext& ctx) {
+        openScenario(ctx, SmallWorld::Wrap);
     });
     r.command("Game/Scenarios/Torus Seam", [openScenario](EditorContext& ctx) {
-        openScenario(ctx, SmallWorld::Open);
+        openScenario(ctx, SmallWorld::TorusSeam);
     });
 }

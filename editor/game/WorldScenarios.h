@@ -1,8 +1,9 @@
 #pragma once
 
-// Two scenarios to see the world's shape in action: a closed arena (walls all around) and the
-// seam of the 16 km torus (X and Z wrap: leaving +8 192 m enters at −8 192 m). Built by the editor
-// commands Game/Scenarios/... and by the headless ScenarioTests, from the same code.
+// Scenarios to see the world's edges in action (Scene::worldBounds(), enforced outside the physics
+// engine): a small world with barriers, the same world wrapping around, and the seam of the whole
+// 16 km torus. Built by the editor commands Game/Scenarios/... and by the headless ScenarioTests,
+// from the same code.
 
 #include <nova/Nova.h>
 
@@ -15,20 +16,24 @@ struct ScenarioMeshes {
 
 /// Which scenario to build.
 enum class SmallWorld {
-    Closed, ///< A 60 × 60 m arena with walls: things bounce off them.
-    Open,   ///< A floor across the torus seam on X: things run through it and keep going.
+    Barrier,   ///< A 60 × 60 m world with barriers on X and Z: centers stop at the edges.
+    Wrap,      ///< The same 60 × 60 m world wrapping around on X and Z: out one side, in the other.
+    TorusSeam, ///< A floor across the seam of the whole 16 km torus on X: things run through it.
 };
 
-/// Side of the closed arena, in meters.
+/// Side of the small worlds (X and Z), in meters.
 constexpr double kSmallWorldSize = 60.0;
 /// Length of the floor across the seam (along X, centered on the seam), in meters.
 constexpr double kSeamFloorLength = 400.0;
 
-/// Flashes when its body touches a wall of the arena and counts the touches.
+/// Flashes when its center reaches an edge of the world and counts it: red for a barrier, cyan
+/// for a wrap.
 struct EdgeFlash : nova::Script {
     float glow = 0.0f;
-    int touches = 0;
-    void onCollision(const nova::Collision& c) override;
+    int barrierHits = 0;
+    int wraps = 0;
+    bool lastWasBarrier = false;
+    void onWorldEdge(const nova::WorldEdgeHit& hit) override;
     void onUpdate(float dt) override;
 };
 
@@ -41,12 +46,9 @@ struct Mover : nova::Script {
     float sinceKick = 0.0f;
     unsigned seed = 1;
     void onUpdate(float dt) override;
-    /// Bounces off walls like a billiard ball (mirrors `direction` across the wall).
-    void onCollision(const nova::Collision& c) override;
+    /// Turns back at a barrier (mirrors `direction` along that axis); keeps going through a wrap.
+    void onWorldEdge(const nova::WorldEdgeHit& hit) override;
 };
-
-/// True for the arena's walls.
-bool isWall(nova::Entity e);
 
 /// Registers EdgeFlash and Mover for the inspector and scene files.
 void reflectScenarioTypes();

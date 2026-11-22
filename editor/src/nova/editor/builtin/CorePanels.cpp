@@ -415,6 +415,63 @@ void WorldPanel::onImGui(EditorContext& ctx) {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Positions are Q13.18 fixed point: leaving one side enters the other");
     ImGui::Separator();
+
+    // Size and edge per axis. One undo step per edit (a drag is one edit); during Play the change
+    // applies to the running world and goes away on Stop, like any other edit.
+    static WorldBounds before;
+    static bool editing = false;
+    WorldBounds bounds = scene.worldBounds();
+    bool changed = false, finished = false;
+    const char* axisNames[3] = {"X", "Y", "Z"};
+    const char* edges[] = {"Wrap", "Barrier"};
+    for (int i = 0; i < 3; ++i) {
+        ImGui::PushID(i);
+        WorldAxis& a = bounds.axes[static_cast<size_t>(i)];
+        if (!editing) before = scene.worldBounds();
+        const bool whole = a.edge == WorldEdge::Wrap && a.size >= WorldSpace::kLap;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(axisNames[i]);
+        ImGui::SameLine(30.0f);
+        ImGui::SetNextItemWidth(90.0f);
+        int edge = static_cast<int>(a.edge);
+        if (ImGui::Combo("##edge", &edge, edges, 2)) {
+            a.edge = static_cast<WorldEdge>(edge);
+            if (a.edge == WorldEdge::Barrier && a.size > WorldBounds::kMaxBarrierSize) a.size = 100.0;
+            changed = finished = true;
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1.0f);
+        f64 size = a.size;
+        const f64 lo = WorldBounds::kMinSize;
+        const f64 hi = a.edge == WorldEdge::Barrier ? WorldBounds::kMaxBarrierSize : WorldSpace::kLap;
+        if (ImGui::DragScalar("##size", ImGuiDataType_Double, &size, 0.5f, &lo, &hi, whole ? "whole torus" : "%.2f m")) {
+            a.size = size;
+            changed = true;
+            editing = true;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) finished = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(a.edge == WorldEdge::Barrier
+                                  ? "Barrier: centers stop at +-size/2, their velocity along this axis is zeroed"
+                                  : "Wrap: leaving +size/2 enters at -size/2 (the whole torus wraps by itself)");
+        ImGui::PopID();
+    }
+    if (changed) scene.setWorldBounds(bounds);
+    if (finished) {
+        editing = false;
+        const WorldBounds after = scene.worldBounds();
+        if (!(after == before) && !ctx.isPlaying())
+            ctx.undoStack().push({"World Edges", [&ctx, b = before] { ctx.scene().setWorldBounds(b); },
+                                  [&ctx, after] { ctx.scene().setWorldBounds(after); }});
+    }
+    if (ImGui::SmallButton("Whole torus")) {
+        const WorldBounds old = scene.worldBounds();
+        scene.setWorldBounds({});
+        if (!ctx.isPlaying() && !(old == WorldBounds{}))
+            ctx.undoStack().push({"World Edges", [&ctx, old] { ctx.scene().setWorldBounds(old); },
+                                  [&ctx] { ctx.scene().setWorldBounds({}); }});
+    }
+    ImGui::Separator();
     const glm::dvec3 cam = ctx.camera().position.toMeters();
     ImGui::Text("Camera  %s, %s, %s", readable(cam.x).c_str(), readable(cam.y).c_str(), readable(cam.z).c_str());
     if (scene.isSimulating()) {

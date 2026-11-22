@@ -137,6 +137,20 @@ public:
     const PhysicsSettings& physicsSettings() const { return m_physicsSettings; }
     /// @brief Changes the physics settings (applied to the running simulation right away).
     void setPhysicsSettings(const PhysicsSettings& settings);
+    /// @}
+
+    /// @name World edges
+    /// The world's size and edges per axis (WorldBounds): the whole 16 km torus by default, or a
+    /// smaller world whose edges wrap around (circular) or are barriers (walls). Wraps act on entity
+    /// centers outside the physics engine; barriers are static walls while simulating, plus a
+    /// stop on centers for what they miss. Saved with the scene.
+    /// @{
+    /// @brief The world's size and edges.
+    const WorldBounds& worldBounds() const { return m_worldBounds; }
+    /// @brief Changes them (sizes are brought into range: WorldBounds::valid()); the walls of a
+    ///        running simulation are rebuilt.
+    void setWorldBounds(const WorldBounds& bounds);
+
     /// @brief Hash of the simulation state: every entity's exact position, rotation, scale and body
     ///        velocities, in UUID order. Two runs of the same scene with the same inputs give the same
     ///        hash step after step (lockstep / replay desync checks).
@@ -239,6 +253,11 @@ private:
     physics::QueryFilter filterIgnoring(Entity e, u32 layerMask = physics::kAllLayers) const;
     void dispatchContacts();
     SceneHit toSceneHit(const physics::QueryHit& hit);
+    void constrainEntities();
+    void constrainSimulated();
+    void recordEdgeHits(entt::entity e, u32 changed, const std::array<WorldEdgeHit, 3>& hits);
+    void dispatchEdgeHits();
+    void buildEdgeWalls();
 
     std::string m_name;
     entt::registry m_registry;
@@ -253,6 +272,9 @@ private:
     GlobalPosition m_physicsFocus;
     bool m_hasPhysicsFocus = false;
     Duration m_physicsAccumulator;
+    WorldBounds m_worldBounds;
+    std::vector<physics::BodyId> m_edgeWalls; // barrier walls while simulating
+    std::vector<std::pair<entt::entity, WorldEdgeHit>> m_edgeHits; // reported after the update
 };
 
 } // namespace nova

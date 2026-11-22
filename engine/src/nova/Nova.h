@@ -40,6 +40,7 @@
 #include "nova/scene/Scene.h"
 #include "nova/scene/SceneSerializer.h"
 #include "nova/scene/Script.h"
+#include "nova/scene/WorldBounds.h"
 
 #include "nova/reflect/Reflect.h"
 
