@@ -17,7 +17,7 @@ namespace nova::physics {
 
 /// @brief Available physics backends.
 enum class Backend {
-    Jolt ///< Jolt Physics (multi-threaded, float; used through FloatingOriginWorld).
+    Jolt ///< Jolt Physics (multi-threaded, float; used through TorusWorld).
 };
 
 /// @brief How a body moves.
@@ -89,8 +89,6 @@ struct BodyId {
 /// @{
 /// @brief Number of collision layers (a body is in one: BodyDesc::layer).
 constexpr u32 kCollisionLayerCount = 32;
-/// @brief Layer reserved for the world's barrier edges: it collides with every layer.
-constexpr u32 kWorldBoundaryLayer = kCollisionLayerCount - 1;
 /// @brief Layer mask with every layer (queries: QueryFilter::layerMask).
 constexpr u32 kAllLayers = ~0u;
 /// @brief Mask of one layer.
@@ -101,11 +99,8 @@ struct CollisionLayers {
     std::array<u32, kCollisionLayerCount> mask; ///< `mask[a]` bit `b`: layers `a` and `b` collide.
 
     CollisionLayers() { mask.fill(kAllLayers); }
-    /// @brief True if bodies of layers `a` and `b` collide (the world-edge layer always does).
-    bool collides(u32 a, u32 b) const {
-        if (a == kWorldBoundaryLayer || b == kWorldBoundaryLayer) return true;
-        return (mask[a & (kCollisionLayerCount - 1)] & layerBit(b)) != 0;
-    }
+    /// @brief True if bodies of layers `a` and `b` collide.
+    bool collides(u32 a, u32 b) const { return (mask[a & (kCollisionLayerCount - 1)] & layerBit(b)) != 0; }
     /// @brief Makes layers `a` and `b` collide or not (both directions).
     CollisionLayers& set(u32 a, u32 b, bool collide) {
         a &= kCollisionLayerCount - 1;
@@ -245,8 +240,8 @@ struct QueryFilter {
 
 /// @brief A body found by an overlap query.
 struct OverlapHit {
-    BodyId body;      ///< The body (invalid for a world barrier edge).
-    u64 userData = 0; ///< Its BodyDesc::userData (kWorldBoundaryUserData... for edges).
+    BodyId body;      ///< The body (invalid for a character's capsule).
+    u64 userData = 0; ///< Its BodyDesc::userData (or the character's).
 };
 
 /// @brief Whether a contact event starts or ends a touch.
@@ -263,12 +258,5 @@ struct WorldDesc {
     CollisionLayers layers;                ///< Which layers collide.
 };
 
-/// @brief userData of contacts/hits against a barrier edge of the world (see WorldSpace).
-///
-/// The top bit marks them; `code & 0xFF` is `axis * 2 + (high edge ? 1 : 0)`. Backends that
-/// enforce barriers report them this way; the BodyId of the edge is invalid.
-constexpr u64 kWorldBoundaryUserData = 1ull << 63;
-/// @brief True if `userData` comes from a barrier edge of the world.
-constexpr bool isWorldBoundary(u64 userData) { return (userData & kWorldBoundaryUserData) != 0; }
 
 } // namespace nova::physics

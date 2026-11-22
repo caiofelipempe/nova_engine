@@ -94,26 +94,13 @@ std::shared_ptr<const physics::ShapeGeometry> Scene::meshGeometry(MeshHandle mes
     return g;
 }
 
-std::vector<GlobalPosition> Scene::currentFoci() {
-    if (m_hasPhysicsFocus) return m_physicsFoci;
-    if (Entity cam = primaryCamera()) return {cam.transform().position};
+GlobalPosition Scene::currentFocus() {
+    if (m_hasPhysicsFocus) return m_physicsFocus;
+    if (Entity cam = primaryCamera()) return cam.transform().position;
     return {};
 }
 
-void Scene::pushPhysicsFocus() {
-    physics::SimulationFocus focus;
-    focus.foci = currentFoci();
-    focus.radius = physicsRegionRadius;
-    focus.rebaseDistance = physicsRebaseDistance;
-    focus.barrierWallRange = barrierWallRange;
-    m_physics->setFocus(focus);
-}
-
-bool Scene::isPhysicsDormant(Entity e) const {
-    if (!m_physics || !e.valid()) return false;
-    const auto* rb = e.tryGet<RigidBodyComponent>();
-    return rb && rb->body && m_physics->isDormant(rb->body);
-}
+void Scene::pushPhysicsFocus() { m_physics->setFocus(currentFocus()); }
 
 physics::BodyDesc Scene::bodyDescFor(entt::entity e) {
     auto& rb = m_registry.get<RigidBodyComponent>(e);
@@ -205,7 +192,7 @@ physics::BodyDesc Scene::bodyDescFor(entt::entity e) {
     desc.angularDamping = rb.angularDamping;
     desc.gravityFactor = rb.gravityFactor;
     desc.isSensor = rb.isSensor;
-    desc.layer = std::min(rb.layer, physics::kCollisionLayerCount - 2); // the last one is the world edge
+    desc.layer = std::min(rb.layer, physics::kCollisionLayerCount - 1);
     desc.continuousCollision = rb.continuousCollision;
     desc.lockedAxes = rb.locks.bits();
     desc.userData = toUserData(e);
@@ -371,7 +358,7 @@ void Scene::createCharacter(entt::entity e) {
     d.mass = cc.mass;
     d.maxPushForce = cc.maxPushForce;
     d.gravityFactor = cc.gravityFactor;
-    d.layer = std::min(cc.layer, physics::kCollisionLayerCount - 2);
+    d.layer = std::min(cc.layer, physics::kCollisionLayerCount - 1);
     d.userData = toUserData(e);
     cc.character = m_physics->createCharacter(d);
     m_physics->setCharacterVelocity(cc.character, cc.velocity);
@@ -417,7 +404,7 @@ void Scene::readCharacters() {
         cc.grounded = s.ground == physics::GroundState::OnGround;
         cc.groundNormal = s.groundNormal;
         cc.ground = {};
-        if (s.ground != physics::GroundState::InAir && s.groundBody && !physics::isWorldBoundary(s.groundUserData))
+        if (s.ground != physics::GroundState::InAir && s.groundBody)
             cc.ground = refOf(Entity{fromUserData(s.groundUserData), this});
     }
 }
@@ -544,7 +531,7 @@ void Scene::syncJoints() {
 }
 
 void Scene::stepPhysics(Duration dt) {
-    pushPhysicsFocus(); // the simulation follows the foci (regions, dormancy: up to the backend)
+    pushPhysicsFocus(); // the float window follows the focus (the seam of the torus stays away from it)
     syncBodies(); // edits since last frame
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) // gained a rigid body since last frame
         if (!rb.body) createBody(e);
@@ -597,21 +584,6 @@ void Scene::dispatchContacts() {
     }
     for (const physics::ContactEvent& c : m_physics->drainContactEvents()) {
         const bool began = c.type == physics::ContactEventType::Began;
-        if (physics::isWorldBoundary(c.userDataA) || physics::isWorldBoundary(c.userDataB)) { // a barrier edge
-            if (!began) continue;
-            const bool wallIsA = physics::isWorldBoundary(c.userDataA);
-            const u64 wall = wallIsA ? c.userDataA : c.userDataB;
-            const u64 other = wallIsA ? c.userDataB : c.userDataA;
-            if (physics::isWorldBoundary(other)) continue;
-            WorldBoundaryHit hit;
-            hit.axis = static_cast<int>((wall & 0xFF) / 2);
-            hit.side = (wall & 1) ? 1 : -1;
-            hit.point = wallIsA ? c.pointB : c.pointA;
-            hit.normal = glm::vec3(0.0f);
-            hit.normal[hit.axis] = static_cast<f32>(-hit.side);
-            each(Entity{fromUserData(other), this}, [&](Script& s) { s.onWorldBoundary(hit); });
-            continue;
-        }
         Entity a{fromUserData(c.userDataA), this};
         Entity b{fromUserData(c.userDataB), this};
         // Ended events may name a destroyed entity: hand it over invalid.
@@ -711,7 +683,8 @@ physics::QueryFilter Scene::filterIgnoring(Entity e, u32 layerMask) const {
 
 SceneHit Scene::toSceneHit(const physics::QueryHit& hit) {
     SceneHit out;
-    out.entity = physics::isWorldBoundary(hit.userData) ? Entity{} : Entity{fromUserData(hit.userData), this};
+    out.entity = Entity{fromUserData(hit.userData), this};
+    if (!out.entity.valid()) out.entity = {};
     out.point = hit.point;
     out.normal = hit.normal;
     out.hitSurfaceNormal = hit.hitSurfaceNormal;
@@ -794,7 +767,6 @@ std::vector<Entity> Scene::overlap(const physics::ShapeDesc& shape, const Global
     physics::QueryFilter f = filterIgnoring(ignore, layerMask);
     f.includeSensors = includeSensors;
     for (const physics::OverlapHit& h : m_physics->overlap(shape, position, rotation, f)) {
-        if (physics::isWorldBoundary(h.userData)) continue;
         Entity e{fromUserData(h.userData), this};
         if (e.valid()) out.push_back(e);
     }

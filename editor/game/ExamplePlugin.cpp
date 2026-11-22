@@ -134,8 +134,8 @@ void ExamplePlugin::onRegister(Registry& r) {
         });
     }, "Ctrl+T");
 
-    // Scenarios: small worlds with closed (barrier) and open (wrap-around) edges. Fly with RMB +
-    // WASD, press Play to run them; the World panel shows the settings.
+    // Scenarios: a walled arena and the seam of the 16 km torus. Fly with RMB + WASD, press Play
+    // to run them; the World panel shows the camera and the physics origin.
     auto openScenario = [](EditorContext& ctx, SmallWorld kind) {
         ctx.newScene();
         Renderer& renderer = ctx.renderer();

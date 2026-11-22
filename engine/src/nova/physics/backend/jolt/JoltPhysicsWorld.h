@@ -7,7 +7,7 @@
 
 namespace nova::physics::local {
 
-/// @brief local::World backed by Jolt Physics (wrapped in a FloatingOriginWorld by PhysicsWorld::create).
+/// @brief local::World backed by Jolt Physics (wrapped in a TorusWorld by PhysicsWorld::create).
 ///
 /// Created through `local::World::create(Backend::Jolt)`. Jolt headers are confined to the .cpp
 /// (pimpl), so they never leak into engine or game code. Uses two object layers (static /

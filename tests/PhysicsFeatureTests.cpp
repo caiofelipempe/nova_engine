@@ -146,22 +146,6 @@ void destroyingSupportWakes() {
     CHECK_NEAR(crate.transform().position.toMeters().y, 0.5, 0.03);
 }
 
-void dormancyEndsTouches() {
-    Scene scene("dormant");
-    Entity ground = addGround(scene);
-    Entity ball = addBall(scene, {0.0, 0.5, 0.0});
-    auto& rb = ball.addScript<Recorder>();
-    scene.setPhysicsFocus({0.0, 0.0, 0.0});
-    scene.physicsRegionRadius = 100.0;
-    scene.startSimulation();
-    run(scene, 30);
-    CHECK(rb.count("begin") == 1);
-    scene.setPhysicsFocus({6000.0, 0.0, 6000.0}); // far away: the ball stops simulating
-    run(scene, 2);
-    CHECK(scene.isPhysicsDormant(ball));
-    CHECK(rb.count("end") == 1);
-}
-
 void triggers() {
     Scene scene("triggers");
     addGround(scene);
@@ -614,7 +598,6 @@ void farJointsAndRebase() {
     // A pendulum near the far corner; the focus jumps (rebase): the world anchor stays where it was.
     const GlobalPosition base = GlobalPosition(7500.0, 0.0, 0.0);
     Scene scene("far");
-    scene.physicsRegionRadius = 0.0; // one region: this test is about the floating origin
     scene.setPhysicsFocus(base);
     Entity bob = addBall(scene, base + glm::vec3(2.0f, 0.0f, 0.0f));
     auto& j = bob.add<JointComponent>();
@@ -627,29 +610,6 @@ void farJointsAndRebase() {
     run(scene, 60);
     CHECK_NEAR(distance(bob.transform().position, base), 2.0, 0.02);
     CHECK(j.joint.valid());
-}
-
-void jointsAndDormancy() {
-    // Two linked crates; the focus leaves (both dormant), comes back: the link holds again.
-    Scene scene("dormant joints");
-    scene.physicsRegionRadius = 100.0;
-    scene.setPhysicsFocus({0.0, 0.0, 0.0});
-    Entity anchor = addBox(scene, "Anchor", {0.0, 5.0, 0.0}, glm::vec3(0.5f), BodyType::Static);
-    Entity crate = addBox(scene, "Crate", {0.0, 3.0, 0.0}, glm::vec3(0.5f));
-    auto& j = crate.add<JointComponent>();
-    j.type = JointType::Distance;
-    j.connected = Scene::refOf(anchor);
-    j.connectedAnchor = {0.0f, 0.0f, 0.0f}; // the anchor's center: a 2 m rope
-    scene.startSimulation();
-    run(scene, 30);
-    scene.setPhysicsFocus({6000.0, 0.0, 6000.0});
-    run(scene, 30);
-    CHECK(scene.isPhysicsDormant(crate));
-    scene.setPhysicsFocus({0.0, 0.0, 0.0});
-    run(scene, 60);
-    CHECK(!scene.isPhysicsDormant(crate));
-    CHECK_NEAR(distance(crate.transform().position, anchor.transform().position), 2.0, 0.03);
-    CHECK_NEAR(scene.physics()->jointPosition(j.joint), 2.0f, 0.03f);
 }
 
 void prefabRemapsRefs() {
@@ -840,7 +800,6 @@ int main() {
         {"contacts: begin and end, once each", contactBeginsAndEnds},
         {"contacts: rolling across mesh triangles is one touch", meshTouchIsOne},
         {"contacts: destroying a body ends its touches", destroyingEndsTouches},
-        {"contacts: going dormant ends touches", dormancyEndsTouches},
         {"bodies: destroying a support wakes what rests on it", destroyingSupportWakes},
         {"triggers: enter and exit, no collision", triggers},
         {"collision layers: matrix, queries, runtime changes", collisionLayers},
@@ -860,7 +819,6 @@ int main() {
         {"joints: breaking", breakingJoints},
         {"joints: lifetime with bodies and components", jointLifetime},
         {"joints: far out, across a rebase", farJointsAndRebase},
-        {"joints: dormant and back", jointsAndDormancy},
         {"joints: prefab references and saving", prefabRemapsRefs},
         {"characters: walk, land, jump", characterWalks},
         {"characters: slide along walls", characterSlidesAlongWalls},

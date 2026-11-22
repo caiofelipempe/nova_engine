@@ -169,7 +169,7 @@ struct CharacterControllerComponent {
 struct PhysicsSettings {
     glm::vec3 gravity{0.0f, -9.81f, 0.0f}; ///< Gravity acceleration (m/s²).
     physics::CollisionLayers layers;       ///< Which layers collide (default: all).
-    /// @brief Display names; empty = "Layer N" (layer 0 is "Default", the last one is the world edge).
+    /// @brief Display names; empty = "Layer N" (layer 0 is "Default").
     std::array<std::string, physics::kCollisionLayerCount> layerNames;
 
     /// @brief Name to show for layer `i`.
@@ -177,7 +177,6 @@ struct PhysicsSettings {
         if (i >= physics::kCollisionLayerCount) return {};
         if (!layerNames[i].empty()) return layerNames[i];
         if (i == 0) return "Default";
-        if (i == physics::kWorldBoundaryLayer) return "World Edge";
         return "Layer " + std::to_string(i);
     }
     /// @brief Index of the layer with this name (as layerName() shows it), or −1.

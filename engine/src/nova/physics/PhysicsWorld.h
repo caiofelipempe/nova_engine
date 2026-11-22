@@ -16,8 +16,8 @@
 /// position is a GlobalPosition (exact integer), its shape is local to the body (ShapeDesc), and
 /// queries and contacts report GlobalPositions. How a backend reaches that precision is its own
 /// business:
-/// - float engines (Jolt) implement local::World and are wrapped by FloatingOriginWorld, which
-///   keeps their origin near the action (regions, rebasing, dormant bodies, barrier walls);
+/// - float engines (Jolt) implement local::World and are wrapped by TorusWorld: the whole 16 km
+///   world fits their precise range, it only adds the seam of the torus;
 /// - an engine that works in integers natively (a custom one, or a third-party one) implements
 ///   PhysicsWorld directly, without any floating origin.
 ///
@@ -49,8 +49,8 @@ struct BodyDesc {
 /// For smooth-vs-smooth contacts all normals agree; on edges and corners they differ (see the
 /// field docs). Surface normals are the face turned towards the other shape.
 struct QueryHit {
-    BodyId body;                        ///< Hit body (invalid for a world barrier edge).
-    u64 userData = 0;                   ///< BodyDesc::userData of the hit body (kWorldBoundaryUserData... for edges).
+    BodyId body;                        ///< Hit body (invalid for a character's capsule).
+    u64 userData = 0;                   ///< BodyDesc::userData of the hit body (CharacterDesc::userData for a character).
     GlobalPosition point;               ///< Contact point on the hit body.
     glm::vec3 normal{0.0f};             ///< Contact normal (separation direction), pointing towards the query.
     glm::vec3 hitSurfaceNormal{0.0f};   ///< Surface normal of the hit body at @ref point.
@@ -66,11 +66,11 @@ using SweepHit = QueryHit;   ///< Result of the PhysicsWorld::sweep family.
 ///
 /// One Began and one Ended per pair of bodies, whatever the number of sub-shapes (mesh
 /// triangles) involved. Ended events carry only the bodies and their user data (the points and
-/// normals are zero); one also comes when a body of the pair is destroyed or goes dormant.
+/// normals are zero); one also comes when a body of the pair is destroyed.
 struct ContactEvent {
     ContactEventType type = ContactEventType::Began; ///< Start or end of the touch.
     bool sensor = false;            ///< One of the bodies is a sensor (an overlap, not a collision).
-    BodyId bodyA;                   ///< First body (invalid for a world barrier edge).
+    BodyId bodyA;                   ///< First body.
     BodyId bodyB;                   ///< Second body.
     u64 userDataA = 0;              ///< BodyDesc::userData of A.
     u64 userDataB = 0;              ///< BodyDesc::userData of B.
@@ -88,26 +88,16 @@ using CharacterDesc = CharacterDescT<GlobalPosition>;
 /// @brief Character state (see CharacterStateT).
 using CharacterState = CharacterStateT<GlobalPosition>;
 
-/// @brief Where and how far the simulation runs (hints; backends may ignore what they do not need).
-struct SimulationFocus {
-    std::vector<GlobalPosition> foci; ///< Points of interest (players, camera). Empty = none.
-    /// @brief Dynamic bodies farther than this (m) from every focus may stop simulating (dormant,
-    ///        velocity kept). 0 = unlimited.
-    f64 radius = 4096.0;
-    f64 rebaseDistance = 1024.0;   ///< Floating-origin backends: move the origin when foci drift this far (m).
-    f64 barrierWallRange = 8192.0; ///< Floating-origin backends: barrier edges closer than this (m) become walls.
-};
-
 /// @brief A physics simulation in global positions: bodies, stepping, queries and contact events.
 ///
 /// All body functions take a BodyId returned by createBody(); passing a destroyed id is a
 /// programming error. Thread-safety: call from one thread (the simulation itself may be threaded).
-/// Barrier edges of the active WorldSpace are enforced by the backend; contacts and hits against
-/// them carry `kWorldBoundaryUserData` and an invalid body.
+/// The world is the 16 km torus of WorldSpace: bodies cross its seam, and everything is
+/// simulated (no regions, no dormancy).
 class PhysicsWorld : NonCopyable {
 public:
     /// @brief Creates a world with the given backend (must be compiled in, see `NOVA_PHYSICS_*`).
-    ///        Float backends come wrapped in a FloatingOriginWorld.
+    ///        Float backends come wrapped in a TorusWorld.
     static Scope<PhysicsWorld> create(Backend backend, const WorldDesc& desc = {});
     virtual ~PhysicsWorld() = default;
 
@@ -152,12 +142,11 @@ public:
     virtual void addImpulse(BodyId body, const glm::vec3& impulse) = 0;
     /// @brief Applies a torque (N·m) during the next step.
     virtual void addTorque(BodyId body, const glm::vec3& torque) = 0;
-    /// @brief False when the body is asleep, static or dormant.
+    /// @brief False when the body is asleep or static.
     virtual bool isActive(BodyId body) const = 0;
     /// @}
 
     /// @name Joints
-    /// A joint acts while both bodies simulate in the same region (it waits while one is dormant).
     /// @{
     /// @brief Connects two bodies (or a body and the world) at their current poses.
     /// @return The joint, or an invalid id if a body is invalid.
@@ -203,16 +192,14 @@ public:
     /// @brief Advances the simulation by exactly `dt` (callers should use a fixed timestep).
     virtual void step(Duration dt) = 0;
 
-    /// @name Simulation focus
+    /// @name Torus window
     /// @{
-    /// @brief Where the action is (see SimulationFocus). Called by the Scene every update.
-    virtual void setFocus(const SimulationFocus& focus) = 0;
-    /// @brief True if the body is outside the simulated area (frozen; velocity kept).
-    virtual bool isDormant(BodyId body) const { return false; }
-    /// @brief Number of independent simulation regions (1 for backends without regions).
-    virtual u32 regionCount() const { return 1; }
-    /// @brief Origin of a region's local coordinates (the world origin for global backends).
-    virtual GlobalPosition regionOrigin(u32 region) const { return {}; }
+    /// @brief Where the action is (the player or the camera): float backends keep their window of
+    ///        one lap around it, so the seam of the torus is never near it. Called every update.
+    virtual void setFocus(const GlobalPosition& focus) = 0;
+    /// @brief What the backend's float (0, 0, 0) is on the torus (the world origin for backends
+    ///        without a window).
+    virtual GlobalPosition origin() const { return {}; }
     /// @}
 
     /// @name Queries

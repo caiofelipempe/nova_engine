@@ -7,7 +7,7 @@
 
 #include <vector>
 
-/// @brief Float physics around a local origin (backend level; see FloatingOriginWorld).
+/// @brief Float physics around a local origin (backend level; see TorusWorld).
 namespace nova::physics::local {
 
 /// @brief Rigid body creation parameters.
@@ -84,8 +84,8 @@ struct JointLoad {
 /// @brief A float physics simulation around a local origin: bodies, stepping, queries, contacts.
 ///
 /// This is how float engines such as Jolt work. Positions are float meters relative to the
-/// world's own origin; FloatingOriginWorld keeps that origin near the action and converts to and
-/// from global positions. Engine and game code use PhysicsWorld, not this.
+/// world's own origin; TorusWorld keeps that origin near the action (for the seam of the torus) and
+/// converts to and from global positions. Engine and game code use PhysicsWorld, not this.
 ///
 /// All body functions take a BodyId returned by createBody(); passing a destroyed id is a
 /// programming error. Thread-safety: call from one thread (the simulation itself is multi-threaded).

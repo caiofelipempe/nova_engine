@@ -477,7 +477,6 @@ void rebase() {
     FarScene f(base);
     f.ball.get<RigidBodyComponent>().gravityFactor = 0.0f;
     f.ball.get<RigidBodyComponent>().linearDamping = 0.0f; // measure the floating origin, not damping
-    f.scene.physicsRegionRadius = 0.0; // one unlimited region: this test is about a single floating origin
     f.scene.startSimulation();
     f.scene.update(Duration::perSecond(60));
     f.scene.setLinearVelocity(f.ball, {3.0f, 0.0f, 0.0f});
@@ -485,7 +484,7 @@ void rebase() {
     const GlobalPosition before = f.ball.transform().position;
     const GlobalPosition groundBefore = f.ground.transform().position;
 
-    // The focus jumps 5 km: every body shifts, the origin follows, nothing moves in the world.
+    // The focus jumps 5 km: every body shifts, the window origin follows, nothing moves in the world.
     const GlobalPosition focus = base + glm::vec3(5000.0f, 0.0f, 0.0f);
     f.scene.setPhysicsFocus(focus);
     f.scene.update(Duration::perSecond(60));
@@ -547,75 +546,6 @@ void wrapSeam() {
     CHECK_NEAR(free.transform().position.toMeters().x, -seam + 3.0, 0.1); // 5 m on, around the torus
 }
 
-// ------------------------------------------------------------ physics regions --
-void twoRegions() {
-    // Two players 11 km apart (diagonally across the torus): each gets its own region.
-    const GlobalPosition a(-4000.0, 0.0, -4000.0);
-    const GlobalPosition b(4000.0, 0.0, 4000.0);
-    Scene scene("regions");
-    std::vector<Entity> balls;
-    for (const GlobalPosition& base : {a, b}) {
-        Entity ground = scene.createEntity("Ground");
-        ground.transform().position = base + glm::vec3(0, -0.5f, 0);
-        ground.transform().scale = {100, 1, 100};
-        ground.add<RigidBodyComponent>(BodyType::Static);
-        Entity ball = scene.createEntity("Ball");
-        ball.transform().position = base + glm::vec3(0, 2, 0);
-        ball.add<RigidBodyComponent>();
-        ball.add<SphereColliderComponent>();
-        balls.push_back(ball);
-    }
-    scene.setPhysicsFoci({a + glm::vec3(0, 2, 5), b + glm::vec3(0, 2, 5)});
-    scene.startSimulation();
-    CHECK(scene.physicsRegionCount() == 2);
-    CHECK(isWithin(scene.physicsOrigin(0), a, 10.0) && isWithin(scene.physicsOrigin(1), b, 10.0));
-    for (int i = 0; i < 180; ++i) scene.update(Duration::perSecond(60));
-    CHECK_NEAR((balls[0].transform().position - a).toMeters().y, 0.5, 0.02); // both rest on their ground
-    CHECK_NEAR((balls[1].transform().position - b).toMeters().y, 0.5, 0.02);
-    CHECK_NEAR((balls[1].transform().position - b).toMeters().x, 0.0, 1e-3);
-    // Queries go to the region around their origin.
-    auto hit = scene.raycast(b + glm::vec3(0, 10, 0), {0, -1, 0}, 50.0f);
-    CHECK(hit && hit->entity == balls[1]);
-
-    // The players meet: the regions merge into one, and nothing jumps.
-    const GlobalPosition restB = balls[1].transform().position;
-    scene.setPhysicsFoci({a + glm::vec3(0, 2, 5), a + glm::vec3(3000, 2, 5)});
-    scene.update(Duration::perSecond(60));
-    CHECK(scene.physicsRegionCount() == 1);
-    CHECK(scene.isPhysicsDormant(balls[1])); // far from both players now: frozen
-    CHECK(balls[1].transform().position == restB);
-    CHECK(!scene.isPhysicsDormant(balls[0]));
-}
-
-void dormancy() {
-    const GlobalPosition base(1000.0, 0.0, 0.0);
-    Scene scene("dormant");
-    Entity ball = scene.createEntity("Ball");
-    ball.transform().position = base;
-    auto& rb = ball.add<RigidBodyComponent>();
-    rb.gravityFactor = 0.0f;
-    rb.linearDamping = 0.0f;
-    ball.add<SphereColliderComponent>();
-    scene.setPhysicsFocus(base + glm::vec3(0, 0, 10));
-    scene.startSimulation();
-    scene.setLinearVelocity(ball, {2.0f, 0.0f, 0.0f});
-    scene.update(Duration::perSecond(60));
-
-    // The focus leaves: the ball freezes where it is, keeping its velocity...
-    scene.setPhysicsFocus(base + glm::vec3(6000.0f, 0.0f, 6000.0f));
-    scene.update(Duration::perSecond(60));
-    CHECK(scene.isPhysicsDormant(ball) && ball.get<RigidBodyComponent>().body.valid()); // same id, just not simulated
-    const GlobalPosition frozen = ball.transform().position;
-    for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
-    CHECK(ball.transform().position == frozen);
-    CHECK_NEAR(scene.linearVelocity(ball).x, 2.0f, 1e-4f);
-    // ...and resumes with it when the focus comes back.
-    scene.setPhysicsFocus(base + glm::vec3(0, 0, 10));
-    for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
-    CHECK(!scene.isPhysicsDormant(ball));
-    CHECK_NEAR((ball.transform().position - frozen).toMeters().x, 2.0, 0.05);
-}
-
 void determinism() {
     // A pile of boxes and balls, saved once and loaded twice: the two simulations must agree
     // bit for bit at every step (lockstep / replays), rebases included.
@@ -640,10 +570,9 @@ void determinism() {
     b.startSimulation();
     bool same = true;
     for (int i = 0; i < 240; ++i) {
-        if (i == 120) { // the focus jumps: both rebase at the same step
-            a.setPhysicsFocus({2000.0, 0.0, 0.0});
-            b.setPhysicsFocus({2000.0, 0.0, 0.0});
-            a.physicsRegionRadius = b.physicsRegionRadius = 0.0;
+        if (i == 120) { // the focus jumps: both recenter their window at the same step
+            a.setPhysicsFocus({3000.0, 0.0, 0.0});
+            b.setPhysicsFocus({3000.0, 0.0, 0.0});
         }
         a.update(Duration::perSecond(60));
         b.update(Duration::perSecond(60));
@@ -770,7 +699,7 @@ public:
         bool alive = true;
     };
     std::vector<Body> bodies;
-    SimulationFocus lastFocus;
+    GlobalPosition lastFocus;
     glm::vec3 g{0.0f, -10.0f, 0.0f};
 
     BodyId createBody(const BodyDesc& d) override {
@@ -821,7 +750,7 @@ public:
             b.desc.position += GlobalOffset::fromMeters(glm::dvec3(b.velocity) * dt.seconds());
         }
     }
-    void setFocus(const SimulationFocus& f) override { lastFocus = f; }
+    void setFocus(const GlobalPosition& f) override { lastFocus = f; }
     bool raycast(const GlobalPosition&, const glm::vec3&, f32, RaycastHit&, const QueryFilter&) const override { return false; }
     bool sweep(const ShapeDesc&, const GlobalPosition&, const glm::quat&, const glm::vec3&, f32, SweepHit&,
                const QueryFilter&) const override { return false; }
@@ -832,11 +761,9 @@ public:
 };
 
 void adapterRegressions() {
-    // Invalid shapes are refused up front (they used to get an id and fail later, in a region).
+    // Invalid shapes are refused up front.
     auto w = PhysicsWorld::create(Backend::Jolt);
-    SimulationFocus focus;
-    focus.foci = {GlobalPosition()};
-    w->setFocus(focus);
+    w->setFocus(GlobalPosition());
     BodyDesc bad;
     bad.shape.type = ShapeType::Sphere;
     bad.shape.radius = 0.0f;
@@ -880,7 +807,7 @@ void nativeIntegerBackend() {
     CHECK(scene.physics() == raw && raw->bodies.size() == 1);
     CHECK(raw->bodies[0].desc.position == base); // exact, no float on the way in
     CHECK(raw->bodies[0].desc.shape.type == ShapeType::Sphere && raw->bodies[0].desc.shape.radius == 0.5f); // local shape
-    CHECK(raw->lastFocus.foci.size() == 1 && raw->lastFocus.foci[0] == cam.transform().position);
+    CHECK(raw->lastFocus == cam.transform().position);
 
     for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
     // The scene's gravity (−9.81, not the backend's own −10) applies; fell g/2 · t² · (1 + 1/60)
@@ -890,7 +817,7 @@ void nativeIntegerBackend() {
     CHECK_NEAR(fallen, -9.81 / 2.0 * (61.0 / 60.0), 1e-3);
     CHECK(ball.transform().position == raw->bodies[0].desc.position);
     CHECK((ball.transform().position - base).x == 0 && (ball.transform().position - base).z == 0); // no drift sideways
-    CHECK(scene.physicsRegionCount() == 1 && scene.physicsOrigin() == GlobalPosition()); // no floating origin
+    CHECK(scene.physicsOrigin() == GlobalPosition()); // no window
 }
 
 } // namespace
@@ -921,8 +848,6 @@ int main() {
         {"floating origin: 10,000 km from the world origin", farFromOrigin},
         {"floating origin: rebase keeps positions and velocities", rebase},
         {"wrap seam: neighbours across it collide", wrapSeam},
-        {"physics regions: far-apart foci, merging", twoRegions},
-        {"physics regions: dormant bodies keep their velocity", dormancy},
         {"determinism: two runs agree bit for bit", determinism},
         {"global contract: a native integer backend plugs in directly", nativeIntegerBackend},
         {"adapter: invalid shapes refused, sweptPoint on the region origin", adapterRegressions},

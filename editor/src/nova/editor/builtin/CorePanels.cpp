@@ -327,8 +327,8 @@ void RendererPanel::onImGui(EditorContext& ctx) {
                         caps.rayTracingPipeline ? " + pipeline" : "");
     ImGui::Text("Draws %u | Tris %llu | TLAS inst %u", st.drawCalls, static_cast<unsigned long long>(st.triangles),
                 st.tlasInstances);
-    ImGui::Text("Physics: %s (%u bodies, %u regions)", ctx.scene().isSimulating() ? "Jolt, running" : "stopped",
-                ctx.scene().physicsBodyCount(), ctx.scene().physicsRegionCount());
+    ImGui::Text("Physics: %s (%u bodies)", ctx.scene().isSimulating() ? "Jolt, running" : "stopped",
+                ctx.scene().physicsBodyCount());
     ImGui::Separator();
 
     ImGui::BeginDisabled(!caps.rayQuery);
@@ -418,18 +418,11 @@ void WorldPanel::onImGui(EditorContext& ctx) {
     const glm::dvec3 cam = ctx.camera().position.toMeters();
     ImGui::Text("Camera  %s, %s, %s", readable(cam.x).c_str(), readable(cam.y).c_str(), readable(cam.z).c_str());
     if (scene.isSimulating()) {
-        for (u32 i = 0; i < scene.physicsRegionCount(); ++i) {
-            const glm::dvec3 o = scene.physicsOrigin(i).toMeters();
-            ImGui::Text("Physics region %u origin  %s, %s, %s", i, readable(o.x).c_str(), readable(o.y).c_str(),
-                        readable(o.z).c_str());
-        }
+        const glm::dvec3 o = scene.physicsOrigin().toMeters();
+        ImGui::Text("Physics origin  %s, %s, %s", readable(o.x).c_str(), readable(o.y).c_str(), readable(o.z).c_str());
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The float window of the physics follows the focus, keeping the seam away from it");
     }
-    ImGui::SetNextItemWidth(120.0f);
-    double radius = scene.physicsRegionRadius;
-    if (ImGui::InputDouble("Simulation distance (m)", &radius, 0.0, 0.0, "%.0f") && radius >= 0.0)
-        scene.physicsRegionRadius = radius;
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Dynamic bodies farther than this from every focus sleep (0 = unlimited, one region)");
 }
 
 // ----------------------------------------------------------------- console --

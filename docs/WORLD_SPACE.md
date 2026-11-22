@@ -1,11 +1,11 @@
 # Espaço do mundo: posições globais em inteiros
 
-> **Estado:** o mundo já é o **toro de 16 km em Q13.18** (etapas 1–3 da seção
+> **Estado:** o mundo já é o **toro de 16 km em Q13.18** (etapas 1–4 da seção
 > [Próxima reformulação](#próxima-reformulação-ponto-fixo-e-mundo-de-16-km-planejado)): `math/Fixed.h`
 > (lib `fpm`), `GlobalPosition`/`GlobalOffset` em `int32` com a volta pelo estouro, `WorldSpace` só com
 > constantes, sem `Integer.h`. As seções de "Modelo" a "Fases" descrevem o modelo anterior (`int64`,
-> unidade e bordas configuráveis), mantidas como histórico; a física ainda usa as regiões e a origem
-> flutuante dele até a etapa 4.
+> unidade e bordas configuráveis), mantidas como histórico. A física é o Jolt direto, pelo `TorusWorld`
+> (sem regiões, dormência nem paredes).
 
 Objetivo: mundos grandes sem perda de precisão, com escala ajustável e bordas que dão a volta ou
 são barreiras.
@@ -420,7 +420,9 @@ Para um mundo contínuo maior que 16 km, sem tela de carregamento.
 3. ✅ Posição Q13.18 circular: `GlobalPosition`, `WorldSpace`, serialização (só metros, que são exatos),
    painel World (informativo), emendas no editor, renderer, cenários (arena com paredes e a emenda do
    toro) e testes.
-4. Física direta no Jolt, saindo o `FloatingOriginWorld`.
+4. ✅ Física direta no Jolt, saindo o `FloatingOriginWorld`: `physics/backend/TorusWorld` (um mundo Jolt,
+   janela que segue o foco, volta mais próxima, juntas ao mundo recolocadas), contrato com
+   `setFocus(GlobalPosition)` e `origin()`, sem regiões, dormência nem `onWorldBoundary`.
 5. Atributos de simulação em ponto fixo, com reflexão, serialização, widgets e as APIs de física e de
    scripts.
 6. Jolt determinístico: overlay port do vcpkg com `CROSS_PLATFORM_DETERMINISTIC=ON`.

@@ -20,15 +20,6 @@ struct Collision {
     glm::vec3 otherSurfaceNormal{0.0f}; ///< Other's surface normal at `otherPoint`.
 };
 
-/// @brief A body touched an edge of the physics world (reported by backends that have edges; the
-///        16 km torus has none).
-struct WorldBoundaryHit {
-    int axis = 0;           ///< 0 = X, 1 = Y, 2 = Z.
-    int side = 0;           ///< −1 = the low edge, +1 = the high edge.
-    GlobalPosition point;   ///< Contact point on the body.
-    glm::vec3 normal{0.0f}; ///< Direction the body is pushed back into the world.
-};
-
 /// @brief Native gameplay script attached to an entity.
 ///
 /// Scripts run inside Scene::update(): onCreate() before the first onUpdate(), then onUpdate()
@@ -62,9 +53,6 @@ public:
     /// @brief This entity's JointComponent broke (it held more than its break force or torque).
     /// @param connected The entity it held (invalid for the world).
     virtual void onJointBreak(Entity /*connected*/) {}
-    /// @brief Called when this entity's rigid body touches a barrier edge of the world
-    ///        (e.g. destroy whatever falls off the map).
-    virtual void onWorldBoundary(const WorldBoundaryHit& /*hit*/) {}
 
     /// @brief The entity this script is attached to.
     Entity entity() const { return m_entity; }

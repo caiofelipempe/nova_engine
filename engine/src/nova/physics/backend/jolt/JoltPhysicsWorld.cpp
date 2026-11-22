@@ -309,9 +309,6 @@ void wakeAround(JPH::PhysicsSystem& system, const JPH::BodyID& id) {
     {
         JPH::BodyLockRead lock(system.GetBodyLockInterface(), id);
         if (!lock.Succeeded()) return;
-        // World-edge walls are kilometres wide and rebuilt right away on every rebase: waking
-        // everything near them each time would be all cost and no effect.
-        if (isWorldBoundary(lock.GetBody().GetUserData())) return;
         bounds = lock.GetBody().GetWorldSpaceBounds();
     }
     bounds.ExpandBy(JPH::Vec3::sReplicate(0.05f));

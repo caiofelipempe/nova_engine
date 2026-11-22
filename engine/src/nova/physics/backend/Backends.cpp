@@ -1,6 +1,6 @@
 // Binds the physics frontend (PhysicsWorld) to the backends compiled in.
 #include "nova/core/Log.h"
-#include "nova/physics/backend/FloatingOriginWorld.h"
+#include "nova/physics/backend/TorusWorld.h"
 
 #if NOVA_PHYSICS_JOLT
     #include "nova/physics/backend/jolt/JoltPhysicsWorld.h"
@@ -21,9 +21,9 @@ Scope<local::World> local::World::create(Backend backend, const WorldDesc& desc)
 
 Scope<PhysicsWorld> PhysicsWorld::create(Backend backend, const WorldDesc& desc) {
     switch (backend) {
-        // Float engines get a floating origin; a backend working in global positions natively
+        // Float engines get the torus window; a backend working in global positions natively
         // would be returned here directly.
-        case Backend::Jolt: return makeScope<FloatingOriginWorld>(backend, desc);
+        case Backend::Jolt: return makeScope<TorusWorld>(backend, desc);
     }
     NOVA_VERIFY(false, "Unknown physics backend");
     return nullptr;
