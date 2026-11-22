@@ -37,7 +37,7 @@ add_subdirectory(path/to/nova)          # ou a pasta deste repositório
 nova_add_app(MyGame src/main.cpp)       # linka Nova::Engine e copia os shaders
 ```
 
-O exemplo completo está em [sandbox/src/main.cpp](sandbox/src/main.cpp).
+O exemplo completo está em [sandbox/src/main.cpp](sandbox/src/main.cpp): uma bancada de testes de física (pilhas, materiais, formas, juntas, CCD, personagem, sensores e layers, bordas do mundo) com pausa, passo a passo, colliders e contatos visíveis e verificação de determinismo.
 
 **Níveis de API** — use só o que precisar:
 
@@ -56,7 +56,7 @@ Requisitos: Visual Studio 2022, CMake ≥ 3.25, Vulkan SDK (glslc), vcpkg com `V
 cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
-build\bin\Debug\Sandbox.exe
+build\bin\Debug\Sandbox.exe       # bancada de física (--check: determinismo de todos os cenários)
 ctest --preset debug              # testes headless (física, cenas, assets, shaders, espaço do mundo, tempo, cenários, input, editor, hot reload)
 doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
@@ -88,7 +88,7 @@ engine/shaders/  GLSL → SPIR-V em build-time (glslc); nova/*.glsl são headers
 editor/src/      Nova::Editor — framework de editor extensível (painéis, comandos, inspetores, plugins)
 editor/app/      NovaEditor — editor da Nova montado sobre o framework (exemplo de editor de jogo)
 editor/game/     NovaEditorGame — código do jogo de exemplo numa DLL recarregada a quente pelo editor
-sandbox/         jogo mínimo usando só a API pública
+sandbox/         bancada de testes de física usando só a API pública
 ```
 
 **Backends.** `platform::Window` e `rhi::Device` são interfaces criadas por fábricas (`Window::create(WindowBackend::Glfw)`, `Device::create(Backend::Vulkan)`). Cada backend vive na sua pasta e é ligado por opções do CMake (`NOVA_RHI_VULKAN`, `NOVA_PLATFORM_GLFW`). A janela não depende de nenhuma API gráfica (a ponte WSI do Vulkan é type-erased), então dá para adicionar SDL3 ou D3D12 sem mexer nas camadas de cima.
@@ -123,7 +123,7 @@ for (nova::u32 p = 0; p < nova::Input::playerCount(); ++p) {
 - Ações: `isActionDown / Pressed / Released`; eixos 2D combinam 4 teclas (diagonais normalizadas) e opcionalmente o mouse para o player 0, e um analógico ou o d-pad para gamepads.
 - Analógicos com **zona morta radial** reescalada (padrão 0.15) e +Y = cima; gatilhos de 0 a 1 com zona morta própria.
 - Consultas diretas por dispositivo continuam disponíveis (`isKeyPressed`, `isMouseButtonPressed`, `isGamepadButtonPressed`, `gamepadLeftStick`, `gamepadDpad`…); controles sem mapeamento (volantes, manches) via `Input::joystickState` (eixos, botões e hats crus); mapeamentos extras com `Input::addGamepadMappings`.
-- Conexões e desconexões aparecem no log; o Sandbox cria uma bola controlável para cada gamepad conectado.
+- Conexões e desconexões aparecem no log; no cenário Gamepads do Sandbox, cada gamepad conectado ganha uma bola controlável.
 
 ## Editor extensível
 
