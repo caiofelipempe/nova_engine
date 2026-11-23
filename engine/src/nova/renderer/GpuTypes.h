@@ -102,10 +102,28 @@ struct DrawIndexedCommand {
 };
 static_assert(sizeof(DrawIndexedCommand) == 20);
 
+/// @brief Parameters of a cull.comp dispatch.
+struct CullParams {
+    glm::vec4 planes[6];          ///< Frustum, normalized: inside where dot(n, p) + d >= 0.
+    glm::mat4 occlusionViewProj;  ///< The Hi-Z pyramid's view (phase 1: last frame's).
+    glm::vec4 occlusionOffset;    ///< xyz: added to the spheres for that view; w: 1 = test against the pyramid.
+    glm::uvec4 levels[16];        ///< Pyramid levels: x width, y height, z offset (floats).
+    glm::uvec4 info;              ///< x: level count.
+};
+
 /// @brief Push constants of cull.comp.
 struct CullPush {
-    u64 items, commands, visible, planes, counters;
-    u32 count, pad;
+    u64 items, commands, visible, params, counters, hiz, states;
+    u32 count;
+    u32 phase; ///< 0 frustum only; 1, 2: the two occlusion phases.
+};
+
+/// @brief Push constants of hiz.comp (one level of the pyramid).
+struct HizPush {
+    u64 hiz;
+    u32 depthTexture, fromDepth;
+    u32 srcOffset, dstOffset;
+    glm::uvec2 srcSize, dstSize;
 };
 
 /// @brief Push constants of the sky pass.

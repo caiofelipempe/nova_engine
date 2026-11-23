@@ -184,6 +184,9 @@ struct RenderSettings {
     ///        indirect draw each (needs DeviceCaps::drawIndirectFirstInstance; otherwise one draw each,
     ///        not culled).
     bool gpuCulling = true;
+    /// @brief With gpuCulling, also skip what other geometry hides: tested against a depth pyramid
+    ///        (Hi-Z) in two phases, last frame's then this frame's, so nothing pops in.
+    bool occlusionCulling = true;
     bool wireframe = false;                      ///< Draw meshes as lines (needs DeviceCaps::wireframe).
     DebugView debugView = DebugView::Lit;        ///< Debug visualization.
     Tonemapper tonemapper = Tonemapper::ACES;    ///< Tonemapping operator.
@@ -231,6 +234,7 @@ struct RenderStats {
     /// @brief Instances tested and found visible by GPU culling, as counted by the GPU a few frames
     ///        ago (read back without waiting).
     u32 gpuTested = 0, gpuVisible = 0;
+    u32 gpuOccluded = 0; ///< Of the tested, hidden by other geometry (occlusion culling).
 };
 
 /// @brief Where in the frame Renderer::addRenderPasses adds passes.
@@ -286,6 +290,14 @@ private:
     rhi::TextureHandle m_hdr;
     rhi::TextureHandle m_depth;
     rhi::TextureHandle m_output;
+    // Occlusion culling: the view's depth pyramid (float levels one after another) and the view it was made from.
+    rhi::BufferHandle m_hiz;
+    Extent2D m_hizSize{};
+    u32 m_hizLevelCount = 0;
+    std::array<glm::uvec4, 16> m_hizLevels{};
+    bool m_hizValid = false;
+    glm::mat4 m_prevViewProj{1.0f};
+    GlobalPosition m_prevOrigin;
 };
 
 /// @brief Hybrid forward renderer: rasterized PBR shading with ray-queried shadows.
@@ -474,8 +486,17 @@ private:
     rhi::PipelineHandle m_skinPipeline; // skin.comp: deformed vertices for ray tracing
     rhi::PipelineHandle m_shadowPipeline;     // depth only, for the shadow maps
     rhi::PipelineHandle m_shadowMaskPipeline; // the same, alpha-tested (cut-out casters)
-    rhi::PipelineHandle m_cullPipeline;       // cull.comp: GPU frustum culling
+    rhi::PipelineHandle m_cullPipeline;       // cull.comp: GPU frustum and occlusion culling
+    rhi::PipelineHandle m_hizPipeline;        // hiz.comp: the depth pyramid
     std::vector<rhi::BufferHandle> m_cullCounters; // per frame in flight: GPU culling statistics, read back later
+    // Per frame in flight: what GPU culling writes (draw commands, visible lists, states, counters),
+    // in the GPU's own memory: its atomics and the vertex shader's reads stay off the bus.
+    struct CullBuffer {
+        rhi::BufferHandle buffer;
+        u64 size = 0;
+    };
+    std::vector<CullBuffer> m_cullBuffers;
+    bool m_cullCountersZeroed = false; // this frame's culling counters were reset (first culling of the frame)
     bool m_cullCountersRead = false;           // this frame's were read (first render of the frame)
     // Adds the shadow map pass (the cascades, 2 × 2 in a transient atlas) and returns the atlas.
     RGTexture addShadowMapPass(RenderGraph& graph, const RenderScene& scene, gpu::FrameData& fd, u64 instances, u64 joints);

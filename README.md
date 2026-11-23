@@ -367,9 +367,15 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 - as visíveis são agrupadas por pipeline e malha, e cada grupo vira um `drawIndexedIndirect` só, com uma lista das instâncias visíveis lida pelo vertex shader (`gl_InstanceIndex`). Cem caixas iguais são um draw;
 - os transparentes (ordenados por distância), as malhas com esqueleto e as cópias cortadas por triângulo continuam no caminho de um draw por instância;
 - materiais de jogo não mudam: `nova_instance()` lê a instância que o vertex shader passa (`vInstance`);
+- **occlusion culling** (`RenderSettings::occlusionCulling`, ligado por padrão) em duas fases, para que nada apareça atrasado:
+  1. as esferas são testadas contra a pirâmide de profundidade (Hi-Z) do frame anterior de cada view, deslocadas pelo quanto a origem da câmera andou, e as que passam são desenhadas;
+  2. a pirâmide é refeita com a profundidade desse primeiro desenho (`hiz.comp`: o mais distante de cada bloco, nível por nível, num buffer);
+  3. só as rejeitadas na fase 1 são testadas de novo, e as visíveis são desenhadas num passe "Forward (late)", junto com os transparentes;
+- o que a GPU escreve (comandos, listas de visíveis, estados, contadores) fica num buffer na memória dela, e os comandos iniciais são copiados do buffer de upload;
+- as sombras não mudam: a TLAS e os shadow maps têm todos os objetos;
 - precisa de `DeviceCaps::drawIndirectFirstInstance`; sem isso, tudo é desenhado sem culling;
 - `RenderStats` traz os grupos e quantas instâncias a GPU testou e achou visíveis (lido de volta alguns frames depois, sem esperar);
-- `Sandbox --no-cull` desliga o culling para comparar.
+- `Sandbox --no-cull` desliga todo o culling e `--no-occlusion` só o de oclusão, para comparar; o cenário **Occlusion** põe um muro na frente de uma cidade de 900 blocos (das 1802 instâncias, 82 são desenhadas).
 
 `RenderStats` traz os passes executados e descartados e as texturas transitórias, e `Renderer::lastGraph()` descreve o último frame, um passe por linha. O painel **Renderer** do editor e o sandbox mostram as duas coisas. A compilação do graph não precisa de GPU e tem testes próprios (`tests/RenderGraphTests.cpp`).
 
@@ -402,6 +408,6 @@ Próximos passos (a estrutura já está preparada):
 - **Renderização circular**: feita como opção de compilação (`NOVA_WRAP_RENDER_MODES`, `RenderSettings::wrapShift` / `wrapRepeat`). Falta conferir em GPU e fazer o picking ciente das cópias.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
-- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT, render graph e culling por frustum na GPU (feitos). Próximos: occlusion culling (Hi-Z), backend D3D12.
+- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT, render graph e culling na GPU por frustum e oclusão (Hi-Z em duas fases) (feitos). Próximos: backend D3D12.
 - Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*; modelos glTF instanciados com a árvore dos nós, sob uma raiz com o nome do arquivo).
 - Animação: dos nós, skinning (com sombras e picking na pose atual), troca e mistura de clipes, máscaras por osso, eventos e escolha do clipe pelo nome no inspetor (feitos).

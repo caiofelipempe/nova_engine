@@ -114,7 +114,8 @@ void RenderView::create() {
     m_hdr = d.createTexture({m_size.width, m_size.height, 1, Renderer::kHdrFormat,
                              TextureUsage::RenderTarget | TextureUsage::Sampled, "view.hdr"});
     m_depth = d.createTexture(
-        {m_size.width, m_size.height, 1, Renderer::kDepthFormat, TextureUsage::DepthStencil, "view.depth"});
+        {m_size.width, m_size.height, 1, Renderer::kDepthFormat, TextureUsage::DepthStencil | TextureUsage::Sampled,
+         "view.depth"}); // sampled: the occlusion culling's pyramid
     if (m_withOutput)
         m_output = d.createTexture({m_size.width, m_size.height, 1, d.backbufferFormat(),
                                     TextureUsage::RenderTarget | TextureUsage::Sampled, "view.output"});
@@ -125,6 +126,9 @@ void RenderView::destroy() {
     d.destroyTexture(m_hdr);
     d.destroyTexture(m_depth);
     if (m_output) d.destroyTexture(m_output);
+    if (m_hiz) d.destroyBuffer(m_hiz);
+    m_hiz = {};
+    m_hizValid = false;
     m_hdr = m_depth = m_output = {};
 }
 
@@ -133,13 +137,14 @@ Renderer::Renderer(Device& device) : m_device(device), m_graphPool(makeScope<Ren
     createPipelines();
 
     const u32 frames = device.caps().framesInFlight;
-    BufferUsage usage = BufferUsage::Storage | BufferUsage::Indirect; // indirect: GPU-culled draws
+    BufferUsage usage = BufferUsage::Storage | BufferUsage::TransferSrc; // a source of copies: GPU culling's commands
     if (device.caps().accelerationStructures) usage |= BufferUsage::AccelStructInput;
     for (u32 i = 0; i < frames; ++i) {
         m_frameBuffers.push_back(
             device.createBuffer({kFrameBufferSize, usage, MemoryUsage::CpuToGpu, "renderer.frameUpload"}));
-        m_cullCounters.push_back(device.createBuffer({16, BufferUsage::Storage, MemoryUsage::CpuToGpu, "renderer.cullCounters"}));
+        m_cullCounters.push_back(device.createBuffer({16, BufferUsage::TransferDst, MemoryUsage::CpuToGpu, "renderer.cullCounters"}));
         std::memset(device.mappedPointer(m_cullCounters.back()), 0, 16);
+        m_cullBuffers.push_back({});
         if (device.caps().accelerationStructures)
             m_tlas.push_back(device.createTLAS({kMaxInstances, "renderer.tlas"}));
     }
@@ -159,11 +164,13 @@ Renderer::~Renderer() {
     for (TextureHandle t : m_textures) m_device.destroyTexture(t);
     for (BufferHandle b : m_frameBuffers) m_device.destroyBuffer(b);
     for (BufferHandle b : m_cullCounters) m_device.destroyBuffer(b);
+    for (CullBuffer& b : m_cullBuffers)
+        if (b.buffer) m_device.destroyBuffer(b.buffer);
     for (AccelStructHandle t : m_tlas) m_device.destroyAccelStruct(t);
     for (auto& [key, shape] : m_skinnedShapes) releaseSkinnedShape(shape);
     m_skinnedShapes.clear();
     for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline,
-                             m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline})
+                             m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline, m_hizPipeline})
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
@@ -236,6 +243,10 @@ void Renderer::createPipelines() {
         cull.compute = loadShader("cull.comp");
         cull.debugName = "pipeline.cull";
         m_cullPipeline = m_device.createComputePipeline(cull);
+        ComputePipelineDesc hiz;
+        hiz.compute = loadShader("hiz.comp");
+        hiz.debugName = "pipeline.hiz";
+        m_hizPipeline = m_device.createComputePipeline(hiz);
     }
 
     if (m_device.caps().accelerationStructures) {
@@ -461,6 +472,7 @@ void Renderer::beginFrame() {
     m_shaders.update(); // hot reload: pipelines notice the new version when next used
     m_frameOffset = 0;
     m_cullCountersRead = false;
+    m_cullCountersZeroed = false;
     m_graphPool->endFrame(); // transient textures no graph used for a while are released
     m_lastStats = m_stats; // UI code runs before rendering, so expose the previous frame's numbers
     m_stats = {};
@@ -653,7 +665,8 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         auto* counters = static_cast<u32*>(m_device.mappedPointer(m_cullCounters[m_device.frameIndex()]));
         m_stats.gpuVisible = counters[0];
         m_stats.gpuTested = counters[1];
-        counters[0] = counters[1] = 0;
+        m_stats.gpuOccluded = counters[2];
+        counters[0] = counters[1] = counters[2] = 0;
     }
 
     auto& fd = *static_cast<gpu::FrameData*>(frameAlloc.cpu);
@@ -879,7 +892,13 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         u32 mesh;
     };
     std::vector<CullGroup> cullGroups;
-    FrameAllocation cullCommands, cullItems, cullVisible, cullPlanes;
+    // Occlusion: two phases around a depth pyramid of the view (see cull.comp).
+    const bool occlusion = s.occlusionCulling && m_hizPipeline;
+    FrameAllocation cullCommands, cullItems, cullParams, cullParamsLate, cullZeros;
+    bool lateCull = false;
+    // Where the GPU writes, in this frame's cull buffer: offsets of each part.
+    BufferHandle cullBuffer{};
+    u64 cullBase = 0, commandBytes = 0, offCommandsLate = 0, offVisible = 0, offVisibleLate = 0, offStates = 0, offCounters = 0;
     if (!cullEntries.empty()) {
         std::sort(cullEntries.begin(), cullEntries.end(), [](const CullEntry& a, const CullEntry& b) {
             return a.key != b.key ? a.key < b.key : a.mesh != b.mesh ? a.mesh < b.mesh : a.instance < b.instance;
@@ -888,11 +907,36 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         for (size_t k = 0; k < cullEntries.size(); ++k)
             groups += k == 0 || cullEntries[k].key != cullEntries[k - 1].key || cullEntries[k].mesh != cullEntries[k - 1].mesh;
         const u64 n = cullEntries.size();
-        cullCommands = allocate(groups * sizeof(gpu::DrawIndexedCommand), 16);
+        commandBytes = groups * sizeof(gpu::DrawIndexedCommand);
+        cullCommands = allocate(commandBytes, 16); // their starting values, copied to the cull buffer
         cullItems = allocate(n * sizeof(gpu::CullItem), 16);
-        cullVisible = allocate(n * sizeof(u32), 16);
-        cullPlanes = allocate(6 * sizeof(glm::vec4), 16);
-        if (cullCommands.cpu && cullItems.cpu && cullVisible.cpu && cullPlanes.cpu) {
+        cullParams = allocate(sizeof(gpu::CullParams), 16);
+        cullZeros = allocate(16, 16);
+        bool ok = cullCommands.cpu && cullItems.cpu && cullParams.cpu && cullZeros.cpu;
+        if (ok && occlusion) {
+            cullParamsLate = allocate(sizeof(gpu::CullParams), 16);
+            lateCull = cullParamsLate.cpu != nullptr;
+        }
+        if (ok) {
+            std::memset(cullZeros.cpu, 0, 16);
+            // The cull buffer: [commands | late commands | visible | late visible | states | counters].
+            auto align = [](u64 v) { return (v + 15) & ~u64(15); };
+            offCommandsLate = align(commandBytes);
+            offVisible = offCommandsLate + (lateCull ? align(commandBytes) : 0);
+            offVisibleLate = align(offVisible + n * sizeof(u32));
+            offStates = offVisibleLate + (lateCull ? align(n * sizeof(u32)) : 0);
+            offCounters = offStates + (lateCull ? align(n * sizeof(u32)) : 0);
+            const u64 needed = offCounters + 16;
+            CullBuffer& cb = m_cullBuffers[m_device.frameIndex()];
+            if (cb.size < needed) {
+                if (cb.buffer) m_device.destroyBuffer(cb.buffer);
+                cb.size = std::max<u64>(needed + needed / 2, 64 * 1024);
+                cb.buffer = m_device.createBuffer({cb.size, BufferUsage::Storage | BufferUsage::Indirect | BufferUsage::TransferDst |
+                                                               BufferUsage::TransferSrc,
+                                                   MemoryUsage::GpuOnly, "renderer.cull"});
+            }
+            cullBuffer = cb.buffer;
+            cullBase = m_device.deviceAddress(cullBuffer);
             auto* commands = static_cast<gpu::DrawIndexedCommand*>(cullCommands.cpu);
             auto* items = static_cast<gpu::CullItem*>(cullItems.cpu);
             for (u32 k = 0; k < n; ++k) {
@@ -902,8 +946,10 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
                     commands[cullGroups.size()] = {m_meshes[e.mesh].indexCount, 0u, 0u, 0, k};
                     cullGroups.push_back({e.pipeline, e.mesh});
                 }
-                // The bounding sphere of the instance (camera relative, like viewProj).
-                const glm::mat4& model = instances[e.instance].model;
+                // The bounding sphere of the instance (camera relative, like viewProj), from the scene's
+                // own copy: the upload buffer is write-combined memory, very slow for the CPU to read.
+                glm::mat4 model = scene.draws[m_instances[e.instance].draw].transform;
+                model[3] += glm::vec4(m_instances[e.instance].offset, 0.0f);
                 const Bounds& b = m_meshes[e.mesh].bounds;
                 const f32 scale = std::max({glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])),
                                             glm::length(glm::vec3(model[2]))});
@@ -911,104 +957,197 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
                             static_cast<u32>(cullGroups.size() - 1), e.instance, 0u, 0u};
                 m_stats.triangles += m_meshes[e.mesh].indexCount / 3; // submitted (before culling)
             }
+            gpu::CullParams params{}; // built here, then copied (never read back from the upload buffer)
             // Frustum planes (Gribb–Hartmann, depth 0..1), normalized: inside where dot(n, p) + d >= 0.
-            auto* planes = static_cast<glm::vec4*>(cullPlanes.cpu);
             const glm::mat4 m = glm::transpose(viewProj); // rows as columns
             const glm::vec4 rows[6] = {m[3] + m[0], m[3] - m[0], m[3] + m[1], m[3] - m[1], m[2], m[3] - m[2]};
-            for (int k = 0; k < 6; ++k) planes[k] = rows[k] / std::max(glm::length(glm::vec3(rows[k])), 1e-12f);
+            for (int k = 0; k < 6; ++k) params.planes[k] = rows[k] / std::max(glm::length(glm::vec3(rows[k])), 1e-12f);
+            if (lateCull) {
+                // The view's pyramid: made (again) for its size; its contents are last frame's.
+                if (!view.m_hiz || view.m_hizSize.width != extent.width || view.m_hizSize.height != extent.height) {
+                    if (view.m_hiz) m_device.destroyBuffer(view.m_hiz);
+                    u32 w = extent.width, h = extent.height, offset = 0, count = 0;
+                    do {
+                        w = (w + 1) / 2;
+                        h = (h + 1) / 2;
+                        view.m_hizLevels[count++] = glm::uvec4(w, h, offset, 0u);
+                        offset += w * h;
+                    } while ((w > 1 || h > 1) && count < 16);
+                    view.m_hizLevelCount = count;
+                    view.m_hiz = m_device.createBuffer({u64(offset) * sizeof(f32), BufferUsage::Storage, MemoryUsage::GpuOnly, "view.hiz"});
+                    view.m_hizSize = extent;
+                    view.m_hizValid = false;
+                }
+                for (u32 l = 0; l < 16; ++l) params.levels[l] = view.m_hizLevels[l];
+                params.info = glm::uvec4(view.m_hizLevelCount, extent.width, extent.height, 0u);
+                // Phase 1: last frame's pyramid, seen as last frame saw it; the spheres moved by how
+                // far the camera's origin moved since.
+                params.occlusionViewProj = view.m_prevViewProj;
+                params.occlusionOffset = glm::vec4(glm::vec3((scene.camera.origin - view.m_prevOrigin).toMeters()),
+                                                   view.m_hizValid ? 1.0f : 0.0f);
+                // Phase 2: this frame's pyramid and view.
+                gpu::CullParams late = params;
+                late.occlusionViewProj = viewProj;
+                late.occlusionOffset = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                std::memcpy(cullParamsLate.cpu, &late, sizeof(late));
+            }
+            std::memcpy(cullParams.cpu, &params, sizeof(params));
         } else { // out of upload memory: drawn one by one, not culled
             for (const CullEntry& e : cullEntries) m_drawOrder.emplace_back(e.key, e.instance);
             cullGroups.clear();
+            lateCull = false;
         }
     }
+    const u64 hizAddress = lateCull ? m_device.deviceAddress(view.m_hiz) : 0;
+    // The counters go back to the CPU after the last culling of the view (cumulative over the frame's views).
+    const BufferHandle readback = m_cullCounters.empty() ? BufferHandle{} : m_cullCounters[m_device.frameIndex()];
     if (!cullGroups.empty()) {
-        const u64 counters = m_cullCounters.empty() ? 0 : m_device.deviceAddress(m_cullCounters[m_device.frameIndex()]);
-        const gpu::CullPush push{cullItems.gpu, cullCommands.gpu, cullVisible.gpu, cullPlanes.gpu, counters,
-                                 static_cast<u32>(cullEntries.size()), 0u};
-        graph.addPass("GPU culling").sideEffect().execute([this, push](RenderPassContext& ctx) {
+        const gpu::CullPush push{cullItems.gpu, cullBase, cullBase + offVisible, cullParams.gpu, cullBase + offCounters,
+                                 hizAddress, lateCull ? cullBase + offStates : 0, static_cast<u32>(cullEntries.size()),
+                                 lateCull ? 1u : 0u};
+        const BufferHandle upload = m_frameBuffers[m_device.frameIndex()];
+        const u64 commandsSource = cullCommands.offset, zerosSource = cullZeros.offset;
+        const bool zeroCounters = !m_cullCountersZeroed; // the frame's first culling: its counters start at 0
+        m_cullCountersZeroed = true;
+        graph.addPass("GPU culling").sideEffect().execute([=, this](RenderPassContext& ctx) {
+            ctx.cmd.globalBarrier(); // earlier uses of the cull buffer and last frame's pyramid are done
+            ctx.cmd.copyBuffer(upload, cullBuffer, commandBytes, commandsSource, 0); // instance counts 0
+            if (lateCull) ctx.cmd.copyBuffer(upload, cullBuffer, commandBytes, commandsSource, offCommandsLate);
+            if (zeroCounters) ctx.cmd.copyBuffer(upload, cullBuffer, 16, zerosSource, offCounters);
+            ctx.cmd.globalBarrier();
             ctx.cmd.bindPipeline(m_cullPipeline);
             ctx.cmd.pushConstants(push);
             ctx.cmd.dispatch((push.count + 63) / 64);
             ctx.cmd.globalBarrier(); // the commands and lists, before the draws read them
+            if (!lateCull && readback) ctx.cmd.copyBuffer(cullBuffer, readback, 16, offCounters, 0);
         });
     }
+    // The view's pyramid follows this frame from now on (or is not kept, without occlusion).
+    view.m_prevViewProj = viewProj;
+    view.m_prevOrigin = scene.camera.origin;
+    view.m_hizValid = lateCull;
+
     std::stable_sort(m_drawOrder.begin(), m_drawOrder.end(),
                      [](const auto& a, const auto& b) { return a.first < b.first; });
     std::stable_sort(seeThrough.begin(), seeThrough.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    const size_t opaqueEnd = m_drawOrder.size(); // the see-through ones after it
     for (const auto& [distance, i] : seeThrough) m_drawOrder.emplace_back(~0ull, i); // bound per draw
 
     const u64 frameAddress = frameAlloc.gpu, instancesAddress = instAlloc.gpu;
+    // The draws of the forward pass: early (sky, the groups culling kept, the other opaque draws,
+    // and the see-through ones unless a late pass follows) or late (the groups found visible by the
+    // second occlusion phase, then the see-through ones).
+    auto record = [&, frameAddress, instancesAddress, tlasAddress, jointsAddress, wireframe](CommandList& cmd, bool late) {
+        if (!late) {
+            cmd.bindPipeline(m_skyPipeline);
+            cmd.pushConstants(gpu::SkyPush{frameAddress});
+            cmd.draw(3);
+        }
+        gpu::DrawPush push{};
+        push.frame = frameAddress;
+        push.instances = instancesAddress;
+        push.tlas = tlasAddress;
+        push.debugView = static_cast<u32>(s.debugView);
+        BufferHandle boundIndex{};
+        u64 boundPipeline = ~0ull;
+        // The GPU-culled groups: one indirect draw each, of the instances the culling kept.
+        const u64 commands = late ? offCommandsLate : 0;
+        for (u32 g = 0; g < cullGroups.size(); ++g) {
+            const CullGroup& group = cullGroups[g];
+            if (group.pipeline.key() != boundPipeline) {
+                cmd.bindPipeline(group.pipeline);
+                boundPipeline = group.pipeline.key();
+            }
+            const GpuMesh& mesh = m_meshes[group.mesh];
+            if (!(mesh.indexBuffer == boundIndex)) {
+                cmd.bindIndexBuffer(mesh.indexBuffer);
+                boundIndex = mesh.indexBuffer;
+            }
+            push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
+            push.instanceIndex = 0;
+            push.indices = push.skin = push.joints = 0;
+            push.visible = cullBase + (late ? offVisibleLate : offVisible);
+            cmd.pushConstants(push);
+            cmd.drawIndexedIndirect(cullBuffer, commands + g * sizeof(gpu::DrawIndexedCommand), 1,
+                                    sizeof(gpu::DrawIndexedCommand));
+            ++m_stats.drawCalls;
+            ++m_stats.cullGroups;
+        }
+        push.visible = 0;
+        const size_t from = late ? opaqueEnd : 0, to = late || !lateCull ? m_drawOrder.size() : opaqueEnd;
+        for (size_t k = from; k < to; ++k) {
+            const auto& [pipelineKey, i] = m_drawOrder[k];
+            const WrapInstance& di = m_instances[i];
+            const DrawItem& d = scene.draws[di.draw];
+            if (pipelineKey != boundPipeline || pipelineKey == ~0ull) {
+                const u32 state = pipelineState(d.material);
+                PipelineHandle p = wireframe ? m_wireframePipeline : PipelineHandle{};
+                if (!p && d.material.shader) p = materialPipeline(d.material.shader, useRt, state);
+                if (!p) p = defaultPipeline(useRt, state);
+                if (p.key() != boundPipeline) cmd.bindPipeline(p);
+                boundPipeline = p.key();
+            }
+            const GpuMesh& mesh = m_meshes[d.mesh.id];
+            if (!(mesh.indexBuffer == boundIndex)) {
+                cmd.bindIndexBuffer(mesh.indexBuffer);
+                boundIndex = mesh.indexBuffer;
+            }
+            push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
+            push.instanceIndex = i;
+            push.indices = di.triangles ? m_device.deviceAddress(mesh.indexBuffer) : 0; // per-triangle wrap: non-indexed
+            const bool skinned = d.jointCount > 0 && mesh.skinBuffer && jointsAddress &&
+                                 d.jointOffset + d.jointCount <= scene.joints.size();
+            push.skin = skinned ? m_device.deviceAddress(mesh.skinBuffer) : 0;
+            push.joints = skinned ? jointsAddress + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
+            cmd.pushConstants(push);
+            if (di.triangles) cmd.draw(mesh.indexCount);
+            else cmd.drawIndexed(mesh.indexCount);
+            ++m_stats.drawCalls;
+            m_stats.triangles += mesh.indexCount / 3;
+        }
+    };
     {
         RenderPassBuilder forward = graph.addPass("Forward");
         forward.color(hdrTex, LoadOp::DontCare).depth(depthTex); // depth is kept for the debug lines
         if (shadowAtlas) forward.sample(shadowAtlas);
-        forward.execute([&, frameAddress, instancesAddress, tlasAddress, jointsAddress, wireframe](RenderPassContext& ctx) {
-            CommandList& cmd = ctx.cmd;
-            cmd.bindPipeline(m_skyPipeline);
-            cmd.pushConstants(gpu::SkyPush{frameAddress});
-            cmd.draw(3);
-
-            gpu::DrawPush push{};
-            push.frame = frameAddress;
-            push.instances = instancesAddress;
-            push.tlas = tlasAddress;
-            push.debugView = static_cast<u32>(s.debugView);
-            BufferHandle boundIndex{};
-            u64 boundPipeline = ~0ull;
-            // The GPU-culled groups: one indirect draw each, of the instances the culling kept.
-            const BufferHandle upload = m_frameBuffers[m_device.frameIndex()];
-            for (u32 g = 0; g < cullGroups.size(); ++g) {
-                const CullGroup& group = cullGroups[g];
-                if (group.pipeline.key() != boundPipeline) {
-                    cmd.bindPipeline(group.pipeline);
-                    boundPipeline = group.pipeline.key();
+        forward.execute([&record](RenderPassContext& ctx) { record(ctx.cmd, false); });
+    }
+    if (lateCull) {
+        // The pyramid of what the early pass drew, then the second culling phase and the late draws.
+        const std::array<glm::uvec4, 16> levels = view.m_hizLevels;
+        const u32 levelCount = view.m_hizLevelCount;
+        graph.addPass("Hi-Z").sample(depthTex).sideEffect().execute(
+            [this, depthTex, hizAddress, levels, levelCount, extent](RenderPassContext& ctx) {
+                ctx.cmd.globalBarrier(); // the first phase's reads of last frame's pyramid
+                ctx.cmd.bindPipeline(m_hizPipeline);
+                for (u32 l = 0; l < levelCount; ++l) {
+                    gpu::HizPush push{};
+                    push.hiz = hizAddress;
+                    push.depthTexture = ctx.bindlessIndex(depthTex);
+                    push.fromDepth = l == 0 ? 1u : 0u;
+                    push.srcOffset = l == 0 ? 0u : levels[l - 1].z;
+                    push.dstOffset = levels[l].z;
+                    push.srcSize = l == 0 ? glm::uvec2(extent.width, extent.height) : glm::uvec2(levels[l - 1]);
+                    push.dstSize = glm::uvec2(levels[l]);
+                    ctx.cmd.pushConstants(push);
+                    ctx.cmd.dispatch((push.dstSize.x + 7) / 8, (push.dstSize.y + 7) / 8);
+                    ctx.cmd.globalBarrier();
                 }
-                const GpuMesh& mesh = m_meshes[group.mesh];
-                if (!(mesh.indexBuffer == boundIndex)) {
-                    cmd.bindIndexBuffer(mesh.indexBuffer);
-                    boundIndex = mesh.indexBuffer;
-                }
-                push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
-                push.instanceIndex = 0;
-                push.indices = push.skin = push.joints = 0;
-                push.visible = cullVisible.gpu;
-                cmd.pushConstants(push);
-                cmd.drawIndexedIndirect(upload, cullCommands.offset + g * sizeof(gpu::DrawIndexedCommand), 1,
-                                        sizeof(gpu::DrawIndexedCommand));
-                ++m_stats.drawCalls;
-                ++m_stats.cullGroups;
-            }
-            push.visible = 0;
-            for (const auto& [pipelineKey, i] : m_drawOrder) {
-                const WrapInstance& di = m_instances[i];
-                const DrawItem& d = scene.draws[di.draw];
-                if (pipelineKey != boundPipeline || pipelineKey == ~0ull) {
-                    const u32 state = pipelineState(d.material);
-                    PipelineHandle p = wireframe ? m_wireframePipeline : PipelineHandle{};
-                    if (!p && d.material.shader) p = materialPipeline(d.material.shader, useRt, state);
-                    if (!p) p = defaultPipeline(useRt, state);
-                    if (p.key() != boundPipeline) cmd.bindPipeline(p);
-                    boundPipeline = p.key();
-                }
-                const GpuMesh& mesh = m_meshes[d.mesh.id];
-                if (!(mesh.indexBuffer == boundIndex)) {
-                    cmd.bindIndexBuffer(mesh.indexBuffer);
-                    boundIndex = mesh.indexBuffer;
-                }
-                push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
-                push.instanceIndex = i;
-                push.indices = di.triangles ? m_device.deviceAddress(mesh.indexBuffer) : 0; // per-triangle wrap: non-indexed
-                const bool skinned = d.jointCount > 0 && mesh.skinBuffer && jointsAddress &&
-                                     d.jointOffset + d.jointCount <= scene.joints.size();
-                push.skin = skinned ? m_device.deviceAddress(mesh.skinBuffer) : 0;
-                push.joints = skinned ? jointsAddress + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
-                cmd.pushConstants(push);
-                if (di.triangles) cmd.draw(mesh.indexCount);
-                else cmd.drawIndexed(mesh.indexCount);
-                ++m_stats.drawCalls;
-                m_stats.triangles += mesh.indexCount / 3;
-            }
+            });
+        const gpu::CullPush push{cullItems.gpu, cullBase + offCommandsLate, cullBase + offVisibleLate, cullParamsLate.gpu,
+                                 cullBase + offCounters, hizAddress, cullBase + offStates,
+                                 static_cast<u32>(cullEntries.size()), 2u};
+        graph.addPass("GPU culling (late)").sideEffect().execute([=, this](RenderPassContext& ctx) {
+            ctx.cmd.bindPipeline(m_cullPipeline);
+            ctx.cmd.pushConstants(push);
+            ctx.cmd.dispatch((push.count + 63) / 64);
+            ctx.cmd.globalBarrier();
+            if (readback) ctx.cmd.copyBuffer(cullBuffer, readback, 16, offCounters, 0);
         });
+        RenderPassBuilder late = graph.addPass("Forward (late)");
+        late.color(hdrTex, LoadOp::Load).depth(depthTex, LoadOp::Load);
+        if (shadowAtlas) late.sample(shadowAtlas);
+        late.execute([&record](RenderPassContext& ctx) { record(ctx.cmd, true); });
     }
     m_stats.instances += drawCount;
     {

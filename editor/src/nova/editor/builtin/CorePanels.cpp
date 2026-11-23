@@ -414,7 +414,8 @@ void RendererPanel::onImGui(EditorContext& ctx) {
                         caps.rayTracingPipeline ? " + pipeline" : "");
     ImGui::Text("Draws %u | Tris %llu | TLAS inst %u", st.drawCalls, static_cast<unsigned long long>(st.triangles),
                 st.tlasInstances);
-    ImGui::Text("GPU culling: %u groups, %u of %u instances visible", st.cullGroups, st.gpuVisible, st.gpuTested);
+    ImGui::Text("GPU culling: %u groups, %u of %u instances visible, %u hidden", st.cullGroups, st.gpuVisible,
+                st.gpuTested, st.gpuOccluded);
     ImGui::Text("Graph: %u passes (%u dropped) | %u transients in %u textures", st.graphPasses, st.graphCulled,
                 st.transientTextures, st.pooledTextures);
     if (ImGui::TreeNode("Render graph")) {
@@ -431,6 +432,8 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     ImGui::Checkbox("Shadow maps (without RT)", &s.shadowMaps);
     ImGui::BeginDisabled(!caps.drawIndirectFirstInstance);
     ImGui::Checkbox("GPU culling", &s.gpuCulling);
+    ImGui::SameLine();
+    ImGui::Checkbox("Occlusion", &s.occlusionCulling);
     ImGui::EndDisabled();
     if (s.shadowMaps) ImGui::SliderFloat("Shadow distance", &s.shadowDistance, 10.0f, 500.0f, "%.0f m");
     ImGui::BeginDisabled(!caps.wireframe);

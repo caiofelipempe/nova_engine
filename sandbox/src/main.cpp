@@ -75,6 +75,7 @@ public:
         load(first, false); // GameLayer starts the simulation after onStart()
         if (s_noRt) r.settings().rayTracedShadows = false;
         if (s_noCull) r.settings().gpuCulling = false;
+        if (s_noOcclusion) r.settings().occlusionCulling = false;
 #if NOVA_WRAP_RENDER_MODES
         if (s_wrapShift >= 0) r.settings().wrapShift = static_cast<nova::WrapShift>(s_wrapShift);
         if (s_wrapShift == 3) r.settings().wrapCrop = s_cropCamera ? nova::WrapCrop::Camera : nova::WrapCrop::World;
@@ -94,6 +95,7 @@ public:
     static inline bool s_selfCheck = false, s_checkFailed = false;
     static inline bool s_noRt = false;
     static inline bool s_noCull = false;
+    static inline bool s_noOcclusion = false;
     static inline std::string s_startScenario;              // --scenario "<name>"
     static inline int s_wrapShift = -1, s_wrapRepeat = -1; // --wrap triangle|object|split|crop|crop-camera, --laps N
     static inline bool s_cropCamera = false;
@@ -174,6 +176,8 @@ public:
         }
         ImGui::SameLine();
         ImGui::Checkbox("GPU culling", &renderer().settings().gpuCulling);
+        ImGui::SameLine();
+        ImGui::Checkbox("Occlusion", &renderer().settings().occlusionCulling);
 
         ImGui::SeparatorText("Measurements");
         if (sc.status) sc.status(scene());
@@ -182,8 +186,8 @@ public:
         ImGui::Text("State hash: %016llx", static_cast<unsigned long long>(scene().stateHash()));
         {
             const nova::RenderStats& st = renderer().stats();
-            ImGui::Text("Draws %u (%u GPU-culled groups) | GPU culling: %u of %u visible", st.drawCalls, st.cullGroups,
-                        st.gpuVisible, st.gpuTested);
+            ImGui::Text("Draws %u (%u GPU-culled groups) | GPU culling: %u of %u visible, %u hidden", st.drawCalls,
+                        st.cullGroups, st.gpuVisible, st.gpuTested, st.gpuOccluded);
             if (ImGui::TreeNode("graph", "Render graph: %u passes (%u dropped), %u transients in %u textures", st.graphPasses,
                                 st.graphCulled, st.transientTextures, st.pooledTextures)) {
                 ImGui::TextUnformatted(renderer().lastGraph().c_str());
@@ -397,9 +401,15 @@ private:
         auto run = [&](std::vector<nova::u64>& hashes) {
             nova::Scene s("Determinism check");
             sc.build(s, m_meshes);
+            // Random UUIDs renumbered in the order the entities were made (their entt ids, the same
+            // in both runs; the registry's iteration order is not guaranteed to be).
             std::unordered_map<nova::u64, nova::u64> renumber;
+            std::vector<entt::entity> made;
+            for (auto [e, id] : s.registry().view<nova::IdComponent>().each()) made.push_back(e);
+            std::sort(made.begin(), made.end(), [](entt::entity a, entt::entity b) { return entt::to_integral(a) < entt::to_integral(b); });
             nova::u64 next = 1;
-            for (auto [e, id] : s.registry().view<nova::IdComponent>().each()) {
+            for (entt::entity e : made) {
+                auto& id = s.registry().get<nova::IdComponent>(e);
                 renumber[id.uuid] = next;
                 id.uuid = next++;
             }
@@ -446,7 +456,8 @@ int main(int argc, char** argv) {
         if (arg == "--check") PhysicsBench::s_selfCheck = true;
         else if (arg == "--scenario" && hasValue) PhysicsBench::s_startScenario = argv[++i];
         else if (arg == "--no-rt") PhysicsBench::s_noRt = true;
-        else if (arg == "--no-cull") PhysicsBench::s_noCull = true; // shadow maps instead of rays
+        else if (arg == "--no-cull") PhysicsBench::s_noCull = true;
+        else if (arg == "--no-occlusion") PhysicsBench::s_noOcclusion = true; // shadow maps instead of rays
         else if (arg == "--laps" && hasValue) PhysicsBench::s_wrapRepeat = std::atoi(argv[++i]);
         else if (arg == "--wrap" && hasValue) {
             const std::string_view v = argv[++i];

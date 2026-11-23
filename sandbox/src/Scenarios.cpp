@@ -918,6 +918,34 @@ void enterTiny() {
 
 } // namespace
 
+// Occlusion culling: a street-level camera before a wall, a city of 900 blocks (and 900 balls)
+// behind it. Most of it is hidden; fly over the wall to see it come into view.
+View buildOcclusion(Scene& s, const BenchMeshes& m) {
+    sun(s);
+    visual(s, "Ground", m.plane, {0.0, 0.0, -120.0}, {260.0f, 1.0f, 260.0f}, {0.5f, 0.52f, 0.5f, 1});
+    visual(s, "Wall", m.cube, {0.0, 5.0, -8.0}, {40.0f, 10.0f, 1.0f}, {0.75f, 0.7f, 0.65f, 1});
+    unsigned seed = 7u;
+    auto random = [&seed] {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<float>(seed >> 8) / static_cast<float>(1u << 24);
+    };
+    for (int z = 0; z < 30; ++z)
+        for (int x = 0; x < 30; ++x) {
+            const float height = 4.0f + 14.0f * random();
+            const double px = (x - 14.5) * 8.0, pz = -16.0 - z * 8.0;
+            const glm::vec4 color(0.45f + 0.4f * random(), 0.45f + 0.3f * random(), 0.5f + 0.3f * random(), 1.0f);
+            visual(s, "Block", m.cube, {px, height * 0.5, pz}, {5.0f, height, 5.0f}, color);
+            visual(s, "Ball", m.sphere, {px + 3.5, 0.6, pz + 3.5}, glm::vec3(1.2f), {0.9f, 0.4f, 0.3f, 1});
+        }
+    return {{0.0, 1.7, 14.0}, {0.0, 3.0, -10.0}};
+}
+
+void statusOcclusion(Scene&) {
+    const RenderStats& st = Application::get().renderer().stats();
+    ImGui::Text("Instances culled on the GPU: %u tested, %u drawn, %u hidden by other geometry", st.gpuTested,
+                st.gpuVisible, st.gpuOccluded);
+}
+
 const std::vector<Scenario>& scenarios() {
     static const std::vector<Scenario> list = [] {
         std::vector<Scenario> v;
@@ -945,6 +973,8 @@ const std::vector<Scenario>& scenarios() {
                      buildSkinning});
         v.push_back({"Tiny circular world", "48 m on every axis: meshes cut at the seam (split, half a lap from the camera; fly to slide it), a crate stack on the Z seam.",
                      buildTiny, nullptr, nullptr, 0.0f, statusTiny, false, false, enterTiny});
+        v.push_back({"Occlusion", "A wall before a city of 900 blocks: what it hides is not drawn (occlusion culling). Fly over it.",
+                     buildOcclusion, nullptr, nullptr, 0.0f, statusOcclusion});
 
         return v;
     }();

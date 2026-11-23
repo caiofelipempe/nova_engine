@@ -1,7 +1,14 @@
 #version 460
-// GPU culling: each instance's bounding sphere against the view frustum. A visible one is added to
-// its group (a pipeline and a mesh): one more instance in the group's indirect draw command, and
-// its index in the group's part of the visible list (the vertex shader reads it by gl_InstanceIndex).
+// GPU culling: each instance's bounding sphere against the view frustum and, optionally, against a
+// Hi-Z pyramid (occlusion). A visible one is added to its group (a pipeline and a mesh): one more
+// instance in the group's indirect draw command, and its index in the group's part of the visible
+// list (the vertex shader reads it by gl_InstanceIndex).
+//
+// Occlusion runs in two phases, so nothing pops in:
+//   1. against last frame's pyramid (the spheres moved by how far the camera's origin moved): the
+//      instances that pass are drawn; those it hides are marked;
+//   2. after the pyramid is rebuilt from what phase 1 drew, the marked ones are tested again and
+//      the visible ones drawn (late).
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
@@ -20,34 +27,79 @@ struct DrawCommand { // VkDrawIndexedIndirectCommand
     int vertexOffset;
     uint firstInstance;
 };
+struct CullParams {
+    vec4 planes[6];          // frustum, normalized: inside where dot(n, p) + d >= 0
+    mat4 occlusionViewProj;  // the pyramid's view (phase 1: last frame's)
+    vec4 occlusionOffset;    // xyz: added to the spheres for that view; w: 1 = test against the pyramid
+    uvec4 levels[16];        // pyramid levels: x width, y height, z offset (floats)
+    uvec4 info;              // x level count
+};
 
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer CullItems { CullItem items[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer DrawCommands { DrawCommand items[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer VisibleList { uint items[]; };
-layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Planes { vec4 planes[6]; };
-layout(buffer_reference, std430, buffer_reference_align = 4) buffer Counters { uint visible; uint tested; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Params { CullParams p; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Counters { uint visible; uint tested; uint occluded; uint pad; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer HizBuffer { float items[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer States { uint items[]; };
 
 layout(push_constant) uniform CullPush {
     CullItems items;
     DrawCommands commands;
     VisibleList visible;
-    Planes frustum;
+    Params params;
     Counters counters; // statistics (0 = none)
+    HizBuffer hiz;     // the pyramid (0 = no occlusion culling)
+    States states;     // per item, phase 1 → 2: 0 drawn or outside the frustum, 1 hidden by last frame's pyramid
     uint count;
+    uint phase;        // 1 or 2 (occlusion); 0 = frustum only
 } pc;
+
+// True if the sphere is behind what the pyramid holds (conservative: unsure means visible).
+bool occluded(vec3 center, float radius) {
+    const CullParams P = pc.params.p;
+    vec2 lo = vec2(1e30), hi = vec2(-1e30);
+    float nearest = 1.0;
+    for (int k = 0; k < 8; ++k) {
+        const vec3 corner = center + radius * vec3((k & 1) != 0 ? 1.0 : -1.0, (k & 2) != 0 ? 1.0 : -1.0, (k & 4) != 0 ? 1.0 : -1.0);
+        const vec4 clip = P.occlusionViewProj * vec4(corner, 1.0);
+        if (clip.w <= 1e-4) return false; // reaches behind the eye
+        const vec3 ndc = clip.xyz / clip.w;
+        lo = min(lo, ndc.xy);
+        hi = max(hi, ndc.xy);
+        nearest = min(nearest, ndc.z);
+    }
+    if (nearest <= 0.0) return false; // crosses the near plane
+    const vec2 uvLo = clamp(lo * 0.5 + 0.5, 0.0, 1.0), uvHi = clamp(hi * 0.5 + 0.5, 0.0, 1.0);
+    for (uint l = 0u; l < P.info.x; ++l) {
+        const uvec2 size = P.levels[l].xy;
+        const uvec2 a = min(uvec2(uvLo * vec2(size)), size - 1u), b = min(uvec2(uvHi * vec2(size)), size - 1u);
+        if (b.x - a.x > 3u || b.y - a.y > 3u) continue; // too many texels here: a coarser level
+        float farthest = 0.0;
+        for (uint y = a.y; y <= b.y; ++y)
+            for (uint x = a.x; x <= b.x; ++x) farthest = max(farthest, pc.hiz.items[P.levels[l].z + y * size.x + x]);
+        return nearest > farthest;
+    }
+    return false;
+}
 
 void main() {
     const uint i = gl_GlobalInvocationID.x;
     if (i >= pc.count) return;
+    if (pc.phase == 2u && pc.states.items[i] == 0u) return; // drawn early, or outside the frustum
     const CullItem item = pc.items.items[i];
-    bool inside = true;
-    for (int k = 0; k < 6; ++k)
-        inside = inside && dot(pc.frustum.planes[k].xyz, item.sphere.xyz) + pc.frustum.planes[k].w >= -item.sphere.w;
-    if (uint64_t(pc.counters) != 0ul) {
-        atomicAdd(pc.counters.tested, 1u);
-        if (inside) atomicAdd(pc.counters.visible, 1u);
+    const CullParams P = pc.params.p;
+    bool visible = true;
+    if (pc.phase != 2u) {
+        for (int k = 0; k < 6; ++k) visible = visible && dot(P.planes[k].xyz, item.sphere.xyz) + P.planes[k].w >= -item.sphere.w;
+        if (uint64_t(pc.counters) != 0ul) atomicAdd(pc.counters.tested, 1u);
     }
-    if (!inside) return;
+    const bool test = visible && P.occlusionOffset.w > 0.5 && uint64_t(pc.hiz) != 0ul;
+    const bool hidden = test && occluded(item.sphere.xyz + P.occlusionOffset.xyz, item.sphere.w);
+    if (pc.phase == 1u) pc.states.items[i] = hidden ? 1u : 0u;
+    if (hidden && pc.phase == 2u && uint64_t(pc.counters) != 0ul) atomicAdd(pc.counters.occluded, 1u);
+    if (!visible || hidden) return;
+    if (uint64_t(pc.counters) != 0ul) atomicAdd(pc.counters.visible, 1u);
     const uint slot = atomicAdd(pc.commands.items[item.group].instanceCount, 1u);
     pc.visible.items[pc.commands.items[item.group].firstInstance + slot] = item.instance;
 }

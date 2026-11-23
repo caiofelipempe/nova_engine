@@ -1,0 +1,35 @@
+#version 460
+// Hi-Z pyramid for occlusion culling: each level keeps, per texel, the farthest depth of the texels
+// of the level below it covers (the first level from the depth buffer). Levels are stored one after
+// another in a float buffer; each texel covers a conservative (rounded out) range of the level below.
+#include "nova/common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer HizBuffer { float items[]; };
+
+layout(push_constant) uniform HizPush {
+    HizBuffer hiz;
+    uint depthTexture; // bindless index of the depth buffer (first level)
+    uint fromDepth;    // 1: read the depth buffer; 0: the previous level, at srcOffset
+    uint srcOffset;
+    uint dstOffset;
+    uvec2 srcSize;
+    uvec2 dstSize;
+} pc;
+
+void main() {
+    const uvec2 id = gl_GlobalInvocationID.xy;
+    if (id.x >= pc.dstSize.x || id.y >= pc.dstSize.y) return;
+    // The source texels this one covers: [floor(id·src/dst), ceil((id+1)·src/dst)).
+    const uvec2 lo = (id * pc.srcSize) / pc.dstSize;
+    const uvec2 hi = max(lo + 1u, min(((id + 1u) * pc.srcSize + pc.dstSize - 1u) / pc.dstSize, pc.srcSize));
+    float farthest = 0.0;
+    for (uint y = lo.y; y < hi.y; ++y)
+        for (uint x = lo.x; x < hi.x; ++x) {
+            const float d = pc.fromDepth != 0u ? texelFetch(g_textures[nonuniformEXT(pc.depthTexture)], ivec2(x, y), 0).r
+                                               : pc.hiz.items[pc.srcOffset + y * pc.srcSize.x + x];
+            farthest = max(farthest, d);
+        }
+    pc.hiz.items[pc.dstOffset + id.y * pc.dstSize.x + id.x] = farthest;
+}
