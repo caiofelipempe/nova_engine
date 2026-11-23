@@ -14,7 +14,6 @@ layout(location = 2) out vec2 vUV;
 #define NOVA_WRAP_SPLIT 2u
 #define NOVA_WRAP_CROP 3u
 #define NOVA_WRAP_CROP_VIEW 4u // crop in the camera's own axes (NOVA_RENDER_ORIGIN_ROTATION builds)
-#define NOVA_WRAP_SPLIT_SLAB 5u // + the slab's axis (5, 6, 7): split turning with the camera
 
 #if NOVA_RENDER_ORIGIN_ROTATION
 #define NOVA_CLIP_PLANES 6 // the lap's box (0..2) and the crop box turning with the camera (3..5)
@@ -61,17 +60,6 @@ void main() {
     const bool clipped = mode == NOVA_WRAP_SPLIT || mode == NOVA_WRAP_CROP;
     for (int i = 0; i < 3; ++i)
         gl_ClipDistance[i] = (clipped && size[i] > 0.0) ? size[i] * 0.5 - abs(world[i] - cell[i]) : 1.0;
-    // Split turning with the camera: along the world axis nearest the camera's direction the lap is
-    // a slab one lap thick, its faces square to that direction (|direction · q| within half its
-    // thickness); across it, the lap as usual. It still tiles the world: one lap along that axis
-    // for every point across.
-    if (mode >= NOVA_WRAP_SPLIT_SLAB && mode <= NOVA_WRAP_SPLIT_SLAB + 2u) {
-        const int axis = int(mode - NOVA_WRAP_SPLIT_SLAB);
-        const vec3 q = world.xyz - cell;
-        for (int i = 0; i < 3; ++i)
-            gl_ClipDistance[i] = (i != axis && size[i] > 0.0) ? size[i] * 0.5 - abs(q[i]) : 1.0;
-        gl_ClipDistance[axis] = pc.frame.data.wrapSlab.w - abs(dot(pc.frame.data.wrapSlab.xyz, q));
-    }
 #if NOVA_RENDER_ORIGIN_ROTATION
     // Crop turning with the camera: a box in its own axes (positions are camera-relative, so the
     // view matrix only turns them), cut by the lap around the camera too. As big as fits in that

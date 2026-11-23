@@ -193,25 +193,10 @@ struct RenderSettings {
     ///        the view), 1 = a whole lap a side (corners trimmed by that lap when the camera looks
     ///        along a diagonal), in between. Same cost either way (clip planes).
     f32 wrapCropViewSize = 0.0f;
-#if NOVA_RENDER_ORIGIN_ROTATION
-    /// @brief WrapShift::Split turning with the camera: along the world axis nearest the camera's
-    ///        direction the lap becomes a slab one lap thick with its faces square to the view (the
-    ///        cut ahead and behind is always perpendicular to the camera); across it, the lap's own
-    ///        faces. It still covers the world once. When another axis becomes the nearest (past 45°,
-    ///        with a little slack), the slab changes axis and the cut jumps.
-    bool wrapSplitTurnWithCamera = false;
-#endif
 #endif
 };
 
 struct WrapInstance; // WrapInstances.h
-
-/// @brief Split turning with the camera (WrapInstances.h, wrapSlab()).
-struct WrapSlab {
-    int axis = -1;               ///< World axis the slab runs along; −1 = no slab.
-    glm::vec3 normal{0.0f};      ///< The camera's direction (unit), square to the slab's faces.
-    f32 half = 0.0f;             ///< Half the slab's thickness (m): |normal[axis]| · L / 2.
-};
 
 /// @brief Counters of the last completed frame.
 struct RenderStats {
@@ -425,7 +410,6 @@ private:
     WrapShift wrapMode() const;
 #endif
     std::vector<WrapInstance> m_instances;                          // this frame's instances (WrapInstances.h), reused
-    WrapSlab m_slab;                                                // split turning with the camera, this frame
     std::vector<std::pair<u64, u32>> m_drawOrder;                   // (pipeline key, instance index), reused
     DebugDraw m_debugDraw;
 

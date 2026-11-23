@@ -5,44 +5,6 @@
 
 namespace nova {
 
-namespace {
-
-// Split turning with the camera: the copies of draw `i` (bounding sphere `center`, `radius`, from
-// the camera) that reach the lap of `cell`, a slab along options.slab.axis. Across the slab, the
-// copies one lap over where the object crosses the lap's faces; along it, every lap where the copy
-// reaches the slab (|normal · q| within its half thickness). The copy holding the object's center
-// casts the ray-traced shadow.
-void splitSlab(u32 i, const glm::vec3& center, f32 radius, const glm::vec3& cell, const glm::bvec3& across,
-               const WrapOptions& options, std::vector<WrapInstance>& out) {
-    const WrapSlab& slab = options.slab;
-    const int k = slab.axis;
-    const glm::vec3 size = options.size;
-    const f32 along = slab.normal[k] * size[k]; // normal · (one lap along the slab's axis)
-    glm::ivec3 sideLaps(0);
-    for (int a = 0; a < 3; ++a)
-        if (a != k && size[a] > 0.0f && across[a]) sideLaps[a] = 1;
-    for (int sx = -sideLaps.x; sx <= sideLaps.x; ++sx)
-        for (int sy = -sideLaps.y; sy <= sideLaps.y; ++sy)
-            for (int sz = -sideLaps.z; sz <= sideLaps.z; ++sz) {
-                const glm::vec3 side = glm::vec3(sx, sy, sz) * size;
-                const f32 s = glm::dot(slab.normal, center + side);
-                // Laps t along the slab's axis with |s + along·t| within half the slab plus the radius.
-                const f32 reach = slab.half + radius;
-                f32 lo = (-reach - s) / along, hi = (reach - s) / along;
-                if (lo > hi) std::swap(lo, hi);
-                const int first = std::max(static_cast<int>(std::ceil(lo)), -4), last = std::min(static_cast<int>(std::floor(hi)), 4);
-                const int home = static_cast<int>(std::lround(-s / along)); // the lap holding the center
-                for (int t = first; t <= last; ++t) {
-                    if (out.size() >= options.maxInstances) return;
-                    glm::vec3 offset = cell + side;
-                    offset[k] += static_cast<f32>(t) * size[k];
-                    out.push_back({i, offset, cell, false, !(t == home && side == glm::vec3(0.0f))});
-                }
-            }
-}
-
-} // namespace
-
 void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLookup& bounds,
                          const glm::mat4& viewProj, const WrapOptions& options, std::vector<WrapInstance>& out) {
     out.clear();
@@ -111,10 +73,6 @@ void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLoo
                     const bool central = kx == 0 && ky == 0 && kz == 0;
                     if (!central && !visible(center + cell, reach)) continue;
                     if (out.size() >= options.maxInstances) return;
-                    if (options.mode == WrapShift::Split && options.slab.axis >= 0) {
-                        splitSlab(i, center, radius, cell, across, options, out);
-                        continue;
-                    }
                     out.push_back({i, cell, cell, options.mode == WrapShift::Triangle && crosses});
                     if (options.mode != WrapShift::Split || !crosses) continue;
                     // The copies one lap over on the crossed axes (all of them at a corner), each
@@ -148,24 +106,6 @@ f32 viewCropHalf(const glm::mat3& view, const glm::vec3& size, f32 grow) {
     }
     if (largest <= 0.0f) return half; // not circular: nothing to fit in
     return half + std::clamp(grow, 0.0f, 1.0f) * std::max(largest - half, 0.0f);
-}
-
-WrapSlab wrapSlab(const glm::mat3& view, const glm::vec3& size, int previousAxis) {
-    const glm::vec3 forward = glm::normalize(glm::transpose(view) * glm::vec3(0.0f, 0.0f, -1.0f));
-    int best = -1;
-    for (int a = 0; a < 3; ++a)
-        if (size[a] > 0.0f && (best < 0 || std::abs(forward[a]) > std::abs(forward[best]))) best = a;
-    if (best < 0) return {};
-    int axis = best;
-    if (previousAxis >= 0 && previousAxis < 3 && size[previousAxis] > 0.0f &&
-        std::abs(forward[previousAxis]) >= 0.9f * std::abs(forward[best]))
-        axis = previousAxis; // a little slack: no flicker near 45°
-    if (std::abs(forward[axis]) < 1e-4f) return {}; // looking square across every circular axis
-    WrapSlab slab;
-    slab.axis = axis;
-    slab.normal = forward;
-    slab.half = std::abs(forward[axis]) * size[axis] * 0.5f;
-    return slab;
 }
 
 } // namespace nova

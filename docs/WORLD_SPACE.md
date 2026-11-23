@@ -559,23 +559,6 @@ Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Ba
       foi tentado e revertido: para continuar ladrilhando o mundo, a volta girada fica quase igual
       à caixa dos eixos do mundo (uns 15% mudam, perto das quinas), e o recortado custava até 27
       cópias por objeto e descarte por pixel.
-  - **`Split` girando com a câmera** (`RenderSettings::wrapSplitTurnWithCamera`, só com
-    `NOVA_RENDER_ORIGIN_ROTATION`):
-    - No eixo circular do mundo mais alinhado com a direção da câmera (o eixo k), a volta vira uma
-      fatia de uma volta de espessura, com as faces perpendiculares à vista:
-      |direção · q| ≤ |direção_k| · L / 2. Nos outros eixos, a volta continua com as faces dela.
-    - Para cada ponto, há exatamente um intervalo de uma volta ao longo de k. A fatia ainda cobre o
-      mundo uma vez só, sem buraco nem repetição. O teste confere isso ponto a ponto em 60
-      orientações.
-    - O corte da frente e o de trás ficam sempre perpendiculares à câmera, a uma distância entre
-      L/(2√3) e L/2 dela. As laterais continuam nos eixos do mundo.
-    - Continua sendo recorte por vértice, sem descarte por pixel. O mesmo plano de recorte do eixo k
-      vira o plano da fatia (`wrapSlab()`, `FrameData::wrapSlab`).
-    - Cópias: as de uma volta ao lado onde o objeto cruza as faces laterais e as voltas ao longo de
-      k que alcançam a fatia (no teste, no máximo 12 para um cubo de 6 m num mundo de 48 m).
-    - Quando outro eixo fica mais alinhado com a câmera, a fatia troca de eixo e o corte dá um
-      salto. A troca só acontece quando o novo eixo passa o atual em mais de 10% (uns 3° além dos
-      45°), para não ficar piscando.
     - A opção de CMake `NOVA_RENDER_ORIGIN_ROTATION` vem **desligada** por padrão; os presets (os
       builds do sandbox) a ligam, e o `windows-vs2022-nowrap` a desliga. Ela precisa de
       `NOVA_WRAP_RENDER_MODES`.
@@ -608,6 +591,6 @@ Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Ba
   dela) cai na própria emenda: a parte próxima termina num corte limpo e a outra é desenhada uma
   volta adiante. Voando com a câmera, o corte desliza pelos objetos, e o painel mostra onde ele
   está. No painel (com a opção ligada) escolhem-se o modo e as voltas em volta. Pela linha de
-  comando: `Sandbox --scenario "Tiny circular world" --wrap split|object|triangle|crop|crop-camera|crop-view --laps N [--crop-size 0..1] [--turn]` (`--turn`: o recortado girando com a câmera). O painel também tem o `Crop`, com a escolha entre a volta do mundo, a da câmera e a caixa que gira com a câmera (que mostra o tamanho atual dela).
+  comando: `Sandbox --scenario "Tiny circular world" --wrap split|object|triangle|crop|crop-camera|crop-view --laps N [--crop-size 0..1]`. O painel também tem o `Crop`, com a escolha entre a volta do mundo, a da câmera e a caixa que gira com a câmera (que mostra o tamanho atual dela).
 - Editor (*Game/Scenarios*): Small World (Wrap-around), Torus Seam e Tiny World (48 m). Os três
   rodam sem tela nos `ScenarioTests` (o minúsculo duas vezes, comparando o hash).

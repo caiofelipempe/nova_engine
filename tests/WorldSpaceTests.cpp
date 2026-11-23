@@ -314,50 +314,6 @@ void wrapInstances() {
     CHECK(std::abs(viewCropHalf(yaw45, cube, 0.5f) - (fits + 24.0f) / 2.0f) < 1e-3f);
     CHECK(std::abs(viewCropHalf(glm::mat3(1.0f), cube, 1.0f) - 24.0f) < 1e-4f);
     CHECK(viewCropHalf(yaw45, glm::vec3(0.0f), 1.0f) > 1e20f); // not circular: no crop
-    // Split turning with the camera: along the circular axis nearest the camera's direction, a slab
-    // one lap thick, square to that direction. Looking along −Z: the slab runs along Z, 24 m each way.
-    WrapSlab slab = wrapSlab(glm::mat3(1.0f), cube, -1);
-    CHECK(slab.axis == 2 && std::abs(slab.half - 24.0f) < 1e-4f);
-    // Turned 40° around Y it still runs along Z; past 45° only once beyond the slack.
-    const auto yawed = [](f32 deg) { return glm::transpose(glm::mat3_cast(glm::angleAxis(glm::radians(deg), glm::vec3(0, 1, 0)))); };
-    CHECK(wrapSlab(yawed(40.0f), cube, -1).axis == 2);
-    CHECK(wrapSlab(yawed(47.0f), cube, 2).axis == 2); // within the slack: kept
-    CHECK(wrapSlab(yawed(47.0f), cube, -1).axis == 0);
-    CHECK(wrapSlab(yawed(55.0f), cube, 2).axis == 0);
-    // Every point of an object across the seams is drawn by exactly one of its copies, whatever the
-    // turn: the slab laps cover the world once.
-    WrapOptions split;
-    split.size = cube;
-    split.mode = WrapShift::Split;
-    bool once = true;
-    size_t most = 0;
-    for (int k = 0; k < 60; ++k) {
-        const glm::vec3 axis = glm::normalize(glm::vec3(std::sin(k * 0.8f), std::cos(k * 1.9f) + 0.3f, std::sin(k * 1.4f)));
-        const glm::mat3 view = glm::mat3_cast(glm::angleAxis(k * 0.61f, axis));
-        split.slab = wrapSlab(view, cube, -1);
-        const glm::vec3 c(std::sin(k * 2.7f) * 22.0f, std::cos(k * 0.9f) * 22.0f, std::sin(k * 1.3f) * 22.0f);
-        DrawItem d = at(c);
-        d.transform = glm::scale(d.transform, glm::vec3(6.0f)); // a 6 m cube: bounding sphere 5.2 m
-        expandWrapInstances({d}, lookup, viewProj, split, out);
-        most = std::max(most, out.size());
-        u32 shadows = 0;
-        for (const WrapInstance& w : out) shadows += !w.splitCopy;
-        once &= shadows == 1;
-        for (int p = 0; p < 64; ++p) { // points of the cube
-            const glm::vec3 local(std::sin(p * 1.7f) * 2.9f, std::cos(p * 2.3f) * 2.9f, std::sin(p * 0.7f) * 2.9f);
-            int shown = 0;
-            for (const WrapInstance& w : out) {
-                const glm::vec3 q = c + local + w.offset - w.cell; // from the lap's center, as drawn
-                bool in = std::abs(glm::dot(split.slab.normal, q)) <= split.slab.half;
-                for (int a = 0; a < 3; ++a)
-                    if (a != split.slab.axis) in = in && std::abs(q[a]) <= 24.0f;
-                shown += in;
-            }
-            once &= shown == 1;
-        }
-    }
-    std::printf("  split turning with the camera: at most %zu copies of a 6 m cube\n", most);
-    CHECK(once);
     const glm::mat3 pitch45 = glm::mat3_cast(glm::angleAxis(glm::radians(45.0f), glm::vec3(1, 0, 0)));
     CHECK(std::abs(viewCropHalf(pitch45, {48.0f, 0.0f, 48.0f}) - 24.0f / std::sqrt(2.0f)) < 1e-3f);
     // Not circular: nothing changes, whatever the mode.

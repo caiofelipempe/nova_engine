@@ -35,7 +35,6 @@ struct FrameData {
     vec4 groundColor;
     vec4 originTiled;   // xyz = frame origin modulo NOVA_WORLD_TILE, w = NOVA_WORLD_TILE
     vec4 wrapSize;      // xyz = size of the circular world per axis (m), w = wrap mode (NOVA_WRAP_RENDER_MODES)
-    vec4 wrapSlab;      // split turning with the camera: xyz = the camera's direction, w = half the slab's thickness (m)
     uint pointLightCount;
     uint flags;
     float shadowBias;
