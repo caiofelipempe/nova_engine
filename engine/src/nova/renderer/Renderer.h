@@ -197,6 +197,13 @@ struct RenderSettings {
     DebugView debugView = DebugView::Lit;        ///< Debug visualization.
     Tonemapper tonemapper = Tonemapper::ACES;    ///< Tonemapping operator.
     f32 exposure = 1.0f;                         ///< Linear exposure multiplier applied before tonemapping.
+    /// @brief Bloom: light bleeding around bright things, from a chain of ever smaller blurred
+    ///        copies of the HDR image, mixed in before the tonemap.
+    bool bloom = true;
+    f32 bloomStrength = 0.04f;   ///< How much of the blurred image is mixed in (0..1).
+    f32 bloomThreshold = 0.0f;   ///< Brightness where blooming starts (0: everything blooms, physically).
+    f32 bloomRadius = 1.0f;      ///< Size of the blur at each level (texels).
+    u32 bloomLevels = 6;         ///< Levels of the chain (each half the size of the previous).
     f32 shadowBias = 0.02f;                      ///< Shadow ray origin offset along the normal (world units).
     f32 ambientIntensity = 0.3f;                 ///< Strength of the hemisphere ambient light.
     glm::vec3 skyZenith{0.22f, 0.42f, 0.85f};    ///< Sky color straight up (also the ambient's upper color).
@@ -495,6 +502,7 @@ private:
     rhi::PipelineHandle m_shadowMaskPipeline; // the same, alpha-tested (cut-out casters)
     rhi::PipelineHandle m_cullPipeline;       // cull.comp: GPU frustum and occlusion culling
     rhi::PipelineHandle m_hizPipeline;        // hiz.comp: the depth pyramid
+    rhi::PipelineHandle m_bloomPipeline;      // bloom.frag (HDR targets)
     std::vector<rhi::BufferHandle> m_cullCounters; // per frame in flight: GPU culling statistics, read back later
     // Per frame in flight: what GPU culling writes (draw commands, visible lists, states, counters),
     // in the GPU's own memory: its atomics and the vertex shader's reads stay off the bus.

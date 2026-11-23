@@ -7,6 +7,8 @@ layout(push_constant) uniform TonemapPush {
     uint hdrTexture;
     float exposure;
     uint tonemapper; // 0 ACES (fitted), 1 Reinhard, 2 none
+    uint bloomTexture; // ~0u = no bloom
+    float bloomStrength;
 } pc;
 
 layout(location = 0) in vec2 vUV;
@@ -18,7 +20,13 @@ vec3 acesFitted(vec3 x) {
 }
 
 void main() {
-    vec3 hdr = texture(g_textures[nonuniformEXT(pc.hdrTexture)], vUV).rgb * pc.exposure;
+    vec3 hdr = texture(g_textures[nonuniformEXT(pc.hdrTexture)], vUV).rgb;
+    if (pc.bloomTexture != 0xFFFFFFFFu) { // the bloom (half size, filtered), clamped: the sampler repeats
+        const vec2 half_texel = 0.5 / vec2(textureSize(g_textures[nonuniformEXT(pc.bloomTexture)], 0));
+        const vec3 bloom = textureLod(g_textures[nonuniformEXT(pc.bloomTexture)], clamp(vUV, half_texel, 1.0 - half_texel), 0.0).rgb;
+        hdr = mix(hdr, bloom, pc.bloomStrength);
+    }
+    hdr *= pc.exposure;
     vec3 c;
     if (pc.tonemapper == 0u) c = acesFitted(hdr);
     else if (pc.tonemapper == 1u) c = hdr / (1.0 + hdr);

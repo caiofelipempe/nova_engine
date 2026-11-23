@@ -151,6 +151,16 @@ struct TonemapPush {
     u32 hdrTexture; ///< Bindless index of the HDR color target.
     f32 exposure;   ///< Exposure multiplier.
     u32 tonemapper; ///< Tonemapper value.
+    u32 bloomTexture = ~0u; ///< Bindless index of the bloom image (~0u: none).
+    f32 bloomStrength = 0.0f; ///< How much of it is mixed in.
+};
+
+/// @brief Push constants of bloom.frag.
+struct BloomPush {
+    u32 source, lower, mode; ///< mode: 0 first downsample, 1 downsample, 2 upsample.
+    f32 threshold;
+    glm::vec2 texel;
+    f32 radius, knee;
 };
 
 } // namespace nova::gpu

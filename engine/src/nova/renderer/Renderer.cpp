@@ -170,7 +170,7 @@ Renderer::~Renderer() {
     for (auto& [key, shape] : m_skinnedShapes) releaseSkinnedShape(shape);
     m_skinnedShapes.clear();
     for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline,
-                             m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline, m_hizPipeline})
+                             m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline, m_hizPipeline, m_bloomPipeline})
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
@@ -236,6 +236,18 @@ void Renderer::createPipelines() {
         shadow.fragment = loadShader("shadow.frag"); // cut-out casters: discarded where transparent
         shadow.debugName = "pipeline.shadow.mask";
         m_shadowMaskPipeline = m_device.createGraphicsPipeline(shadow);
+    }
+
+    { // bloom: fullscreen passes between HDR images
+        GraphicsPipelineDesc bloom;
+        bloom.vertex = m_fullscreenVS;
+        bloom.fragment = loadShader("bloom.frag");
+        bloom.colorFormats = {kHdrFormat};
+        bloom.cullMode = CullMode::None;
+        bloom.depthTest = false;
+        bloom.depthWrite = false;
+        bloom.debugName = "pipeline.bloom";
+        m_bloomPipeline = m_device.createGraphicsPipeline(bloom);
     }
 
     { // GPU frustum culling
@@ -1279,18 +1291,66 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     }
     runGraphCallbacks(RenderStage::BeforeTonemap, frame);
 
+    // ---- bloom: down a chain of half-size images, then back up adding each level (transients)
+    RGTexture bloomTex;
+    if (s.bloom && s.bloomStrength > 0.0f && m_bloomPipeline) {
+        std::vector<RGTexture> down;
+        std::vector<Extent2D> sizes;
+        u32 w = extent.width, h = extent.height;
+        for (u32 l = 0; l < std::clamp(s.bloomLevels, 1u, 10u) && w >= 4 && h >= 4; ++l) {
+            w = std::max(1u, w / 2);
+            h = std::max(1u, h / 2);
+            sizes.push_back({w, h});
+            down.push_back(graph.create({w, h, kHdrFormat, "bloom down"}));
+        }
+        const PipelineHandle bloom = m_bloomPipeline;
+        auto pass = [&](const char* name, RGTexture target, RGTexture source, RGTexture lower, u32 mode, glm::vec2 texel) {
+            RenderPassBuilder b = graph.addPass(name);
+            b.sample(source);
+            if (lower) b.sample(lower);
+            const f32 threshold = s.bloomThreshold, radius = s.bloomRadius;
+            b.color(target, LoadOp::DontCare).execute([=](RenderPassContext& ctx) {
+                ctx.cmd.bindPipeline(bloom);
+                ctx.cmd.pushConstants(gpu::BloomPush{ctx.bindlessIndex(source), lower ? ctx.bindlessIndex(lower) : 0u, mode,
+                                                     threshold, texel, radius, 0.5f});
+                ctx.cmd.draw(3);
+            });
+        };
+        if (!down.empty()) {
+            RGTexture source = frame.color;
+            Extent2D sourceSize = extent;
+            for (size_t l = 0; l < down.size(); ++l) {
+                pass("Bloom down", down[l], source, RGTexture{}, l == 0 ? 0u : 1u,
+                     glm::vec2(1.0f / f32(sourceSize.width), 1.0f / f32(sourceSize.height)));
+                source = down[l];
+                sourceSize = sizes[l];
+            }
+            RGTexture up = down.back();
+            for (size_t l = down.size() - 1; l-- > 0;) {
+                const RGTexture next = graph.create({sizes[l].width, sizes[l].height, kHdrFormat, "bloom up"});
+                pass("Bloom up", next, down[l], up, 2u,
+                     glm::vec2(1.0f / f32(sizes[l + 1].width), 1.0f / f32(sizes[l + 1].height)));
+                up = next;
+            }
+            bloomTex = up;
+        }
+    }
+
     // ---- tonemap
     {
         const RGTexture source = frame.color;
         const PipelineHandle tonemap = tonemapPipeline(m_device.backbufferFormat());
-        const f32 exposure = s.exposure;
+        const f32 exposure = s.exposure, bloomStrength = std::clamp(s.bloomStrength, 0.0f, 1.0f);
         const u32 op = static_cast<u32>(s.tonemapper);
-        graph.addPass("Tonemap").sample(source).color(outputTex, LoadOp::DontCare).execute(
-            [tonemap, source, exposure, op](RenderPassContext& ctx) {
-                ctx.cmd.bindPipeline(tonemap);
-                ctx.cmd.pushConstants(gpu::TonemapPush{ctx.bindlessIndex(source), exposure, op});
-                ctx.cmd.draw(3);
-            });
+        RenderPassBuilder tm = graph.addPass("Tonemap");
+        tm.sample(source);
+        if (bloomTex) tm.sample(bloomTex);
+        tm.color(outputTex, LoadOp::DontCare).execute([tonemap, source, exposure, op, bloomTex, bloomStrength](RenderPassContext& ctx) {
+            ctx.cmd.bindPipeline(tonemap);
+            ctx.cmd.pushConstants(gpu::TonemapPush{ctx.bindlessIndex(source), exposure, op,
+                                                   bloomTex ? ctx.bindlessIndex(bloomTex) : ~0u, bloomTex ? bloomStrength : 0.0f});
+            ctx.cmd.draw(3);
+        });
     }
     frame.color = outputTex;
     runGraphCallbacks(RenderStage::AfterTonemap, frame);

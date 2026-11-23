@@ -377,6 +377,12 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 - `RenderStats` traz os grupos e quantas instâncias a GPU testou e achou visíveis (lido de volta alguns frames depois, sem esperar);
 - `Sandbox --no-cull` desliga todo o culling e `--no-occlusion` só o de oclusão, para comparar; o cenário **Occlusion** põe um muro na frente de uma cidade de 900 blocos (das 1802 instâncias, 82 são desenhadas).
 
+**Bloom** (`RenderSettings::bloom`, ligado por padrão), como no Call of Duty: Advanced Warfare (Jimenez):
+- uma cadeia de imagens de metade do tamanho (`bloomLevels`, 6), cada uma com um filtro de 13 amostras da anterior; a primeira usa a média de Karis, para que pixels isolados muito brilhantes não pisquem;
+- a volta para cima soma, em cada nível, um filtro tenda 3×3 do nível menor (`bloomRadius`);
+- o resultado é misturado ao HDR no tonemap (`bloomStrength`, padrão 0,04). Sem limiar, tudo brilha um pouco, como numa lente real; `bloomThreshold` > 0 limita o efeito ao que passa desse brilho, com transição suave;
+- todas as imagens são transitórias do render graph, e o painel Renderer do editor tem os controles. `Sandbox --no-bloom` desliga para comparar.
+
 `RenderStats` traz os passes executados e descartados e as texturas transitórias, e `Renderer::lastGraph()` descreve o último frame, um passe por linha. O painel **Renderer** do editor e o sandbox mostram as duas coisas. A compilação do graph não precisa de GPU e tem testes próprios (`tests/RenderGraphTests.cpp`).
 
 ## Ray tracing

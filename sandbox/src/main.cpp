@@ -76,6 +76,7 @@ public:
         if (s_noRt) r.settings().rayTracedShadows = false;
         if (s_noCull) r.settings().gpuCulling = false;
         if (s_noOcclusion) r.settings().occlusionCulling = false;
+        if (s_noBloom) r.settings().bloom = false;
 #if NOVA_WRAP_RENDER_MODES
         if (s_wrapShift >= 0) r.settings().wrapShift = static_cast<nova::WrapShift>(s_wrapShift);
         if (s_wrapShift == 3) r.settings().wrapCrop = s_cropCamera ? nova::WrapCrop::Camera : nova::WrapCrop::World;
@@ -96,6 +97,7 @@ public:
     static inline bool s_noRt = false;
     static inline bool s_noCull = false;
     static inline bool s_noOcclusion = false;
+    static inline bool s_noBloom = false;
     static inline std::string s_startScenario;              // --scenario "<name>"
     static inline int s_wrapShift = -1, s_wrapRepeat = -1; // --wrap triangle|object|split|crop|crop-camera, --laps N
     static inline bool s_cropCamera = false;
@@ -457,7 +459,8 @@ int main(int argc, char** argv) {
         else if (arg == "--scenario" && hasValue) PhysicsBench::s_startScenario = argv[++i];
         else if (arg == "--no-rt") PhysicsBench::s_noRt = true;
         else if (arg == "--no-cull") PhysicsBench::s_noCull = true;
-        else if (arg == "--no-occlusion") PhysicsBench::s_noOcclusion = true; // shadow maps instead of rays
+        else if (arg == "--no-occlusion") PhysicsBench::s_noOcclusion = true;
+        else if (arg == "--no-bloom") PhysicsBench::s_noBloom = true; // shadow maps instead of rays
         else if (arg == "--laps" && hasValue) PhysicsBench::s_wrapRepeat = std::atoi(argv[++i]);
         else if (arg == "--wrap" && hasValue) {
             const std::string_view v = argv[++i];

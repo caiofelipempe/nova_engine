@@ -454,6 +454,15 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     int tm = static_cast<int>(s.tonemapper);
     if (ImGui::Combo("Tonemapper", &tm, tms, 3)) s.tonemapper = static_cast<Tonemapper>(tm);
     ImGui::SliderFloat("Exposure", &s.exposure, 0.05f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+    if (ImGui::TreeNode("Bloom")) {
+        ImGui::Checkbox("Enabled", &s.bloom);
+        ImGui::SliderFloat("Strength", &s.bloomStrength, 0.0f, 0.5f, "%.3f");
+        ImGui::SliderFloat("Threshold", &s.bloomThreshold, 0.0f, 10.0f, "%.2f");
+        ImGui::SliderFloat("Radius", &s.bloomRadius, 0.25f, 4.0f, "%.2f");
+        int levels = static_cast<int>(s.bloomLevels);
+        if (ImGui::SliderInt("Levels", &levels, 1, 10)) s.bloomLevels = static_cast<u32>(levels);
+        ImGui::TreePop();
+    }
     ImGui::SliderFloat("Shadow bias", &s.shadowBias, 0.0f, 0.2f, "%.3f");
     if (ImGui::TreeNode("Sky & ambient")) {
         ImGui::ColorEdit3("Zenith", glm::value_ptr(s.skyZenith));
