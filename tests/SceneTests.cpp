@@ -424,6 +424,135 @@ void uuids() {
     CHECK(!s.findEntityByUuid(0).valid() && !s.findEntityByUuid(12345).valid());
 }
 
+bool near(const GlobalPosition& p, glm::dvec3 m, f64 eps = 1e-4) { return glm::length((p - GlobalPosition(m)).toMeters()) < eps; }
+
+void hierarchy() {
+    Scene scene{"tree"};
+    Entity car = scene.createEntity("Car");
+    car.transform().position = {10, 0, 0};
+    Entity wheel = scene.createEntity("Wheel");
+    wheel.transform().position = {12, 0, 1};
+    Entity bolt = scene.createEntity("Bolt");
+    bolt.transform().position = {12, 0, 2};
+
+    // Parenting keeps the pose in the world.
+    CHECK(wheel.setParent(car) && bolt.setParent(wheel));
+    CHECK(near(wheel.transform().position, {12, 0, 1}) && wheel.parent() == car && bolt.parent() == wheel);
+    CHECK(car.children().size() == 1 && car.children()[0] == wheel && !car.parent().valid());
+    CHECK(scene.descendantsOf(car).size() == 2 && scene.descendantsOf(car)[1] == bolt);
+    // No loops: a parent cannot become the child of its descendant (nor of itself).
+    CHECK(!car.setParent(bolt) && !car.setParent(car) && !car.parent().valid());
+
+    // The parent moves, turns and scales: the children follow, keeping their offsets.
+    car.transform().position = {20, 0, 0};
+    scene.updateTransforms();
+    CHECK(near(wheel.transform().position, {22, 0, 1}) && near(bolt.transform().position, {22, 0, 2}));
+    car.transform().setRotation(glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 1, 0))); // +X turns to −Z
+    scene.updateTransforms();
+    CHECK(near(wheel.transform().position, {21, 0, -2}, 1e-3));
+    CHECK(std::abs(glm::dot(wheel.transform().orientation(), car.transform().orientation())) > 0.9999f);
+    car.transform().scale = glm::vec3(2.0f);
+    scene.updateTransforms();
+    CHECK(near(wheel.transform().position, {22, 0, -4}, 1e-3) && std::abs(wheel.transform().scaleF().x - 2.0f) < 1e-4f);
+    CHECK(near(bolt.transform().position, {24, 0, -4}, 1e-3)); // its offset from the wheel, scaled too
+
+    // Offsets: read and set in the parent's frame (before its scale).
+    const LocalTransform local = scene.localTransform(wheel);
+    CHECK(glm::length(local.position - glm::dvec3(2, 0, 1)) < 1e-6 && glm::length(local.scale - glm::dvec3(1.0)) < 1e-6);
+    scene.setLocalTransform(wheel, {glm::dvec3(0, 1, 0), glm::dquat(1, 0, 0, 0), glm::dvec3(1.0)});
+    CHECK(near(wheel.transform().position, {20, 2, 0}, 1e-3));
+
+    // Moved on its own (a script, the gizmo): it keeps the new pose, and its offset from there.
+    car.transform().scale = glm::vec3(1.0f);
+    car.transform().setRotation(glm::quat(1, 0, 0, 0));
+    scene.updateTransforms();
+    wheel.transform().position = {25, 0, 0};
+    scene.updateTransforms();
+    CHECK(near(wheel.transform().position, {25, 0, 0}));
+    car.transform().position = {30, 0, 0};
+    scene.updateTransforms();
+    CHECK(near(wheel.transform().position, {35, 0, 0}));
+
+    // A still hierarchy stays bit for bit where it is (nothing is recomputed).
+    const GlobalPosition still = bolt.transform().position;
+    for (int i = 0; i < 5; ++i) scene.updateTransforms();
+    CHECK(bolt.transform().position == still);
+
+    // update() keeps them in step after scripts and built-in systems: a turning parent swings them.
+    Entity hub = scene.createEntity("Hub");
+    hub.add<RotatorComponent>(glm::vec3(0, 1, 0), glm::half_pi<f32>()); // 90°/s
+    Entity arm = scene.createEntity("Arm");
+    arm.transform().position = {1, 0, 0};
+    arm.setParent(hub);
+    scene.update(Duration::fromSeconds(1.0));
+    CHECK(near(arm.transform().position, {0, 0, -1}, 1e-3));
+
+    // Across the seam of a small world: the offset goes the short way.
+    {
+        Scene small;
+        small.setWorldSize(WorldSize::cube(20.0));
+        Entity p = small.createEntity("P");
+        p.transform().position = {9, 0, 0};
+        Entity c = small.createEntity("C");
+        c.transform().position = {-9, 0, 0}; // 2 m past the seam from P
+        c.setParent(p);
+        CHECK(glm::length(small.localTransform(c).position - glm::dvec3(2, 0, 0)) < 1e-6);
+        p.transform().position = {8, 0, 0};
+        small.updateTransforms();
+        CHECK(c.transform().position == GlobalPosition(10, 0, 0)); // ≡ −10
+        WorldSize::setActive({});
+    }
+
+    // Saved: only the reference; after loading the children follow again.
+    const std::string json = serializeScene(scene);
+    Scene loaded;
+    CHECK(deserializeScene(loaded, json));
+    Entity car2 = loaded.findEntity("Car"), wheel2 = loaded.findEntity("Wheel");
+    CHECK(wheel2.parent() == car2 && wheel2.transform().position == wheel.transform().position);
+    const glm::dvec3 boltBefore = loaded.findEntity("Bolt").transform().position.toMeters();
+    car2.transform().position = {40, 0, 0};
+    loaded.updateTransforms();
+    CHECK(near(wheel2.transform().position, {45, 0, 0}));
+    CHECK(near(loaded.findEntity("Bolt").transform().position, boltBefore + glm::dvec3(10, 0, 0), 1e-3)); // the grandchild too
+
+    // Duplicating copies the whole subtree; the copied children follow the copy.
+    const size_t before = scene.registry().view<IdComponent>().size();
+    Entity carCopy = duplicateEntity(car);
+    CHECK(scene.registry().view<IdComponent>().size() == before + 3);
+    CHECK(carCopy.children().size() == 1 && carCopy.children()[0] != wheel && carCopy.children()[0].children().size() == 1);
+    CHECK(car.children().size() == 1 && car.children()[0] == wheel); // the original is untouched
+    Entity wheelCopy = duplicateEntity(wheel); // a child's copy is a sibling: same parent
+    CHECK(wheelCopy.parent() == car && wheelCopy.children().size() == 1);
+
+    // A prefab takes the descendants along; a parent left out is forgotten.
+    const std::string prefab = serializePrefab({car});
+    Scene other;
+    auto made = instantiatePrefab(other, prefab, GlobalPosition(100, 0, 0));
+    CHECK(made.size() == 3 + 2); // car, wheel, bolt, and the copy of the wheel with its bolt
+    Entity root = made[0];
+    CHECK(!root.parent().valid() && root.children().size() == 2);
+    root.transform().position = {110, 0, 0};
+    other.updateTransforms();
+    CHECK(near(other.findEntity("Wheel").transform().position, {115, 0, 0}));
+    auto lone = instantiatePrefab(other, serializePrefab({wheel}), GlobalPosition(0, 0, 0));
+    CHECK(lone.size() == 2 && !lone[0].parent().valid() && lone[1].parent() == lone[0]);
+
+    // Destroying a parent takes its descendants along.
+    scene.destroyEntity(car);
+    CHECK(!car.valid() && !wheel.valid() && !bolt.valid() && !wheelCopy.valid() && carCopy.valid());
+
+    // The inspector sets the reference directly: the entity keeps its pose in the world.
+    Entity a = scene.createEntity("A"), b = scene.createEntity("B");
+    a.transform().position = {1, 2, 3};
+    b.transform().position = {5, 5, 5};
+    b.add<ParentComponent>().parent = Scene::refOf(a);
+    scene.updateTransforms();
+    CHECK(near(b.transform().position, {5, 5, 5}) && b.parent() == a);
+    a.transform().position = {2, 2, 3};
+    scene.updateTransforms();
+    CHECK(near(b.transform().position, {6, 5, 5}));
+}
+
 } // namespace
 
 int main() {
@@ -444,6 +573,7 @@ int main() {
         {"debug draw", debugDraw},
         {"entity restore in place", entityRestoreInPlace},
         {"uuids", uuids},
+        {"hierarchy: follow, offsets, loops, saving, duplicate, prefabs, destroy", hierarchy},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

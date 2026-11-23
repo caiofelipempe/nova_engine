@@ -73,7 +73,8 @@ std::string serializeEntity(Entity entity, const SerializeOptions& options = {})
 Entity restoreEntity(Scene& scene, std::string_view json, const SerializeOptions& options = {});
 
 /// @brief Writes entities as a prefab (`"format": "nova.prefab"`): same entity format as scenes,
-///        without UUIDs, positions relative to the first entity.
+///        without UUIDs, positions relative to the first entity. Their descendants go with them; a
+///        parent left out is forgotten (that entity is a root of the prefab).
 std::string serializePrefab(const std::vector<Entity>& entities, const SerializeOptions& options = {});
 
 /// @brief Creates the entities of a prefab (new UUIDs), with the first one at `position`.
@@ -84,8 +85,10 @@ std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const
 /// @brief Scene name for a file: `levels/forest.scene.json` → `forest`.
 std::string sceneNameFromPath(const std::filesystem::path& path);
 
-/// @brief Copies `entity` (reflected components and scripts) into a new entity with a new UUID.
-/// @return The copy (same scene).
+/// @brief Copies `entity` and its descendants (reflected components and scripts) into new entities
+///        with new UUIDs; references between them point at the copies (the copied children follow
+///        the copy), the copy of `entity` keeps its parent.
+/// @return The copy of `entity` (same scene).
 Entity duplicateEntity(Entity entity);
 
 } // namespace nova

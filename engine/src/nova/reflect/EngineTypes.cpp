@@ -49,6 +49,9 @@ void registerEngineTypes() {
         .field("rotation", &TransformComponent::rotation, {.speed = 0.5f})
         .field("scale", &TransformComponent::scale, {.speed = 0.02f})
         .component();
+    type<ParentComponent>("Parent")
+        .field("parent", &ParentComponent::parent, {.tooltip = "Follows this entity, keeping its offset (the pose in the world stays when it changes)"})
+        .component();
 
     type<MeshComponent>("Mesh")
         .field("mesh", &MeshComponent::mesh)

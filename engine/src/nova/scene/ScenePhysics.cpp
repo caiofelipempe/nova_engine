@@ -628,20 +628,6 @@ void Scene::recordStepPoses() {
     }
 }
 
-bool Scene::drawnPose(entt::entity e, const TransformComponent& t, TransformComponent& out) const {
-    if (!interpolatePhysics || !m_physics) return false;
-    const auto it = m_stepPoses.find(e);
-    if (it == m_stepPoses.end()) return false;
-    const StepPoses& poses = it->second;
-    // Moved since the step (a teleport, the editor): drawn where it is. A kinematic body's
-    // transform is the target its script set for the next steps: drawn where the physics has it.
-    if (!poses.kinematic && !(t.position == poses.after.position)) return false;
-    const f64 alpha = fixedTimeStep > Duration() ? m_physicsAccumulator.seconds() / fixedTimeStep.seconds() : 1.0;
-    out = TransformComponent::lerp(poses.before, poses.after, static_cast<f32>(std::clamp(alpha, 0.0, 1.0)));
-    out.scale = t.scale;
-    return true;
-}
-
 TransformComponent Scene::renderTransform(Entity e) {
     const TransformComponent& t = e.transform();
     TransformComponent drawn;

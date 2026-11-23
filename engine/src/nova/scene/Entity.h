@@ -7,6 +7,8 @@
 
 #include <entt/entt.hpp>
 
+#include <vector>
+
 namespace nova {
 
 class Scene;
@@ -68,6 +70,13 @@ public:
 
     /// @brief Shortcut for `get<TransformComponent>()`.
     TransformComponent& transform() { return get<TransformComponent>(); }
+    /// @brief Makes this entity a child of `parent` (an invalid one: a root), keeping its pose in
+    ///        the world. False (and nothing changes) if `parent` is this entity or one of its descendants.
+    bool setParent(Entity parent);
+    /// @brief The parent, or an invalid Entity for a root.
+    Entity parent() const;
+    /// @brief The direct children, in creation order.
+    std::vector<Entity> children() const;
     /// @brief The entity's NameComponent value.
     const std::string& name() const { return registry().get<NameComponent>(m_handle).name; }
 

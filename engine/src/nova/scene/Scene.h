@@ -57,7 +57,8 @@ public:
     /// @{
     /// @brief Creates an entity with an IdComponent (new random UUID), a NameComponent and a TransformComponent.
     Entity createEntity(const std::string& name = "Entity");
-    /// @brief Destroys an entity: runs its scripts' onDestroy and removes its physics body. Invalid entities are ignored.
+    /// @brief Destroys an entity and its descendants (children first): runs their scripts' onDestroy
+    ///        and removes their physics bodies. Invalid entities are ignored.
     void destroyEntity(Entity entity);
     /// @brief First entity with the given name, or an invalid Entity.
     Entity findEntity(const std::string& name);
@@ -76,6 +77,30 @@ public:
     void resetStorage();
     /// @brief First entity whose CameraComponent is primary, or an invalid Entity.
     Entity primaryCamera();
+    /// @}
+
+    /// @name Hierarchy
+    /// A child follows its parent, keeping its offset (ParentComponent). Transforms stay poses in
+    /// the world; the scene keeps children in step with their parents.
+    /// @{
+    /// @brief Makes `child` a child of `parent` (an invalid one: a root), keeping its pose in the
+    ///        world. False (nothing changes) if `parent` is `child` or one of its descendants.
+    bool setParent(Entity child, Entity parent);
+    /// @brief The parent of `entity`, or an invalid Entity for a root (or a missing parent).
+    Entity parentOf(Entity entity);
+    /// @brief The direct children of `entity`, in creation order.
+    std::vector<Entity> childrenOf(Entity entity);
+    /// @brief Every descendant of `entity` (children, their children...), parents before children.
+    std::vector<Entity> descendantsOf(Entity entity);
+    /// @brief The offset of `entity` from its parent (its pose in the world for a root).
+    LocalTransform localTransform(Entity entity);
+    /// @brief Sets the offset of `entity` from its parent (for a root: its pose in the world) and
+    ///        places it there at once (its children follow on the next updateTransforms()).
+    void setLocalTransform(Entity entity, const LocalTransform& local);
+    /// @brief Puts every child where its parent says, parents first (moved children keep their
+    ///        new pose and take their offset again). update() runs it before and after physics,
+    ///        buildRenderScene() before drawing; call it after moving parents to read children's poses.
+    void updateTransforms();
     /// @}
 
     /// @brief Runs scripts, built-in systems and (if simulating) physics.
@@ -287,13 +312,15 @@ private:
     GlobalPosition m_physicsFocus;
     bool m_hasPhysicsFocus = false;
     Duration m_physicsAccumulator;
+    std::unordered_map<u64, entt::entity> m_byUuid; // rebuilt by updateTransforms (checked before use)
+    entt::entity lookup(u64 uuid) const;
     // Poses of what the physics moved, before and after the last step (interpolatePhysics).
     struct StepPoses {
         TransformComponent before, after;
         bool kinematic = false; // drawn from the physics poses whatever its transform says (the target)
     };
     std::unordered_map<entt::entity, StepPoses> m_stepPoses;
-    bool drawnPose(entt::entity e, const TransformComponent& t, TransformComponent& out) const;
+    bool drawnPose(entt::entity e, const TransformComponent& t, TransformComponent& out, int depth = 0) const;
     void recordStepPoses();
     std::optional<GlobalPosition> m_fixedOrigin;
     WorldSize m_worldSize;

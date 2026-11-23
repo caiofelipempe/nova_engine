@@ -59,10 +59,17 @@ Entity Scene::findEntityByUuid(u64 uuid) {
 
 void Scene::destroyEntity(Entity entity) {
     if (!entity.valid()) return;
-    if (auto* sc = entity.tryGet<ScriptComponent>())
-        for (auto& s : sc->scripts)
-            if (s->m_created) s->onDestroy();
-    m_registry.destroy(entity.handle());
+    // Its descendants go with it, the deepest first.
+    std::vector<Entity> doomed = descendantsOf(entity);
+    std::reverse(doomed.begin(), doomed.end());
+    doomed.push_back(entity);
+    for (Entity e : doomed) {
+        if (!e.valid()) continue;
+        if (auto* sc = e.tryGet<ScriptComponent>())
+            for (auto& s : sc->scripts)
+                if (s->m_created) s->onDestroy();
+        if (e.valid()) m_registry.destroy(e.handle());
+    }
 }
 
 Entity Scene::findEntity(const std::string& name) {
@@ -89,6 +96,8 @@ void Scene::update(Duration frame) {
     m_time += frame;
     const f32 dt = frame.secondsF(); // scripts and built-in systems work in float seconds
 
+    updateTransforms(); // links made since the last update (loaded, set by tools) before scripts move parents
+
     // Native scripts. Iterate over a snapshot: scripts may create/destroy entities.
     std::vector<entt::entity> scripted;
     for (auto e : m_registry.view<ScriptComponent>()) scripted.push_back(e);
@@ -112,7 +121,11 @@ void Scene::update(Duration frame) {
         t.rotate(r.speed * dt, r.axis);
     }
 
-    if (m_physics) stepPhysics(frame);
+    updateTransforms(); // children follow their parents (moved by scripts and systems)
+    if (m_physics) {
+        stepPhysics(frame);
+        updateTransforms(); // and their parents' bodies (a child's own dynamic body moves it on its own)
+    }
     dispatchWrapHits();
 }
 
@@ -124,6 +137,7 @@ Entity Scene::primaryCamera() {
 
 bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cameraOverride) {
     activateWorld();
+    updateTransforms(); // children where their parents are now (moved by tools since the update)
     out.clear();
     out.time = static_cast<f32>(m_time.secondsInCycle(kShaderTimeCycle));
     out.wrapSize = glm::vec3(m_worldSize.sizes());

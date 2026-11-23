@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <typeindex>
 #include <nlohmann/json.hpp>
 
@@ -537,6 +538,7 @@ bool deserializeScene(Scene& scene, std::string_view text, const SerializeOption
         scene.clear();
         return fail(std::string("malformed scene: ") + ex.what());
     }
+    scene.updateTransforms(); // children linked to their parents as saved, before anything moves
     return true;
 }
 
@@ -571,17 +573,32 @@ std::string sceneNameFromPath(const std::filesystem::path& path) {
 }
 
 Entity duplicateEntity(Entity entity) {
+    if (!entity.valid()) return {};
     Scene& scene = *entity.scene();
     std::set<std::string> warned;
     SerializeOptions ids; // same session: exact mesh ids
-    Json je = writeEntity(entity, ids, warned);
-    je["components"].erase("Id"); // the copy keeps its own new UUID
-    Entity copy = readEntity(scene, je, ids, warned);
-    if (auto* name = copy.tryGet<NameComponent>()) name->name += " (copy)";
-    return copy;
+    // The entity and its descendants (parents first), written before any copy exists.
+    std::vector<Entity> source{entity};
+    for (Entity d : scene.descendantsOf(entity)) source.push_back(d);
+    std::vector<Json> written;
+    for (Entity e : source) written.push_back(writeEntity(e, ids, warned));
+    std::unordered_map<u64, u64> copyOf; // original UUID -> the copy's
+    std::vector<Entity> copies;
+    for (size_t i = 0; i < source.size(); ++i) {
+        written[i]["components"].erase("Id"); // each copy keeps its own new UUID
+        Entity copy = readEntity(scene, written[i], ids, warned);
+        copyOf[source[i].uuid()] = copy.uuid();
+        copies.push_back(copy);
+    }
+    // References between them point at the copies: the copied children follow the copied parent
+    // (the copy of `entity` keeps its parent, a sibling of the original).
+    for (Entity copy : copies) remapEntityRefs(copy, copyOf);
+    if (auto* name = copies[0].tryGet<NameComponent>()) name->name += " (copy)";
+    scene.updateTransforms(); // the copied children linked to the copy
+    return copies[0];
 }
 
-std::string serializePrefab(const std::vector<Entity>& entities, const SerializeOptions& options) {
+std::string serializePrefab(const std::vector<Entity>& selection, const SerializeOptions& options) {
     std::set<std::string> warned;
     Json root = Json::object();
     root["format"] = kPrefabFormat;
@@ -589,14 +606,26 @@ std::string serializePrefab(const std::vector<Entity>& entities, const Serialize
     Json list = Json::array();
     GlobalPosition pivot;
     bool first = true;
+    // The entities and their descendants: a parent goes with its children.
+    std::vector<Entity> entities;
+    std::unordered_set<u64> inside;
+    auto take = [&](Entity e) {
+        if (e.valid() && inside.insert(e.uuid()).second) entities.push_back(e);
+    };
+    for (Entity e : selection) {
+        take(e);
+        if (e.valid())
+            for (Entity d : e.scene()->descendantsOf(e)) take(d);
+    }
     for (Entity e : entities) {
-        if (!e.valid()) continue;
         if (first) pivot = e.transform().position;
         first = false;
         Json je = writeEntity(e, options, warned);
         je["prefabId"] = e.get<IdComponent>().uuid; // to remap references between the prefab's entities
         je["components"].erase("Id");
         je["components"].erase("PrefabInstance");
+        // A parent left out of the prefab: the entity is a root of it.
+        if (const auto* pc = e.tryGet<ParentComponent>(); pc && !inside.contains(pc->parent.uuid)) je["components"].erase("Parent");
         // Relative to the first entity, so the prefab can be placed anywhere.
         je["components"]["Transform"]["position"] = writeOffset(e.transform().position - pivot);
         list.push_back(std::move(je));
@@ -636,6 +665,7 @@ std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const
         if (error) *error = std::string("malformed prefab: ") + ex.what();
     }
     for (Entity e : out) remapEntityRefs(e, ids);
+    scene.updateTransforms(); // its children linked to its parents, as placed
     return out;
 }
 

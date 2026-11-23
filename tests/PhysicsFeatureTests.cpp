@@ -806,6 +806,35 @@ void drawnBetweenSteps() {
     CHECK(scene.renderTransform(ball).position == GlobalPosition(5.0, 3.0, 0.0));
 }
 
+void childrenAndBodies() {
+    // A static child follows its parent (its body too); a dynamic child moves on its own.
+    Scene scene;
+    Entity base = scene.createEntity("Base");
+    Entity shelf = scene.createEntity("Shelf");
+    shelf.transform().position = {0, 2, 0};
+    shelf.transform().scale = {4, 0.2, 4};
+    shelf.add<RigidBodyComponent>(BodyType::Static);
+    shelf.add<BoxColliderComponent>();
+    shelf.setParent(base);
+    Entity box = scene.createEntity("Box");
+    box.transform().position = {5, 3, 0};
+    box.add<RigidBodyComponent>();
+    box.add<BoxColliderComponent>();
+    box.setParent(base);
+    scene.startSimulation();
+    run(scene, 60);
+    CHECK(box.transform().position.toMeters().y < 0.0); // fell: nothing under it
+    base.transform().position = {5, 0, 0}; // the shelf goes under the box's column
+    run(scene, 1);
+    CHECK(std::abs(shelf.transform().position.toMeters().x - 5.0) < 1e-6);
+    Entity ball = scene.createEntity("Ball");
+    ball.transform().position = {5, 4, 0};
+    ball.add<RigidBodyComponent>();
+    ball.add<SphereColliderComponent>();
+    run(scene, 90);
+    CHECK(std::abs(ball.transform().position.toMeters().y - 2.6) < 0.05); // resting on the moved shelf's body
+}
+
 void prefabRemapsRefs() {
     Scene scene("prefab");
     Entity a = scene.createEntity("A");
@@ -1014,6 +1043,7 @@ int main() {
         {"joints: lifetime with bodies and components", jointLifetime},
         {"joints: far out, across a rebase", farJointsAndRebase},
         {"joints: prefab references and saving", prefabRemapsRefs},
+        {"hierarchy: static children carry their bodies, dynamic ones move on their own", childrenAndBodies},
         {"circular world: wrap-around, collisions across the seam, files", circularWorld},
         {"circular world: a floor one lap long has no bump where its ends meet", seamlessFloor},
         {"kinematic bodies: a frame's move spread over its steps", kinematicGlide},

@@ -125,6 +125,38 @@ struct TransformComponent {
     }
 };
 
+/// @brief A pose relative to a parent: position (in the parent's frame, before its scale is
+///        applied: it is scaled with the parent), rotation and scale. Doubles: offsets are small.
+struct LocalTransform {
+    glm::dvec3 position{0.0};
+    glm::dquat rotation{1.0, 0.0, 0.0, 0.0};
+    glm::dvec3 scale{1.0};
+};
+
+/// @brief Makes the entity a child of another: it keeps its offset from the parent (position,
+///        rotation and scale in the parent's frame) while the parent moves, turns and scales.
+///
+/// The entity's TransformComponent stays its pose **in the world** (what rendering, physics and
+/// tools read); the scene keeps it in step with the parent (Scene::updateTransforms(), run by
+/// update() and buildRenderScene()). Moved by something else — a script, the gizmo, its own dynamic
+/// body — it keeps the new pose and its offset is taken again from there; so is it when the
+/// parent changes. Only `parent` is saved: the offset follows from the saved poses.
+/// Use Scene::setParent() / Entity::setParent() (they refuse loops), or set `parent` directly
+/// (the inspector does): the entity keeps its pose in the world either way.
+struct ParentComponent {
+    EntityRef parent; ///< The parent (none: a root, as without the component).
+    // Kept by the scene (not saved):
+    LocalTransform local;         ///< The offset from the parent.
+    u64 linkedTo = 0;             ///< The parent the offset was taken from (another one: taken again).
+    bool synced = false;          ///< `local` and the poses below are valid.
+    GlobalPosition placedPosition; ///< Where the scene last put the entity: moved since if it differs.
+    FixedQuat placedRotation;
+    ScalarVec placedScale{1, 1, 1};
+    GlobalPosition parentPosition; ///< The parent's pose the offset is for: followed when it differs.
+    FixedQuat parentRotation;
+    ScalarVec parentScale{1, 1, 1};
+};
+
 /// @brief Renders a mesh at the entity's transform.
 struct MeshComponent {
     MeshHandle mesh;         ///< Mesh from Renderer::createMesh (or Renderer::cube/sphere/plane).
