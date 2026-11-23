@@ -101,21 +101,59 @@ bool buildMesh(const cgltf_primitive& prim, MeshData& out) {
     return !out.indices.empty();
 }
 
-Material buildMaterial(const cgltf_data* data, const cgltf_material* m, const std::vector<rhi::TextureHandle>& images) {
+// A model's images as textures: in sRGB where a material uses them as colors (base color,
+// emissive), linear where it uses them as data (normal, metallic-roughness, occlusion maps).
+struct ModelTextures {
+    std::vector<rhi::TextureHandle> color, data; // by glTF image index
+};
+
+// Which images the materials use as colors (bit 1) and as data (bit 2).
+std::vector<u8> imageUses(const cgltf_data* data) {
+    std::vector<u8> uses(data->images_count, 0);
+    auto mark = [&](const cgltf_texture_view& view, u8 bit) {
+        if (view.texture && view.texture->image) uses[static_cast<size_t>(view.texture->image - data->images)] |= bit;
+    };
+    for (cgltf_size i = 0; i < data->materials_count; ++i) {
+        const cgltf_material& m = data->materials[i];
+        if (m.has_pbr_metallic_roughness) {
+            mark(m.pbr_metallic_roughness.base_color_texture, 1);
+            mark(m.pbr_metallic_roughness.metallic_roughness_texture, 2);
+        }
+        mark(m.emissive_texture, 1);
+        mark(m.normal_texture, 2);
+        mark(m.occlusion_texture, 2);
+    }
+    return uses;
+}
+
+Material buildMaterial(const cgltf_data* data, const cgltf_material* m, const ModelTextures& textures) {
     Material mat;
     if (!m) return mat;
+    auto pick = [&](const cgltf_texture_view& view, const std::vector<rhi::TextureHandle>& from) -> rhi::TextureHandle {
+        if (!view.texture || !view.texture->image) return {};
+        const size_t index = static_cast<size_t>(view.texture->image - data->images);
+        return index < from.size() ? from[index] : rhi::TextureHandle{};
+    };
     if (m->has_pbr_metallic_roughness) {
         const auto& pbr = m->pbr_metallic_roughness;
         mat.baseColor = glm::make_vec4(pbr.base_color_factor);
         mat.metallic = pbr.metallic_factor;
         mat.roughness = pbr.roughness_factor;
-        if (const cgltf_texture* tex = pbr.base_color_texture.texture; tex && tex->image) {
-            const size_t index = static_cast<size_t>(tex->image - data->images);
-            if (index < images.size()) mat.baseColorTexture = images[index];
-        }
+        mat.baseColorTexture = pick(pbr.base_color_texture, textures.color);
+        mat.metallicRoughnessTexture = pick(pbr.metallic_roughness_texture, textures.data);
     }
+    mat.normalTexture = pick(m->normal_texture, textures.data);
+    mat.normalScale = m->normal_texture.texture ? m->normal_texture.scale : 1.0f;
+    mat.occlusionTexture = pick(m->occlusion_texture, textures.data);
+    mat.occlusionStrength = m->occlusion_texture.texture ? m->occlusion_texture.scale : 1.0f; // glTF keeps the strength in `scale`
+    mat.emissiveTexture = pick(m->emissive_texture, textures.color);
     mat.emissive = glm::make_vec3(m->emissive_factor);
     mat.emissiveStrength = (mat.emissive != glm::vec3(0.0f)) ? (m->has_emissive_strength ? m->emissive_strength.emissive_strength : 1.0f) : 0.0f;
+    mat.alphaMode = m->alpha_mode == cgltf_alpha_mode_mask    ? AlphaMode::Mask
+                    : m->alpha_mode == cgltf_alpha_mode_blend ? AlphaMode::Blend
+                                                              : AlphaMode::Opaque;
+    mat.alphaCutoff = m->alpha_cutoff;
+    mat.doubleSided = m->double_sided;
     return mat;
 }
 
@@ -129,7 +167,8 @@ std::filesystem::path resolveUri(const std::filesystem::path& gltf, const char* 
 
 bool isExternal(const char* uri) { return uri && std::strncmp(uri, "data:", 5) != 0 && !std::strstr(uri, "://"); }
 
-rhi::TextureHandle loadImage(Renderer& renderer, const std::filesystem::path& gltf, const cgltf_image& image, size_t index) {
+rhi::TextureHandle loadImage(Renderer& renderer, const std::filesystem::path& gltf, const cgltf_image& image, size_t index,
+                             bool srgb = true) {
     std::vector<u8> pixels;
     u32 w = 0, h = 0;
     if (image.buffer_view && image.buffer_view->buffer->data) {
@@ -143,7 +182,7 @@ rhi::TextureHandle loadImage(Renderer& renderer, const std::filesystem::path& gl
         return {};
     }
     const std::string name = image.name ? image.name : gltf.stem().string() + "/image" + std::to_string(index);
-    return renderer.createTexture2D(w, h, pixels.data(), name.c_str());
+    return renderer.createTexture2D(w, h, pixels.data(), name.c_str(), srgb);
 }
 
 struct CgltfFile {
@@ -197,8 +236,22 @@ std::optional<ModelData> loadModel(Renderer* renderer, const std::filesystem::pa
 
     ModelData model;
     model.name = path.stem().string();
+    // One texture per image, in the color space its materials need (both: a linear copy too).
+    const std::vector<u8> uses = imageUses(data);
+    ModelTextures textures;
+    for (cgltf_size i = 0; i < data->images_count; ++i) {
+        const bool asColor = uses[i] & 1u, asData = uses[i] & 2u;
+        const rhi::TextureHandle t =
+            renderer ? loadImage(*renderer, path, data->images[i], i, asColor || !asData) : rhi::TextureHandle{};
+        model.textures.push_back(t);
+        textures.color.push_back(t);
+        textures.data.push_back(t);
+    }
     for (cgltf_size i = 0; i < data->images_count; ++i)
-        model.textures.push_back(renderer ? loadImage(*renderer, path, data->images[i], i) : rhi::TextureHandle{});
+        if ((uses[i] & 1u) && (uses[i] & 2u) && renderer) {
+            textures.data[i] = loadImage(*renderer, path, data->images[i], i, false);
+            model.textures.push_back(textures.data[i]);
+        }
 
     // One GPU mesh per (mesh, primitive), shared by all nodes that instance it. ~0u = unusable.
     std::vector<std::vector<u32>> meshCache(data->meshes_count);
@@ -250,7 +303,7 @@ std::optional<ModelData> loadModel(Renderer* renderer, const std::filesystem::pa
         }
         if (!primitives.empty()) {
             mn.mesh = primitives[0].first;
-            mn.material = buildMaterial(data, node.mesh->primitives[primitives[0].second].material, model.textures);
+            mn.material = buildMaterial(data, node.mesh->primitives[primitives[0].second].material, textures);
         }
         const u32 self = static_cast<u32>(model.nodes.size());
         nodeOf[n] = self;
@@ -259,7 +312,7 @@ std::optional<ModelData> loadModel(Renderer* renderer, const std::filesystem::pa
             ModelNode extra = mn;
             extra.name = mn.name + "#" + std::to_string(primitives[k].second);
             extra.mesh = primitives[k].first;
-            extra.material = buildMaterial(data, node.mesh->primitives[primitives[k].second].material, model.textures);
+            extra.material = buildMaterial(data, node.mesh->primitives[primitives[k].second].material, textures);
             extra.parent = self;
             model.nodes.push_back(std::move(extra));
         }

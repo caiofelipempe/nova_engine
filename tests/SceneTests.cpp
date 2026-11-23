@@ -553,6 +553,29 @@ void hierarchy() {
     CHECK(near(b.transform().position, {6, 5, 5}));
 }
 
+void fullMaterials() {
+    // The full material is saved with the scene: maps' strengths, alpha mode and cutoff, both sides.
+    Scene scene;
+    Entity e = scene.createEntity("Leaf");
+    Material& m = e.add<MeshComponent>(MeshHandle{1}).material;
+    m.normalScale = 2.0f;
+    m.occlusionStrength = 0.5f;
+    m.alphaMode = AlphaMode::Mask;
+    m.alphaCutoff = 0.3f;
+    m.doubleSided = true;
+    Entity glass = scene.createEntity("Glass");
+    glass.add<MeshComponent>(MeshHandle{1}).material.alphaMode = AlphaMode::Blend;
+    const std::string json = serializeScene(scene);
+    CHECK(json.find("\"alphaMode\": \"Mask\"") != std::string::npos && json.find("\"doubleSided\": true") != std::string::npos);
+    Scene back;
+    CHECK(deserializeScene(back, json));
+    const Material& r = back.findEntity("Leaf").get<MeshComponent>().material;
+    CHECK(r.normalScale == 2.0f && r.occlusionStrength == 0.5f && r.alphaMode == AlphaMode::Mask && r.alphaCutoff == 0.3f && r.doubleSided);
+    CHECK(back.findEntity("Glass").get<MeshComponent>().material.alphaMode == AlphaMode::Blend);
+    const Material plain;
+    CHECK(plain.alphaMode == AlphaMode::Opaque && !plain.doubleSided && !plain.normalTexture && plain.normalScale == 1.0f);
+}
+
 } // namespace
 
 int main() {
@@ -573,6 +596,7 @@ int main() {
         {"debug draw", debugDraw},
         {"entity restore in place", entityRestoreInPlace},
         {"uuids", uuids},
+        {"full materials are saved (maps, alpha, double sided)", fullMaterials},
         {"hierarchy: follow, offsets, loops, saving, duplicate, prefabs, destroy", hierarchy},
     };
     for (auto& [name, fn] : tests) {

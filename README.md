@@ -248,6 +248,17 @@ Em superfícies lisas (esfera numa face) as três coincidem; em arestas e vérti
 - Estrutura: frontend (`physics/PhysicsWorld.h`, `scene/PhysicsComponents.h`, `scene/ScenePhysics.cpp`) separado do backend (`physics/backend/`: contrato `float` local, origem flutuante e Jolt). Testes em `tests/PhysicsFeatureTests.cpp`.
 - **Movimento suave:** um corpo cinemático movido num quadro com vários passos anda o mesmo tanto em cada passo. `Scene::interpolatePhysics` (ligado por padrão) desenha corpos dinâmicos, cinemáticos e personagens entre as poses dos dois últimos passos, pelo tempo que sobrou, no máximo um passo atrás. Os transforms guardam a pose simulada. Câmeras que seguem um corpo usam `scene().renderTransform(e)`.
 
+## Materiais
+
+O `Material` segue o modelo PBR do glTF:
+- cor base (`baseColor` × `baseColorTexture`, sRGB), metálico e rugosidade (× `metallicRoughnessTexture`: G rugosidade, B metálico);
+- `normalTexture` (mapa de normal em espaço tangente, convenção glTF; `normalScale`), aplicado sem tangentes guardadas, pelas derivadas de posição e UV na tela;
+- `occlusionTexture` (R; `occlusionStrength`), que escurece a luz ambiente; `emissiveTexture` (sRGB) × `emissive` × `emissiveStrength`;
+- `alphaMode`: `Opaque`, `Mask` (recorte abaixo de `alphaCutoff`: folhagem, cercas) ou `Blend` (transparente: desenhado depois dos opacos, de trás para frente, sem escrever profundidade e sem projetar sombra por ray tracing);
+- `doubleSided`: as duas faces (sem descarte de faces de trás).
+
+O glTF traz tudo isso, criando cada textura no espaço de cor certo (cor e emissiva em sRGB, os mapas de dados lineares; `Renderer::createTexture2D(..., srgb)`). Materiais de jogo (`nova/material.glsl`) recebem `Surface::alpha` e `Surface::occlusion` também. O cenário **Surfaces** do sandbox mostra cada recurso. Limite: o recorte por alfa ainda projeta a sombra inteira no ray tracing.
+
 ## Shaders do jogo
 
 O jogo traz os próprios shaders — **materiais**, **pós-processamento** e **compute** — e escolhe, por shader, de onde vem o SPIR-V:
@@ -336,6 +347,6 @@ Próximos passos (a estrutura já está preparada):
 - **Renderização circular**: feita como opção de compilação (`NOVA_WRAP_RENDER_MODES`, `RenderSettings::wrapShift` / `wrapRepeat`). Falta conferir em GPU e fazer o picking ciente das cópias.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
-- Renderer: materiais com mais texturas (normal, metallic-roughness, emissive), shadow maps como fallback sem RT, render graph, culling em GPU, backend D3D12.
+- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Próximos: sombras recortadas por alfa no ray tracing, shadow maps como fallback sem RT, render graph, culling em GPU, backend D3D12.
 - Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*; modelos glTF instanciados com a árvore dos nós, sob uma raiz com o nome do arquivo).
 - Animação: dos nós, skinning (com sombras e picking na pose atual), troca e mistura de clipes, máscaras por osso, eventos e escolha do clipe pelo nome no inspetor (feitos).

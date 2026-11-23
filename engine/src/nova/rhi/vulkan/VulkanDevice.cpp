@@ -316,6 +316,7 @@ void VulkanDevice::createLogicalDevice() {
     enable.f13.dynamicRendering = VK_TRUE;
     enable.f13.synchronization2 = VK_TRUE;
     enable.f13.maintenance4 = supported.f13.maintenance4;
+    enable.f13.shaderDemoteToHelperInvocation = supported.f13.shaderDemoteToHelperInvocation; // `discard` (alpha cut-outs) in SPIR-V 1.6
 
     VkPhysicalDeviceAccelerationStructureFeaturesKHR asEnable{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};

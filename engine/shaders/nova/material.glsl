@@ -28,9 +28,11 @@ layout(location = 0) out vec4 outColor;
 
 struct Surface {
     vec3 albedo;      // linear base color
+    float alpha;      // opacity (Material alphaMode Mask: cut below the cutoff; Blend: see-through)
     vec3 normal;      // world-space shading normal (unit, facing the camera)
     float metallic;   // 0..1
     float roughness;  // 0.04..1 (clamped after material())
+    float occlusion;  // ambient occlusion, 1 = none
     vec3 emissive;    // HDR emitted radiance (already × strength)
     bool unlit;       // true: output albedo + emissive, skip lighting
     // Read-only inputs (changing them has no effect on lighting):
@@ -52,6 +54,22 @@ vec4 nova_texture(int index, vec2 uv) {
 // Material::customTexture (white when unset).
 vec4 nova_customTexture(vec2 uv) { return nova_texture(int(nova_instance().extra.x), uv); }
 
+// The normal tilted by a tangent-space normal map value (`tangentNormal`, −1..1) without stored
+// tangents: the frame comes from the screen-space derivatives of position and UV (as the glTF
+// sample viewer does for meshes without tangents).
+vec3 nova_perturbNormal(vec3 N, vec3 position, vec2 uv, vec3 tangentNormal) {
+    vec3 dpx = dFdx(position), dpy = dFdy(position);
+    vec2 duvx = dFdx(uv), duvy = dFdy(uv);
+    float det = duvx.x * duvy.y - duvy.x * duvx.y;
+    if (abs(det) < 1e-12) return N;
+    vec3 t = (duvy.y * dpx - duvx.y * dpy) / det;
+    t = t - N * dot(N, t);
+    if (dot(t, t) < 1e-20) return N;
+    t = normalize(t);
+    vec3 b = cross(N, t);
+    return normalize(mat3(t, b, N) * tangentNormal);
+}
+
 // Implemented by the material shader.
 void material(inout Surface s);
 
@@ -69,23 +87,38 @@ void main() {
     s.uv = vUV;
     s.viewDir = normalize(nova_cameraPos() - vWorldPos);
     s.custom = inst.custom;
-    s.albedo = inst.baseColor.rgb * nova_texture(int(inst.params.w), vUV).rgb;
+    const vec4 base = inst.baseColor * nova_texture(int(inst.params.w), vUV);
+    s.albedo = base.rgb;
+    s.alpha = base.a;
     if ((matFlags & MATERIAL_FLAG_CHECKER) != 0u) {
         vec2 c = floor(s.worldPos.xz);
         s.albedo *= mod(c.x + c.y, 2.0) < 1.0 ? 1.0 : 0.6;
     }
-    s.metallic = inst.params.x;
-    s.roughness = inst.params.y;
-    s.emissive = inst.emissive.rgb * inst.emissive.w;
+    // Metallic-roughness (glTF: G roughness, B metallic), occlusion (R), emissive and normal maps.
+    const vec4 mr = nova_texture(int(inst.maps.y), vUV);
+    s.metallic = inst.params.x * mr.b;
+    s.roughness = inst.params.y * mr.g;
+    s.occlusion = inst.maps.z >= 0.0 ? mix(1.0, nova_texture(int(inst.maps.z), vUV).r, inst.surface.y) : 1.0;
+    s.emissive = inst.emissive.rgb * inst.emissive.w * nova_texture(int(inst.maps.w), vUV).rgb;
+    if (inst.maps.x >= 0.0) {
+        vec3 tn = nova_texture(int(inst.maps.x), vUV).xyz * 2.0 - 1.0;
+        tn.xy *= inst.surface.x;
+        s.normal = nova_perturbNormal(s.normal, vWorldPos, vUV, normalize(tn));
+    }
     s.unlit = false;
 
     material(s);
+
+    const uint alphaMode = uint(inst.surface.w + 0.5);
+    if (alphaMode == 1u && s.alpha < inst.surface.z) discard; // cut out
 
     vec3 N = normalize(s.normal);
     float metallic = clamp(s.metallic, 0.0, 1.0);
     float roughness = clamp(s.roughness, 0.04, 1.0);
     float sunShadow = 1.0;
-    vec3 color = s.unlit ? s.albedo : nova_shade(vWorldPos, N, s.viewDir, s.albedo, metallic, roughness, sunShadow);
+    vec3 color = s.unlit ? s.albedo
+                         : nova_shadeOccluded(vWorldPos, N, s.viewDir, s.albedo, metallic, roughness,
+                                              clamp(s.occlusion, 0.0, 1.0), sunShadow);
     color += s.emissive;
 
     switch (pc.debugView) {
@@ -94,7 +127,7 @@ void main() {
         case 3u: color = s.albedo; break;
         default: break;
     }
-    outColor = vec4(color, 1.0);
+    outColor = vec4(color, alphaMode == 2u ? clamp(s.alpha, 0.0, 1.0) : 1.0);
 }
 
 #endif // NOVA_MATERIAL_GLSL

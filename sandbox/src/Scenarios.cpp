@@ -258,6 +258,125 @@ void statusMaterials(Scene& s) {
             ImGui::Text("  %.1f -> height %.2f m", kRestitutions[i], b.transform().position.toMeters().y - 0.5);
 }
 
+// Surfaces: the full material (textures made here). Bumps by a normal map with ambient occlusion in
+// their grooves; a metal ball with roughness stripes (metallic-roughness map); a glowing panel
+// (emissive map); a fence cut out by alpha (Mask, double sided); colored glass (Blend) in front.
+struct SurfaceTextures {
+    rhi::TextureHandle bumps, groovesAo, stripes, glow, fence;
+};
+
+const SurfaceTextures& surfaceTextures() {
+    static SurfaceTextures t = [] {
+        Renderer& r = Application::get().renderer();
+        constexpr u32 n = 128;
+        std::vector<u8> px(n * n * 4);
+        auto fill = [&](auto texel) {
+            for (u32 y = 0; y < n; ++y)
+                for (u32 x = 0; x < n; ++x) {
+                    const glm::vec4 c = glm::clamp(texel((x + 0.5f) / n, (y + 0.5f) / n), glm::vec4(0.0f), glm::vec4(1.0f));
+                    for (int k = 0; k < 4; ++k) px[(y * n + x) * 4 + k] = static_cast<u8>(c[k] * 255.0f + 0.5f);
+                }
+        };
+        // Round bumps on a 4 × 4 grid: height h(u, v); normal (−∂h/∂u, ∂h/∂v, 1) (glTF: +Y up in the image).
+        auto height = [](float u, float v) {
+            const float cu = glm::fract(u * 4.0f) - 0.5f, cv = glm::fract(v * 4.0f) - 0.5f;
+            const float d2 = (cu * cu + cv * cv) / 0.16f;
+            return d2 < 1.0f ? std::sqrt(1.0f - d2) * 0.08f : 0.0f;
+        };
+        SurfaceTextures out;
+        fill([&](float u, float v) {
+            const float e = 1.0f / n;
+            const float du = (height(u + e, v) - height(u - e, v)) / (2 * e), dv = (height(u, v + e) - height(u, v - e)) / (2 * e);
+            const glm::vec3 nrm = glm::normalize(glm::vec3(-du, dv, 1.0f));
+            return glm::vec4(nrm * 0.5f + 0.5f, 1.0f);
+        });
+        out.bumps = r.createTexture2D(n, n, px.data(), "surfaces/bumps (normal)", false);
+        fill([&](float u, float v) { // occlusion: darker around each bump's foot
+            const float cu = glm::fract(u * 4.0f) - 0.5f, cv = glm::fract(v * 4.0f) - 0.5f;
+            const float d = std::sqrt(cu * cu + cv * cv) / 0.4f;
+            const float ao = d < 1.0f ? 1.0f - 0.6f * std::pow(d, 6.0f) : 0.4f + 0.6f * glm::clamp((d - 1.0f) * 4.0f, 0.0f, 1.0f);
+            return glm::vec4(ao, ao, ao, 1.0f);
+        });
+        out.groovesAo = r.createTexture2D(n, n, px.data(), "surfaces/grooves (occlusion)", false);
+        fill([&](float u, float v) { // G roughness: 8 bands from mirror to rough; B metallic: all metal
+            const float rough = 0.05f + 0.95f * std::floor(v * 8.0f) / 7.0f;
+            return glm::vec4(0.0f, rough, 1.0f, 1.0f);
+        });
+        out.stripes = r.createTexture2D(n, n, px.data(), "surfaces/stripes (metallic-roughness)", false);
+        fill([&](float u, float v) { // glowing lines
+            const float line = std::abs(glm::fract(u * 6.0f + v * 2.0f) - 0.5f) < 0.08f ? 1.0f : 0.05f;
+            return glm::vec4(line, line, line, 1.0f);
+        });
+        out.glow = r.createTexture2D(n, n, px.data(), "surfaces/lines (emissive)");
+        fill([&](float u, float v) { // a mesh of holes: alpha 0 inside them
+            const float cu = glm::fract(u * 6.0f) - 0.5f, cv = glm::fract(v * 6.0f) - 0.5f;
+            const bool hole = cu * cu + cv * cv < 0.13f;
+            return glm::vec4(0.85f, 0.85f, 0.8f, hole ? 0.0f : 1.0f);
+        });
+        out.fence = r.createTexture2D(n, n, px.data(), "surfaces/fence (alpha)");
+        return out;
+    }();
+    return t;
+}
+
+View buildSurfaces(Scene& s, const BenchMeshes& m) {
+    sun(s);
+    const SurfaceTextures& tex = surfaceTextures();
+    // A bumpy floor and a bumpy cube (normal map + occlusion), next to plain ones.
+    Entity ground = visual(s, "Bumpy floor", m.plane, {0.0, 0.0, 0.0}, {16.0f, 1.0f, 12.0f}, {0.62f, 0.6f, 0.56f, 1});
+    {
+        Material& mat = ground.get<MeshComponent>().material;
+        mat.normalTexture = tex.bumps;
+        mat.occlusionTexture = tex.groovesAo;
+        mat.roughness = 0.8f;
+    }
+    Entity plain = visual(s, "Plain cube", m.cube, {-5.0, 1.0, 0.0}, glm::vec3(2.0f), {0.8f, 0.45f, 0.3f, 1});
+    Entity bumpy = visual(s, "Bumpy cube", m.cube, {-2.2, 1.0, 0.0}, glm::vec3(2.0f), {0.8f, 0.45f, 0.3f, 1});
+    {
+        Material& mat = bumpy.get<MeshComponent>().material;
+        mat.normalTexture = tex.bumps;
+        mat.normalScale = 1.5f;
+        mat.occlusionTexture = tex.groovesAo;
+    }
+    plain.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.3f);
+    bumpy.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.3f);
+    // A metal ball: roughness in bands (metallic-roughness map).
+    Entity metal = visual(s, "Metal stripes", m.sphere, {1.0, 1.3, 0.0}, glm::vec3(2.4f), {0.95f, 0.8f, 0.55f, 1});
+    {
+        Material& mat = metal.get<MeshComponent>().material;
+        mat.metallic = 1.0f;
+        mat.roughness = 1.0f; // × the map's G
+        mat.metallicRoughnessTexture = tex.stripes;
+    }
+    // A glowing panel (emissive map).
+    Entity panel = visual(s, "Glowing panel", m.cube, {4.6, 1.5, -1.0}, {2.4f, 2.4f, 0.2f}, {0.08f, 0.08f, 0.1f, 1});
+    {
+        Material& mat = panel.get<MeshComponent>().material;
+        mat.emissive = {0.3f, 0.8f, 1.0f};
+        mat.emissiveStrength = 4.0f;
+        mat.emissiveTexture = tex.glow;
+    }
+    // A fence with holes (alpha Mask), seen from both sides (double sided), behind the objects.
+    Entity fence = visual(s, "Fence", m.plane, {0.0, 2.0, -3.5}, {10.0f, 1.0f, 4.0f}, {1, 1, 1, 1});
+    fence.transform().setEulerDegrees({90.0f, 0.0f, 0.0f});
+    {
+        Material& mat = fence.get<MeshComponent>().material;
+        mat.baseColorTexture = tex.fence;
+        mat.alphaMode = AlphaMode::Mask;
+        mat.doubleSided = true;
+    }
+    // Colored glass panes (alpha Blend) in front, overlapping: drawn back to front.
+    const glm::vec4 tints[] = {{0.2f, 0.6f, 1.0f, 0.35f}, {1.0f, 0.3f, 0.3f, 0.35f}, {0.3f, 1.0f, 0.4f, 0.35f}};
+    for (int i = 0; i < 3; ++i) {
+        Entity glass = visual(s, "Glass " + std::to_string(i), m.cube, {-3.0 + 2.2 * i, 1.3, 2.6 - 0.5 * i},
+                              {2.0f, 2.4f, 0.06f}, tints[i]);
+        Material& mat = glass.get<MeshComponent>().material;
+        mat.alphaMode = AlphaMode::Blend;
+        mat.roughness = 0.05f;
+    }
+    return {{0.0, 4.5, 11.0}, {0.0, 1.2, 0.0}};
+}
+
 // Shapes: every collider type falling on a triangle-mesh terrain.
 View buildShapes(Scene& s, const BenchMeshes& m) {
     sun(s);
@@ -771,6 +890,8 @@ const std::vector<Scenario>& scenarios() {
                      buildStacks, nullptr, nullptr, 0.0f, statusStacks});
         v.push_back({"Materials", "Friction on the ramp (front: none), restitution of the balls (left: none).",
                      buildMaterials, nullptr, nullptr, 0.0f, statusMaterials});
+        v.push_back({"Surfaces", "Full materials: normal + occlusion maps (bumps), metallic-roughness map, emissive map, alpha mask (fence), glass (blend).",
+                     buildSurfaces});
         v.push_back({"Shapes", "Box, sphere, capsule, cylinder, convex hull and planks on a triangle-mesh terrain.",
                      buildShapes});
         v.push_back({"Joints", "Hinge door with limits, motor wheel, slider motor, chain, spring rope, breakable joint.",

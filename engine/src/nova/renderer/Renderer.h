@@ -297,6 +297,9 @@ public:
     /// @param rgba8 `width * height * 4` bytes, tightly packed.
     /// @param name Debug name.
     rhi::TextureHandle createTexture2D(u32 width, u32 height, const void* rgba8, const char* name = nullptr);
+    /// @brief Same, choosing the color space: sRGB for colors (base color, emissive), linear for
+    ///        data (normal, metallic-roughness and occlusion maps).
+    rhi::TextureHandle createTexture2D(u32 width, u32 height, const void* rgba8, const char* name, bool srgb);
 
     /// @name Shaders
     /// @{
@@ -359,9 +362,15 @@ private:
         u32 version = 0;
         rhi::PipelineHandle pipeline;
     };
+    // Pipeline states of a material (index into the variants): 1 = double sided (no culling),
+    // 2 = see-through (alpha blending, no depth writes).
+    static u32 pipelineState(const Material& m) {
+        return (m.doubleSided ? 1u : 0u) | (m.alphaMode == AlphaMode::Blend ? 2u : 0u);
+    }
+    static rhi::GraphicsPipelineDesc withState(rhi::GraphicsPipelineDesc desc, u32 state);
     struct MaterialPipelines {
-        VersionedPipeline fill;   // raster-only variant
-        VersionedPipeline rq;     // ray query shadows variant
+        VersionedPipeline fill[4]; // raster-only variants, by pipeline state
+        VersionedPipeline rq[4];   // ray query shadows variants
         ShaderHandle rqShader;
         bool rqRequested = false;
     };
@@ -378,7 +387,8 @@ private:
                         rhi::TextureHandle output);
     FrameAllocation allocate(u64 size, u64 alignment = 256);
     void renderInternal(rhi::CommandList& cmd, const RenderScene& scene, RenderView& view, rhi::TextureHandle output);
-    rhi::PipelineHandle materialPipeline(ShaderHandle shader, bool rayQuery);
+    rhi::PipelineHandle materialPipeline(ShaderHandle shader, bool rayQuery, u32 state = 0);
+    rhi::PipelineHandle defaultPipeline(bool rayQuery, u32 state);
     rhi::PipelineHandle postProcessPipeline(ShaderHandle shader);
     bool rebuild(VersionedPipeline& vp, ShaderHandle shader, const rhi::GraphicsPipelineDesc* graphics);
 
@@ -415,6 +425,8 @@ private:
     rhi::ShaderDesc m_lineFS;
     std::unordered_map<u32, rhi::PipelineHandle> m_linePipelines; // key: format | onTop << 8
     rhi::GraphicsPipelineDesc m_forwardDesc;                      // template of material pipelines
+    rhi::GraphicsPipelineDesc m_defaultDescs[2];                  // the default material: raster, ray query
+    rhi::PipelineHandle m_defaultVariants[2][4];                  // ... by pipeline state (0: the ones above)
     std::unordered_map<u32, MaterialPipelines> m_materialPipelines; // key: ShaderHandle::id
     std::unordered_map<u32, VersionedPipeline> m_postPipelines;     // key: ShaderHandle::id
     std::unordered_map<u32, VersionedPipeline> m_computePipelines;  // key: ShaderHandle::id

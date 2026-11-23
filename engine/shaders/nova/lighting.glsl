@@ -52,9 +52,10 @@ float nova_traceShadow(vec3 origin, vec3 dir, float tMax) {
 #endif
 }
 
-// Shades a surface with the sun, the point lights and the ambient; `sunShadow` receives the
-// sun visibility (for the Shadows debug view).
-vec3 nova_shade(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float roughness, out float sunShadow) {
+// Shades a surface with the sun, the point lights and the ambient (darkened by `occlusion`);
+// `sunShadow` receives the sun visibility (for the Shadows debug view).
+vec3 nova_shadeOccluded(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float roughness, float occlusion,
+                        out float sunShadow) {
     bool rtShadows = (pc.frame.data.flags & FRAME_FLAG_RT_SHADOWS) != 0u;
     float bias = pc.frame.data.shadowBias;
     vec3 origin = P + N * bias;
@@ -92,8 +93,13 @@ vec3 nova_shade(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float rough
     vec3 ground = pc.frame.data.groundColor.rgb;
     vec3 ambient = mix(ground, sky, N.y * 0.5 + 0.5) * pc.frame.data.skyZenith.w;
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
-    color += ambient * (albedo * (1.0 - metallic) + F0 * 0.25);
+    color += ambient * (albedo * (1.0 - metallic) + F0 * 0.25) * occlusion;
     return color;
+}
+
+// Same, without ambient occlusion.
+vec3 nova_shade(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float roughness, out float sunShadow) {
+    return nova_shadeOccluded(P, N, V, albedo, metallic, roughness, 1.0, sunShadow);
 }
 
 #endif // NOVA_LIGHTING_GLSL

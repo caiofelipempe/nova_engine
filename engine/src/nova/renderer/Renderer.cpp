@@ -165,8 +165,12 @@ Renderer::~Renderer() {
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
     for (auto& [id, mp] : m_materialPipelines)
-        for (PipelineHandle p : {mp.fill.pipeline, mp.rq.pipeline})
-            if (p) m_device.destroyPipeline(p);
+        for (int k = 0; k < 4; ++k)
+            for (PipelineHandle p : {mp.fill[k].pipeline, mp.rq[k].pipeline})
+                if (p) m_device.destroyPipeline(p);
+    for (auto& variants : m_defaultVariants)
+        for (int k = 1; k < 4; ++k) // [0] are the forward pipelines, destroyed above
+            if (variants[k]) m_device.destroyPipeline(variants[k]);
     for (auto* map : {&m_postPipelines, &m_computePipelines})
         for (auto& [id, vp] : *map)
             if (vp.pipeline) m_device.destroyPipeline(vp.pipeline);
@@ -198,6 +202,8 @@ void Renderer::createPipelines() {
     fwd.depthFormat = kDepthFormat;
     fwd.debugName = "pipeline.forward";
     m_forwardPipeline = m_device.createGraphicsPipeline(fwd);
+    m_defaultDescs[0] = fwd;
+    m_defaultVariants[0][0] = m_forwardPipeline;
     m_forwardDesc = fwd;
     m_forwardDesc.fragment = {};
     m_forwardDesc.debugName = "pipeline.material";
@@ -222,6 +228,8 @@ void Renderer::createPipelines() {
         rt.fragment = loadShader("forward_rq.frag");
         rt.debugName = "pipeline.forward.rayquery";
         m_forwardRtPipeline = m_device.createGraphicsPipeline(rt);
+        m_defaultDescs[1] = rt;
+        m_defaultVariants[1][0] = m_forwardRtPipeline;
     }
 }
 
@@ -333,8 +341,12 @@ std::vector<MeshHandle> Renderer::meshes() const {
 }
 
 TextureHandle Renderer::createTexture2D(u32 width, u32 height, const void* rgba8, const char* name) {
-    TextureHandle t = m_device.createTexture(
-        {width, height, 1, Format::RGBA8_SRGB, TextureUsage::Sampled | TextureUsage::TransferDst, name});
+    return createTexture2D(width, height, rgba8, name, true);
+}
+
+TextureHandle Renderer::createTexture2D(u32 width, u32 height, const void* rgba8, const char* name, bool srgb) {
+    TextureHandle t = m_device.createTexture({width, height, 1, srgb ? Format::RGBA8_SRGB : Format::RGBA8_UNORM,
+                                              TextureUsage::Sampled | TextureUsage::TransferDst, name});
     m_device.uploadTexture(t, rgba8, u64(width) * height * 4);
     m_textures.push_back(t);
     return t;
@@ -366,9 +378,32 @@ bool Renderer::rebuild(VersionedPipeline& vp, ShaderHandle shader, const Graphic
     return static_cast<bool>(vp.pipeline);
 }
 
-PipelineHandle Renderer::materialPipeline(ShaderHandle shader, bool rayQuery) {
+GraphicsPipelineDesc Renderer::withState(GraphicsPipelineDesc desc, u32 state) {
+    if (state & 1u) desc.cullMode = CullMode::None; // double sided (the shaders turn back faces' normals)
+    if (state & 2u) {                               // see-through: blended over what is behind
+        desc.blend = BlendMode::Alpha;
+        desc.depthWrite = false;
+    }
+    return desc;
+}
+
+// The default material's pipeline for a state (the variants made on first use).
+PipelineHandle Renderer::defaultPipeline(bool rayQuery, u32 state) {
+    const int rq = rayQuery && m_forwardRtPipeline ? 1 : 0;
+    PipelineHandle& p = m_defaultVariants[rq][state & 3u];
+    if (!p) {
+        GraphicsPipelineDesc desc = withState(m_defaultDescs[rq], state);
+        desc.debugName = "pipeline.forward.variant";
+        p = m_device.createGraphicsPipeline(desc);
+    }
+    return p;
+}
+
+PipelineHandle Renderer::materialPipeline(ShaderHandle shader, bool rayQuery, u32 state) {
     if (!m_shaders.ready(shader)) return {};
+    state &= 3u;
     MaterialPipelines& mp = m_materialPipelines[shader.id];
+    const GraphicsPipelineDesc desc = withState(m_forwardDesc, state);
     if (rayQuery) {
         if (!mp.rqRequested) { // compiled on first use: games without RT never pay for it
             mp.rqRequested = true;
@@ -377,9 +412,9 @@ PipelineHandle Renderer::materialPipeline(ShaderHandle shader, bool rayQuery) {
                 NOVA_CORE_WARN("Renderer: material '{}' has no ray query variant; drawn without ray-traced shadows",
                                m_shaders.path(shader).filename().string());
         }
-        if (mp.rqShader && rebuild(mp.rq, mp.rqShader, &m_forwardDesc)) return mp.rq.pipeline;
+        if (mp.rqShader && rebuild(mp.rq[state], mp.rqShader, &desc)) return mp.rq[state].pipeline;
     }
-    return rebuild(mp.fill, shader, &m_forwardDesc) ? mp.fill.pipeline : PipelineHandle{};
+    return rebuild(mp.fill[state], shader, &desc) ? mp.fill[state].pipeline : PipelineHandle{};
 }
 
 PipelineHandle Renderer::postProcessPipeline(ShaderHandle shader) {
@@ -601,6 +636,11 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         inst.custom = d.material.customParams;
         const u32 customTex = d.material.customTexture ? m_device.bindlessIndex(d.material.customTexture) : ~0u;
         inst.extra = glm::vec4(customTex == ~0u ? -1.0f : static_cast<f32>(customTex), di.cell);
+        auto mapIndex = [&](rhi::TextureHandle t) { return t ? static_cast<f32>(m_device.bindlessIndex(t)) : -1.0f; };
+        inst.maps = glm::vec4(mapIndex(d.material.normalTexture), mapIndex(d.material.metallicRoughnessTexture),
+                              mapIndex(d.material.occlusionTexture), mapIndex(d.material.emissiveTexture));
+        inst.surface = glm::vec4(d.material.normalScale, d.material.occlusionStrength, d.material.alphaCutoff,
+                                 static_cast<f32>(d.material.alphaMode));
 
         // Split copies (moved off their lap's center) stay out of the TLAS: the rays see each
         // object whole, once per lap; a copy laid over its original would shadow itself.
@@ -610,7 +650,8 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         const auto refitted = skinned ? skinnedBlas.find(di.draw) : skinnedBlas.end();
         const AccelStructHandle blas = skinned ? (refitted != skinnedBlas.end() ? refitted->second : AccelStructHandle{})
                                                : m_meshes[d.mesh.id].blas;
-        if (tlasRecords && d.castShadows && blas && !di.splitCopy) {
+        const bool seeThrough = d.material.alphaMode == AlphaMode::Blend;
+        if (tlasRecords && d.castShadows && blas && !di.splitCopy && !seeThrough) {
             AccelStructInstance& r = tlasRecords[tlasCount++];
             toInstanceTransform(model, r.transform);
             r.instanceCustomIndex = i;
@@ -643,23 +684,30 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     cmd.pushConstants(gpu::SkyPush{frameAlloc.gpu});
     cmd.draw(3);
 
-    PipelineHandle defaultPipeline = m_forwardPipeline;
     const bool wireframe = s.wireframe && m_wireframePipeline;
-    if (wireframe) defaultPipeline = m_wireframePipeline;
-    else if (useRt && m_forwardRtPipeline) defaultPipeline = m_forwardRtPipeline;
 
-    // Group draws by pipeline: the default material first, then each game material shader.
-    // A material whose shader is not ready (first compile failed) falls back to the default.
+    // The opaque draws grouped by pipeline (the default material's variants, then each game
+    // material shader's; one whose shader is not ready falls back to the default), then the
+    // see-through ones from the farthest to the nearest, blended over what is behind them.
     m_drawOrder.clear();
+    std::vector<std::pair<f32, u32>> seeThrough; // (distance², instance)
     for (u32 i = 0; i < drawCount; ++i) {
         const DrawItem& d = scene.draws[m_instances[i].draw]; // meshes checked by expandDraws
-        u64 key = 0;
-        if (d.material.shader && !wireframe)
-            if (PipelineHandle custom = materialPipeline(d.material.shader, useRt)) key = custom.key();
-        m_drawOrder.emplace_back(key, i);
+        const u32 state = pipelineState(d.material);
+        if ((state & 2u) && !wireframe) {
+            const glm::vec3 at = glm::vec3(d.transform[3]) + m_instances[i].offset; // camera-relative
+            seeThrough.emplace_back(glm::dot(at, at), i);
+            continue;
+        }
+        PipelineHandle p = wireframe ? m_wireframePipeline : PipelineHandle{};
+        if (!p && d.material.shader) p = materialPipeline(d.material.shader, useRt, state);
+        if (!p) p = defaultPipeline(useRt, state);
+        m_drawOrder.emplace_back(p.key(), i);
     }
     std::stable_sort(m_drawOrder.begin(), m_drawOrder.end(),
                      [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::stable_sort(seeThrough.begin(), seeThrough.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (const auto& [distance, i] : seeThrough) m_drawOrder.emplace_back(~0ull, i); // bound per draw
 
     gpu::DrawPush push{};
     push.frame = frameAlloc.gpu;
@@ -671,9 +719,13 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     for (const auto& [pipelineKey, i] : m_drawOrder) {
         const WrapInstance& di = m_instances[i];
         const DrawItem& d = scene.draws[di.draw];
-        if (pipelineKey != boundPipeline) {
-            cmd.bindPipeline(pipelineKey == 0 ? defaultPipeline : materialPipeline(d.material.shader, useRt));
-            boundPipeline = pipelineKey;
+        if (pipelineKey != boundPipeline || pipelineKey == ~0ull) {
+            const u32 state = pipelineState(d.material);
+            PipelineHandle p = wireframe ? m_wireframePipeline : PipelineHandle{};
+            if (!p && d.material.shader) p = materialPipeline(d.material.shader, useRt, state);
+            if (!p) p = defaultPipeline(useRt, state);
+            if (p.key() != boundPipeline) cmd.bindPipeline(p);
+            boundPipeline = p.key();
         }
         const GpuMesh& mesh = m_meshes[d.mesh.id];
         if (!(mesh.indexBuffer == boundIndex)) {

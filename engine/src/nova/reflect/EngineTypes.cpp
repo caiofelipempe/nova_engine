@@ -29,6 +29,8 @@ void registerEngineTypes() {
         .value("Velocity", physics::JointMotorMode::Velocity)
         .value("Position", physics::JointMotorMode::Position);
 
+    enumeration<AlphaMode>("AlphaMode").value("Opaque", AlphaMode::Opaque).value("Mask", AlphaMode::Mask).value("Blend", AlphaMode::Blend);
+
     type<Material>("Material")
         .field("baseColor", &Material::baseColor, {.color = true})
         .field("metallic", &Material::metallic, {.min = 0.0f, .max = 1.0f})
@@ -37,6 +39,15 @@ void registerEngineTypes() {
         .field("emissiveStrength", &Material::emissiveStrength, {.min = 0.0f, .max = 100.0f})
         .field("checker", &Material::checker, {.label = "Checker Pattern"})
         .field("baseColorTexture", &Material::baseColorTexture, {.label = "Base Color Texture"})
+        .field("normalTexture", &Material::normalTexture, {.tooltip = "Tangent-space normal map (linear; +Y up)", .label = "Normal Map"})
+        .field("normalScale", &Material::normalScale, {.min = 0.0f, .max = 4.0f, .speed = 0.01f})
+        .field("metallicRoughnessTexture", &Material::metallicRoughnessTexture, {.tooltip = "G: roughness, B: metallic (multiply the values above)", .label = "Metallic Roughness Texture"})
+        .field("occlusionTexture", &Material::occlusionTexture, {.tooltip = "R: ambient occlusion", .label = "Occlusion Texture"})
+        .field("occlusionStrength", &Material::occlusionStrength, {.min = 0.0f, .max = 1.0f})
+        .field("emissiveTexture", &Material::emissiveTexture, {.label = "Emissive Texture"})
+        .field("alphaMode", &Material::alphaMode, {.tooltip = "Mask: cut out below the cutoff. Blend: see-through"})
+        .field("alphaCutoff", &Material::alphaCutoff, {.min = 0.0f, .max = 1.0f})
+        .field("doubleSided", &Material::doubleSided)
         .field("shader", &Material::shader, {.tooltip = "Game material shader (nova/material.glsl); empty = default shading"})
         .field("customParams", &Material::customParams, {.speed = 0.01f, .tooltip = "Surface::custom in the material shader"})
         .field("customTexture", &Material::customTexture, {.tooltip = "nova_customTexture(uv) in the material shader"});

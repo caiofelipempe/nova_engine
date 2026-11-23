@@ -56,8 +56,10 @@ struct InstanceData {
     glm::vec4 params;       ///< x = metallic, y = roughness, z = material flags (uint bits), w = base color texture index (-1 = none).
     glm::vec4 custom;       ///< Material::customParams.
     glm::vec4 extra;        ///< x = Material::customTexture index (-1 = none); yzw = center of the lap this copy is drawn in (camera-relative m).
+    glm::vec4 maps;         ///< Bindless indices (-1 = none): x normal, y metallic-roughness, z occlusion, w emissive.
+    glm::vec4 surface;      ///< x normalScale, y occlusionStrength, z alphaCutoff, w AlphaMode.
 };
-static_assert(sizeof(InstanceData) == 208);
+static_assert(sizeof(InstanceData) == 240);
 
 /// @brief Push constants of the forward pass (`forward_push.glsl`).
 struct DrawPush {

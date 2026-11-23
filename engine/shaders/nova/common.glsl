@@ -50,6 +50,8 @@ struct InstanceData {
     vec4 params;    // x metallic, y roughness, z flags (as float bits), w baseColor texture (bindless, < 0 = none)
     vec4 custom;    // Material::customParams (free for game material shaders)
     vec4 extra;     // x = Material::customTexture (bindless, < 0 = none), yzw = center of the lap of this copy
+    vec4 maps;      // bindless (< 0 = none): x normal, y metallic-roughness, z occlusion, w emissive
+    vec4 surface;   // x normalScale, y occlusionStrength, z alphaCutoff, w alpha mode (0 opaque, 1 mask, 2 blend)
 };
 
 struct Vertex {

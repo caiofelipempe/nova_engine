@@ -119,14 +119,30 @@ struct ShaderHandle {
 };
 
 /// @brief Metallic-roughness PBR surface parameters.
+/// @brief How a material's alpha is used (as glTF's alphaMode).
+enum class AlphaMode : u8 {
+    Opaque, ///< Alpha ignored.
+    Mask,   ///< Cut out where alpha < Material::alphaCutoff (foliage, fences).
+    Blend,  ///< See-through by alpha (glass): drawn after the opaque, back to front, casting no ray-traced shadow.
+};
+
 struct Material {
-    glm::vec4 baseColor{1.0f};    ///< Linear RGBA albedo (metals: specular color).
+    glm::vec4 baseColor{1.0f};    ///< Linear RGBA albedo (metals: specular color); alpha for AlphaMode::Mask / Blend.
     f32 metallic = 0.0f;          ///< 0 = dielectric, 1 = metal.
     f32 roughness = 0.5f;         ///< 0 = mirror, 1 = fully rough (clamped to 0.04 in shaders).
     glm::vec3 emissive{0.0f};     ///< Emitted linear RGB color.
     f32 emissiveStrength = 0.0f;  ///< Multiplier for `emissive` (HDR; values > 1 bloom-ready).
     bool checker = false;         ///< Procedural world-space checker pattern (handy for floors).
-    rhi::TextureHandle baseColorTexture; ///< Optional albedo texture (multiplies baseColor), sampled with the mesh UVs.
+    rhi::TextureHandle baseColorTexture; ///< Optional albedo texture (sRGB; multiplies baseColor), sampled with the mesh UVs.
+    rhi::TextureHandle normalTexture;    ///< Optional tangent-space normal map (linear; glTF convention: +Y up).
+    f32 normalScale = 1.0f;              ///< Strength of the normal map's tilt (glTF normalTexture.scale).
+    rhi::TextureHandle metallicRoughnessTexture; ///< Optional (linear; glTF): G multiplies roughness, B metallic.
+    rhi::TextureHandle occlusionTexture; ///< Optional ambient occlusion (linear; R): darkens the ambient light.
+    f32 occlusionStrength = 1.0f;        ///< 0 = no occlusion, 1 = all of it.
+    rhi::TextureHandle emissiveTexture;  ///< Optional (sRGB): multiplies emissive.
+    AlphaMode alphaMode = AlphaMode::Opaque; ///< How alpha is used.
+    f32 alphaCutoff = 0.5f;              ///< AlphaMode::Mask: cut where alpha is below this.
+    bool doubleSided = false;            ///< Both faces drawn (otherwise back faces are culled).
     /// @brief Optional game material: a fragment shader written against `nova/material.glsl`
     ///        (invalid = the engine's default shading).
     ShaderHandle shader;
