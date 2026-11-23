@@ -13,7 +13,10 @@ bool Entity::valid() const { return m_scene && m_scene->registry().valid(m_handl
 entt::registry& Entity::registry() const { return m_scene->registry(); }
 
 // ------------------------------------------------------------------- Scene --
-Scene::Scene(std::string name) : m_name(std::move(name)) { connectSignals(); }
+Scene::Scene(std::string name) : m_name(std::move(name)) {
+    connectSignals();
+    activateWorld(); // a new scene is built in its own world, not in the last one made active
+}
 
 void Scene::connectSignals() {
     // Removing the component (or destroying the entity) removes the body from the world.

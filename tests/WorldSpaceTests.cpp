@@ -327,6 +327,14 @@ void wrapInstances() {
 }
 
 void sceneIntegration() {
+    { // A new scene is built in its own world, not in a small one another scene made active.
+        Scene small("Small");
+        small.setWorldSize(WorldSize::cube(48.0));
+        Scene fresh("Fresh");
+        Entity e = fresh.createEntity("Block");
+        e.transform().position = {28.0, 0.0, -144.0}; // outside the small world: would go around it
+        CHECK(e.transform().position == GlobalPosition(28.0, 0.0, -144.0));
+    }
     // The transform stores a GlobalPosition; meters assign naturally.
     Scene a("Far");
     Entity near0 = a.createEntity("Near");

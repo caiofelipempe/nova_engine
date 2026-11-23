@@ -263,9 +263,9 @@ public:
     const WorldSize& worldSize() const { return m_worldSize; }
     /// @brief Changes it (and makes it active); every position is brought into the new world.
     void setWorldSize(const WorldSize& size);
-    /// @brief Makes this scene's WorldSize the active one (update(), buildRenderScene() and the
-    ///        simulation do it themselves; call it before working with positions of a scene that
-    ///        is not the last one updated).
+    /// @brief Makes this scene's WorldSize the active one (the constructor, update(),
+    ///        buildRenderScene() and the simulation do it themselves; call it before working with
+    ///        positions of a scene that is not the last one made or updated).
     void activateWorld() const { WorldSize::setActive(m_worldSize); }
 
     /// @brief Hash of the simulation state: every entity's exact position, rotation, scale and body
