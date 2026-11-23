@@ -148,12 +148,17 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
         out.sun.intensity = l.intensity;
     }
 
-    for (auto [e, t, l] : m_registry.view<TransformComponent, PointLightComponent>().each())
-        out.pointLights.push_back({(t.position - out.camera.origin).toVec3(), l.radius, l.color, l.intensity});
+    // What the physics moves is drawn between its last two steps (interpolatePhysics).
+    TransformComponent drawn;
+    for (auto [e, t, l] : m_registry.view<TransformComponent, PointLightComponent>().each()) {
+        const TransformComponent& at = drawnPose(e, t, drawn) ? drawn : t;
+        out.pointLights.push_back({(at.position - out.camera.origin).toVec3(), l.radius, l.color, l.intensity});
+    }
 
     for (auto [e, t, m] : m_registry.view<TransformComponent, MeshComponent>().each()) {
         if (!m.mesh) continue;
-        out.draws.push_back({m.mesh, t.matrixRelativeTo(out.camera.origin), m.material, m.castShadows});
+        const TransformComponent& at = drawnPose(e, t, drawn) ? drawn : t;
+        out.draws.push_back({m.mesh, at.matrixRelativeTo(out.camera.origin), m.material, m.castShadows});
     }
     return hasCamera;
 }

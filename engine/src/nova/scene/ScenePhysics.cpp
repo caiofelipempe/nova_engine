@@ -51,6 +51,7 @@ void Scene::startSimulation(Scope<physics::PhysicsWorld> world) {
     m_physics->setGravity(fl(m_physicsSettings.gravity)); // a world made elsewhere follows the scene too
     m_physics->setCollisionLayers(m_physicsSettings.layers);
     m_physicsAccumulator = Duration();
+    m_stepPoses.clear();
     pushPhysicsFocus(); // before the bodies: they are placed where the action is
     for (auto e : m_registry.view<RigidBodyComponent>()) createBody(e);
     for (auto e : m_registry.view<JointComponent>()) createJoint(e);
@@ -59,6 +60,7 @@ void Scene::startSimulation(Scope<physics::PhysicsWorld> world) {
 
 void Scene::stopSimulation() {
     if (!m_physics) return;
+    m_stepPoses.clear();
     for (auto [e, cc] : m_registry.view<CharacterControllerComponent>().each()) cc.character = {};
     for (auto [e, jc] : m_registry.view<JointComponent>().each()) {
         jc.joint = {};
@@ -556,17 +558,37 @@ void Scene::stepPhysics(Duration dt) {
 
     constexpr int kMaxSteps = 4; // avoid the spiral of death after a hitch
     m_physicsAccumulator += dt;
-    int steps = 0;
-    while (fixedTimeStep > Duration() && m_physicsAccumulator >= fixedTimeStep && steps < kMaxSteps) {
-        for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each())
-            if (rb.type == physics::BodyType::Kinematic && rb.body)
-                m_physics->moveKinematic(rb.body, t.position, fl(t.rotation), fixedTimeStep);
+    int count = 0; // steps this frame
+    for (Duration left = m_physicsAccumulator; fixedTimeStep > Duration() && left >= fixedTimeStep && count < kMaxSteps;
+         left -= fixedTimeStep)
+        ++count;
+    if (count == 0) return;
+
+    // Kinematic bodies go from where the physics has them to where the scene put them, spread
+    // evenly over this frame's steps: a frame with two steps moves them half way in each (all in
+    // the first would push what rides them at twice the speed, then not at all).
+    struct Glide {
+        physics::BodyId body;
+        GlobalPosition from, to;
+        glm::quat turnFrom, turnTo;
+    };
+    std::vector<Glide> glides;
+    for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each())
+        if (rb.type == physics::BodyType::Kinematic && rb.body) {
+            Glide g{rb.body, {}, t.position, {}, fl(t.rotation)};
+            m_physics->getTransform(rb.body, g.from, g.turnFrom);
+            glides.push_back(g);
+        }
+    for (int done = 1; done <= count; ++done) {
+        const f32 f = static_cast<f32>(done) / static_cast<f32>(count);
+        for (const Glide& g : glides)
+            if (done == count) m_physics->moveKinematic(g.body, g.to, g.turnTo, fixedTimeStep);
+            else m_physics->moveKinematic(g.body, lerp(g.from, g.to, f), glm::slerp(g.turnFrom, g.turnTo, f), fixedTimeStep);
+        if (done == count) recordStepPoses(); // drawn between this pose and the next one
         m_physics->step(fixedTimeStep);
         m_physicsAccumulator -= fixedTimeStep;
-        ++steps;
     }
-    if (steps == kMaxSteps) m_physicsAccumulator = Duration();
-    if (steps == 0) return;
+    if (count == kMaxSteps) m_physicsAccumulator = Duration();
 
     // Simulation -> ECS
     for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each()) {
@@ -579,7 +601,51 @@ void Scene::stepPhysics(Duration dt) {
     }
 
     readCharacters();
+    for (auto& [e, poses] : m_stepPoses) // where the last step left them
+        if (const auto* t = m_registry.try_get<TransformComponent>(e)) poses.after = *t;
     dispatchContacts();
+}
+
+// Before the last step of a frame: where what the physics moves is now (interpolatePhysics).
+void Scene::recordStepPoses() {
+    m_stepPoses.clear();
+    if (!interpolatePhysics) return;
+    for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each()) {
+        if (!rb.body || rb.type == physics::BodyType::Static) continue;
+        if (rb.type == physics::BodyType::Dynamic && !m_physics->isActive(rb.body)) continue; // asleep: still
+        StepPoses& poses = m_stepPoses[e];
+        poses.before = t; // the scale (and the rest) as it is
+        glm::quat q;
+        m_physics->getTransform(rb.body, poses.before.position, q);
+        poses.before.setRotation(q);
+        poses.kinematic = rb.type == physics::BodyType::Kinematic;
+    }
+    for (auto [e, cc, t] : m_registry.view<CharacterControllerComponent, TransformComponent>().each()) {
+        if (!cc.character) continue;
+        StepPoses& poses = m_stepPoses[e];
+        poses.before = t;
+        poses.before.position = m_physics->characterState(cc.character).position - steps(cc.offset);
+    }
+}
+
+bool Scene::drawnPose(entt::entity e, const TransformComponent& t, TransformComponent& out) const {
+    if (!interpolatePhysics || !m_physics) return false;
+    const auto it = m_stepPoses.find(e);
+    if (it == m_stepPoses.end()) return false;
+    const StepPoses& poses = it->second;
+    // Moved since the step (a teleport, the editor): drawn where it is. A kinematic body's
+    // transform is the target its script set for the next steps: drawn where the physics has it.
+    if (!poses.kinematic && !(t.position == poses.after.position)) return false;
+    const f64 alpha = fixedTimeStep > Duration() ? m_physicsAccumulator.seconds() / fixedTimeStep.seconds() : 1.0;
+    out = TransformComponent::lerp(poses.before, poses.after, static_cast<f32>(std::clamp(alpha, 0.0, 1.0)));
+    out.scale = t.scale;
+    return true;
+}
+
+TransformComponent Scene::renderTransform(Entity e) {
+    const TransformComponent& t = e.transform();
+    TransformComponent drawn;
+    return drawnPose(e.handle(), t, drawn) ? drawn : t;
 }
 
 // ------------------------------------------------------------------- world --

@@ -109,6 +109,13 @@ public:
     /// @brief Physics step length (at most 4 steps run per update). Exact: the accumulator counts
     ///        whole flicks, so the simulation never drifts from the scene clock.
     Duration fixedTimeStep = Duration::perSecond(60);
+    /// @brief Draws what the physics moves (dynamic and kinematic bodies, characters) between the
+    ///        poses of its last two steps, by the time left over (smooth whatever the frame rate,
+    ///        one step behind at most). Drawing only: transforms keep the simulated pose.
+    bool interpolatePhysics = true;
+    /// @brief The pose `e` is drawn at this frame: its transform, or between the last two physics
+    ///        steps (interpolatePhysics). A camera following a body should follow this.
+    TransformComponent renderTransform(Entity e);
 
     /// @brief Applies a force (N) to the entity's body during the next step. No-op without a body.
     void addForce(Entity e, const ForceVec& force);
@@ -280,6 +287,14 @@ private:
     GlobalPosition m_physicsFocus;
     bool m_hasPhysicsFocus = false;
     Duration m_physicsAccumulator;
+    // Poses of what the physics moved, before and after the last step (interpolatePhysics).
+    struct StepPoses {
+        TransformComponent before, after;
+        bool kinematic = false; // drawn from the physics poses whatever its transform says (the target)
+    };
+    std::unordered_map<entt::entity, StepPoses> m_stepPoses;
+    bool drawnPose(entt::entity e, const TransformComponent& t, TransformComponent& out) const;
+    void recordStepPoses();
     std::optional<GlobalPosition> m_fixedOrigin;
     WorldSize m_worldSize;
     std::vector<std::pair<entt::entity, WorldWrapHit>> m_wrapHits; // reported after the update

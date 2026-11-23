@@ -713,6 +713,99 @@ void circularWorld() {
     WorldSize::setActive({});
 }
 
+void seamlessFloor() {
+    // A floor exactly one lap long (20 m): its two ends meet, one lap over. Its copy there is part of
+    // the same body, so a ball rolls across that join without the bump separate bodies give (on
+    // their edge a ball rolling at 9 m/s is thrown up at more than 2 m/s). Once with the join away
+    // from the float window's own seam (x = ±10 m, the origin at 0), once right on it.
+    for (const f64 center : {5.0, 0.0}) {
+        Scene scene;
+        scene.setWorldSize(WorldSize::meters(20.0, 0.0, 0.0));
+        scene.setWorldOrigin(GlobalPosition());
+        Entity floor = scene.createEntity("Floor");
+        floor.transform().position = {center, -0.5, 0.0};
+        floor.transform().scale = {20.0, 1.0, 6.0};
+        floor.add<RigidBodyComponent>(BodyType::Static);
+        floor.add<BoxColliderComponent>();
+        Entity ball = scene.createEntity("Ball");
+        ball.transform().position = {0.0, 0.5, 0.0};
+        auto& rb = ball.add<RigidBodyComponent>();
+        rb.linearDamping = 0.0f;
+        rb.restitution = 0.6f;
+        ball.add<SphereColliderComponent>();
+        scene.startSimulation();
+        run(scene, 30); // settled
+        scene.setLinearVelocity(ball, {9.0f, 0.0f, 0.0f});
+        f32 rise = 0.0f, side = 0.0f;
+        f64 highest = 0.0;
+        for (int i = 0; i < 60 * 4; ++i) { // about 26 m: across the join and the window seam
+            scene.update(kFrame);
+            const glm::vec3 v = scene.linearVelocity(ball).toGlm();
+            rise = std::max(rise, v.y);
+            side = std::max(side, std::abs(v.z));
+            highest = std::max(highest, ball.transform().position.toMeters().y);
+        }
+        CHECK(rise < (center == 0.0 ? 0.5f : 0.2f)); // a millimetre hop at most (5 mm on the window seam)
+        CHECK(side < 0.01f);
+        CHECK(highest < 0.51);
+        CHECK(scene.linearVelocity(ball).toGlm().x > 5.5f); // rolling (5/7 of the push), not stopped
+        CHECK(scene.physicsBodyCount() == 2);
+    }
+    WorldSize::setActive({});
+}
+
+void kinematicGlide() {
+    // A kinematic body moved 2 m in a frame of two physics steps goes 1 m in each: it pushes what
+    // rides it at the same speed in both (not twice as fast in the first and still in the second).
+    Scene scene;
+    PhysicsSettings ps;
+    ps.gravity = {0.0, 0.0, 0.0};
+    scene.setPhysicsSettings(ps);
+    Entity platform = scene.createEntity("Platform");
+    platform.add<RigidBodyComponent>(BodyType::Kinematic);
+    platform.add<BoxColliderComponent>();
+    scene.startSimulation();
+    run(scene, 1);
+    platform.transform().position = {2.0, 0.0, 0.0};
+    scene.update(Duration::perSecond(30)); // two steps
+    CHECK_NEAR(scene.linearVelocity(platform).toGlm().x, 60.0, 0.01); // 1 m in the last 1/60 s
+    GlobalPosition at;
+    glm::quat q;
+    scene.physics()->getTransform(platform.get<RigidBodyComponent>().body, at, q);
+    CHECK_NEAR(at.toMeters().x, 2.0, 1e-4);
+}
+
+void drawnBetweenSteps() {
+    // What the physics moves is drawn between its last two steps, by the time left over; its
+    // transform keeps the simulated pose.
+    Scene scene;
+    Entity ball = scene.createEntity("Ball");
+    ball.transform().position = {0.0, 20.0, 0.0};
+    ball.add<MeshComponent>(MeshHandle{1});
+    ball.add<RigidBodyComponent>();
+    ball.add<SphereColliderComponent>();
+    scene.startSimulation();
+    run(scene, 29);
+    const f64 before = ball.transform().position.toMeters().y;
+    run(scene, 1);
+    const f64 after = ball.transform().position.toMeters().y;
+    CHECK(after < before);
+    CHECK_NEAR(scene.renderTransform(ball).position.toMeters().y, before, 1e-4); // no time left over: one step behind
+    scene.update(Duration::perSecond(120)); // half a step: no step runs
+    CHECK(ball.transform().position.toMeters().y == after);
+    const f64 halfway = (before + after) / 2.0;
+    CHECK_NEAR(scene.renderTransform(ball).position.toMeters().y, halfway, 1e-4);
+    RenderScene rs;
+    scene.buildRenderScene(rs, 1.0f);
+    CHECK(rs.draws.size() == 1 && std::abs(rs.draws[0].transform[3].y - static_cast<f32>(halfway)) < 1e-3f);
+    // Turned off, or moved by hand since the step: drawn where its transform is.
+    scene.interpolatePhysics = false;
+    CHECK(scene.renderTransform(ball).position.toMeters().y == after);
+    scene.interpolatePhysics = true;
+    ball.transform().position = {5.0, 3.0, 0.0};
+    CHECK(scene.renderTransform(ball).position == GlobalPosition(5.0, 3.0, 0.0));
+}
+
 void prefabRemapsRefs() {
     Scene scene("prefab");
     Entity a = scene.createEntity("A");
@@ -922,6 +1015,9 @@ int main() {
         {"joints: far out, across a rebase", farJointsAndRebase},
         {"joints: prefab references and saving", prefabRemapsRefs},
         {"circular world: wrap-around, collisions across the seam, files", circularWorld},
+        {"circular world: a floor one lap long has no bump where its ends meet", seamlessFloor},
+        {"kinematic bodies: a frame's move spread over its steps", kinematicGlide},
+        {"drawing: between the last two physics steps", drawnBetweenSteps},
         {"characters: walk, land, jump", characterWalks},
         {"characters: slide along walls", characterSlidesAlongWalls},
         {"characters: stairs and steep slopes", characterStairsAndSlopes},

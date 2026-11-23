@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <string>
 #include <unordered_map>
 
 namespace {
@@ -67,7 +69,14 @@ public:
                     r.createMesh(shapes::gem(), "Gem"), r.createMesh(shapes::terrain(), "Terrain"),
                     r.createMesh(shapes::capsule(0.3f, 0.6f, 0.9f), "Player capsule"),
                     r.createMesh(nova::MeshData::plane(1.0f, 32), "Grid")};
-        load(0, false); // GameLayer starts the simulation after onStart()
+        int first = 0; // `--scenario <name>`: start there
+        for (int i = 0; i < static_cast<int>(scenarios().size()); ++i)
+            if (s_startScenario == scenarios()[i].name) first = i;
+        load(first, false); // GameLayer starts the simulation after onStart()
+#if NOVA_WRAP_RENDER_MODES
+        if (s_wrapShift >= 0) r.settings().wrapShift = static_cast<nova::WrapShift>(s_wrapShift);
+        if (s_wrapRepeat >= 0) r.settings().wrapRepeat = static_cast<nova::u32>(s_wrapRepeat);
+#endif
         if (s_selfCheck) {
             // `Sandbox --check`: every scenario, two hidden runs each; then quit (exit code 1 on divergence).
             for (const Scenario& sc : scenarios()) {
@@ -80,6 +89,8 @@ public:
     }
 
     static inline bool s_selfCheck = false, s_checkFailed = false;
+    static inline std::string s_startScenario;              // --scenario "<name>"
+    static inline int s_wrapShift = -1, s_wrapRepeat = -1; // --wrap triangle|object|split, --laps N
 
     // Like GameLayer::onUpdate, plus pause, single step and time scale.
     void onUpdate(float dt) override {
@@ -250,7 +261,8 @@ private:
         if (!player) return;
         auto& cam = m_camera.transform();
         cam.setEuler({m_orbitPitch, m_orbitYaw, 0.0f}, nova::EulerOrder::YXZ);
-        cam.position = player.transform().position + glm::vec3(0.0f, 1.5f, 0.0f) - cam.forward() * 7.0f;
+        // Where the player is drawn (between physics steps), or the camera and the player shake.
+    cam.position = scene().renderTransform(player).position + glm::vec3(0.0f, 1.5f, 0.0f) - cam.forward() * 7.0f;
     }
 
     void shoot() {
@@ -409,8 +421,17 @@ private:
 };
 
 int main(int argc, char** argv) {
-    for (int i = 1; i < argc; ++i)
-        if (std::string_view(argv[i]) == "--check") PhysicsBench::s_selfCheck = true;
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        const bool hasValue = i + 1 < argc;
+        if (arg == "--check") PhysicsBench::s_selfCheck = true;
+        else if (arg == "--scenario" && hasValue) PhysicsBench::s_startScenario = argv[++i];
+        else if (arg == "--laps" && hasValue) PhysicsBench::s_wrapRepeat = std::atoi(argv[++i]);
+        else if (arg == "--wrap" && hasValue) {
+            const std::string_view v = argv[++i];
+            PhysicsBench::s_wrapShift = v == "triangle" ? 0 : v == "object" ? 1 : v == "split" ? 2 : -1;
+        }
+    }
     const int code = nova::run<PhysicsBench>({.name = "Nova Physics Bench", .width = 1280, .height = 720});
     return code != 0 ? code : PhysicsBench::s_checkFailed ? 1 : 0;
 }
