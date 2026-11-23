@@ -15,7 +15,7 @@ namespace nova::gpu {
 
 constexpr u32 kMaxPointLights = 16;      ///< Point lights per frame (`MAX_POINT_LIGHTS`).
 constexpr u32 kFrameFlagRtShadows = 1u;  ///< FrameData::flags: trace shadow rays (`FRAME_FLAG_RT_SHADOWS`).
-constexpr u32 kFrameFlagShadowMaps = 2u; ///< FrameData::flags: the sun's shadow maps (`FRAME_FLAG_SHADOW_MAPS`).
+constexpr u32 kFrameFlagShadowMaps = 2u, kFrameFlagPointShadowMaps = 4u; ///< FrameData::flags: the sun's shadow maps (`FRAME_FLAG_SHADOW_MAPS`).
 constexpr u32 kShadowCascades = 4;       ///< Shadow map cascades (a 2 × 2 atlas).
 constexpr u32 kMaterialFlagChecker = 1u; ///< InstanceData::params.z bit: checker pattern (`MATERIAL_FLAG_CHECKER`).
 /// @brief Period (m) of the world position shaders see (`NOVA_WORLD_TILE`): patterns whose period divides it are seamless.
@@ -51,8 +51,12 @@ struct FrameData {
     f32 shadowBias;          ///< Shadow ray origin offset along the normal.
     f32 _pad0;               ///< Padding (std430).
     PointLight pointLights[kMaxPointLights]; ///< Point lights.
+    glm::vec4 pointShadowParams;   ///< Point shadow maps: x atlas (bindless), y face resolution, z near plane, w depth bias.
+    /// @brief Per point light (4 per vector): its row in the point shadow atlas, -1 none (ray traced
+    ///        shadows, or lit), -2 it casts no shadows at all.
+    glm::ivec4 pointShadowSlots[kMaxPointLights / 4];
 };
-static_assert(sizeof(FrameData) == 256 + 8 * 16 + 4 * 64 + 4 * 16 + 16 + kMaxPointLights * 32);
+static_assert(sizeof(FrameData) == 256 + 8 * 16 + 4 * 64 + 4 * 16 + 16 + kMaxPointLights * 32 + 16 + kMaxPointLights * 4);
 
 /// @brief Per-draw instance data, indexed by DrawPush::instanceIndex.
 struct InstanceData {

@@ -186,6 +186,7 @@ struct PointLightComponent {
     glm::vec3 color{1.0f}; ///< Linear RGB color.
     f32 intensity = 10.0f; ///< Radiance multiplier.
     f32 radius = 8.0f;     ///< Distance at which the light fades to zero.
+    bool castShadows = true; ///< Things block it (ray traced, or cube shadow maps without ray tracing).
 };
 
 /// @brief Built-in behaviour: spins the entity around `axis` while the scene updates.

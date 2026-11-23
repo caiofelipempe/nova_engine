@@ -102,6 +102,37 @@ float nova_shadowMaps(vec3 P, vec3 N) {
     return lit / 9.0;
 }
 
+// Point light shadow maps: six cube faces per light in a row of the atlas, each a 90° view along
+// kNovaFaceDir with kNovaFaceUp (as Renderer's), depth from the light's near plane to its radius.
+const vec3 kNovaFaceDir[6] = vec3[6](vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 1, 0), vec3(0, -1, 0), vec3(0, 0, 1), vec3(0, 0, -1));
+const vec3 kNovaFaceUp[6] = vec3[6](vec3(0, 1, 0), vec3(0, 1, 0), vec3(0, 0, -1), vec3(0, 0, 1), vec3(0, 1, 0), vec3(0, 1, 0));
+
+// A point light's visibility from its shadow map (3 × 3 filtered): 1 = lit.
+float nova_pointShadowMap(int slot, vec3 P, vec3 N, vec3 lightPos, float radius) {
+    const vec4 prm = pc.frame.data.pointShadowParams;
+    const int atlas = int(prm.x), res = int(prm.y);
+    const float near = prm.z;
+    const float dist = length(P - lightPos);
+    const vec3 d = P + N * (2.0 * dist / float(res)) * 1.5 - lightPos; // off the surface by a texel or so
+    const vec3 a = abs(d);
+    const int face = a.x >= a.y && a.x >= a.z ? (d.x > 0.0 ? 0 : 1) : a.y >= a.z ? (d.y > 0.0 ? 2 : 3) : (d.z > 0.0 ? 4 : 5);
+    const vec3 f = kNovaFaceDir[face];
+    const vec3 s = normalize(cross(f, kNovaFaceUp[face]));
+    const vec3 u = cross(s, f);
+    const float m = max(dot(f, d), 1e-4);                   // distance along the face's axis
+    const vec2 uv = vec2(dot(s, d), -dot(u, d)) / m * 0.5 + 0.5; // y flipped, as the projection
+    const float depth = radius / (radius - near) - radius * near / ((radius - near) * m) - prm.w;
+    const ivec2 tile = ivec2(face, slot) * res;
+    const ivec2 at = tile + clamp(ivec2(uv * float(res)), ivec2(0), ivec2(res - 1));
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            const ivec2 q = clamp(at + ivec2(x, y), tile, tile + ivec2(res - 1));
+            lit += depth <= texelFetch(g_textures[nonuniformEXT(atlas)], q, 0).r ? 1.0 : 0.0;
+        }
+    return lit / 9.0;
+}
+
 // Shades a surface with the sun, the point lights and the ambient (darkened by `occlusion`);
 // `sunShadow` receives the sun visibility (for the Shadows debug view).
 vec3 nova_shadeOccluded(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float roughness, float occlusion,
@@ -134,7 +165,12 @@ vec3 nova_shadeOccluded(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, flo
         if (dot(N, L) <= 0.0) continue;
         float window = clamp(1.0 - pow(dist / radius, 4.0), 0.0, 1.0);
         float atten = window * window / (dist * dist + 1.0);
-        float shadow = rtShadows ? nova_traceShadow(origin, L, max(dist - bias, 0.0)) : 1.0;
+        const int slot = pc.frame.data.pointShadowSlots[i >> 2u][i & 3u];
+        float shadow = 1.0;
+        if (slot == -2) shadow = 1.0; // casts no shadows
+        else if (rtShadows) shadow = nova_traceShadow(origin, L, max(dist - bias, 0.0));
+        else if (slot >= 0 && (pc.frame.data.flags & FRAME_FLAG_POINT_SHADOW_MAPS) != 0u)
+            shadow = nova_pointShadowMap(slot, P, N, light.positionRadius.xyz, radius);
         color += nova_brdf(N, V, L, albedo, metallic, roughness) * light.colorIntensity.rgb *
                  light.colorIntensity.w * atten * shadow;
     }

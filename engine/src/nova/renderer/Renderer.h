@@ -82,6 +82,7 @@ struct PointLightData {
     f32 radius = 8.0f;        ///< Distance at which the light reaches zero.
     glm::vec3 color{1.0f};    ///< Linear RGB color.
     f32 intensity = 10.0f;    ///< Radiance multiplier.
+    bool castShadows = true;  ///< Things block it (ray traced, or cube shadow maps without ray tracing).
 };
 
 /// @brief One mesh instance to draw.
@@ -179,6 +180,11 @@ struct RenderSettings {
     bool shadowMaps = true;
     f32 shadowDistance = 120.0f;                 ///< How far from the camera shadow maps reach (m).
     u32 shadowMapSize = 2048;                    ///< Texels per side of each cascade.
+    /// @brief Without ray-traced shadows, the point lights nearest the camera cast shadows from cube
+    ///        shadow maps (six faces each, drawing what is within the light's radius).
+    bool pointShadowMaps = true;
+    u32 maxPointShadows = 4;                     ///< Point lights with shadow maps (the nearest; at most 16).
+    u32 pointShadowMapSize = 512;                ///< Texels per side of each cube face (64..1024).
     /// @brief Frustum culling on the GPU: plain opaque draws (not skinned, not split per triangle)
     ///        are tested by a compute shader and drawn in groups of the same pipeline and mesh, one
     ///        indirect draw each (needs DeviceCaps::drawIndirectFirstInstance; otherwise one draw each,
@@ -231,6 +237,7 @@ struct RenderStats {
     u32 transientTextures = 0; ///< Transient textures of the graphs (shadow atlas, post-process images...).
     u32 pooledTextures = 0;    ///< Textures held behind them (transients that do not overlap share one).
     u32 cullGroups = 0;        ///< Indirect draws of GPU-culled groups (pipeline and mesh).
+    u32 pointShadowMaps = 0;   ///< Point lights drawn into shadow maps.
     /// @brief Instances tested and found visible by GPU culling, as counted by the GPU a few frames
     ///        ago (read back without waiting).
     u32 gpuTested = 0, gpuVisible = 0;
@@ -499,7 +506,14 @@ private:
     bool m_cullCountersZeroed = false; // this frame's culling counters were reset (first culling of the frame)
     bool m_cullCountersRead = false;           // this frame's were read (first render of the frame)
     // Adds the shadow map pass (the cascades, 2 × 2 in a transient atlas) and returns the atlas.
-    RGTexture addShadowMapPass(RenderGraph& graph, const RenderScene& scene, gpu::FrameData& fd, u64 instances, u64 joints);
+    RGTexture addShadowMapPass(RenderGraph& graph, const RenderScene& scene, gpu::FrameData& fd, u64 instances, u64 joints,
+                               const glm::vec4& wrap);
+    // Adds the point shadow map pass (`lights`: indices into scene.pointLights, one atlas row each).
+    RGTexture addPointShadowPass(RenderGraph& graph, const RenderScene& scene, const std::vector<u32>& lights,
+                                 gpu::FrameData& fd, u64 instances, u64 joints, const glm::vec4& wrap);
+    // Draws shadow casters (instance indices; all of them when `list` is null) with the depth-only pipelines.
+    void drawCasters(rhi::CommandList& cmd, const RenderScene& scene, const std::vector<u32>* list, u64 frame,
+                     u64 instances, u64 joints);
     RenderGraph m_graph;               // rebuilt every render call
     Scope<RenderGraphPool> m_graphPool; // the textures behind transients
     std::string m_lastGraph;

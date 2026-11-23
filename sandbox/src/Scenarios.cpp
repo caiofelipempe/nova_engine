@@ -918,6 +918,43 @@ void enterTiny() {
 
 } // namespace
 
+// Point lights casting shadows: three colored lights circling among pillars and balls at dusk (a
+// dim sun). Ray traced shadows, or cube shadow maps without ray tracing (--no-rt).
+View buildLights(Scene& s, const BenchMeshes& m) {
+    Entity sunEntity = s.createEntity("Sun");
+    auto& sl = sunEntity.add<DirectionalLightComponent>();
+    sl.intensity = 0.15f;
+    sunEntity.transform().setEulerDegrees({-50.0f, 35.0f, 0.0f});
+    visual(s, "Ground", m.plane, {0.0, 0.0, 0.0}, {30.0f, 1.0f, 30.0f}, {0.7f, 0.7f, 0.7f, 1});
+    for (int i = 0; i < 8; ++i) {
+        const double angle = i * 2.0 * 3.14159265358979 / 8.0;
+        visual(s, "Pillar", m.cube, {std::cos(angle) * 6.0, 1.5, std::sin(angle) * 6.0}, {0.6f, 3.0f, 0.6f},
+               {0.85f, 0.82f, 0.78f, 1});
+        visual(s, "Ball", m.sphere, {std::cos(angle + 0.4) * 3.0, 0.5, std::sin(angle + 0.4) * 3.0}, glm::vec3(1.0f),
+               {0.8f, 0.8f, 0.85f, 1});
+    }
+    visual(s, "Block", m.cube, {0.0, 0.75, 0.0}, glm::vec3(1.5f), {0.75f, 0.6f, 0.5f, 1});
+    const glm::vec3 colors[3] = {{1.0f, 0.35f, 0.2f}, {0.25f, 0.6f, 1.0f}, {0.4f, 1.0f, 0.4f}};
+    for (int i = 0; i < 3; ++i) {
+        Entity hub = s.createEntity("Light hub " + std::to_string(i));
+        hub.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.3f + 0.15f * i);
+        const double angle = i * 2.0 * 3.14159265358979 / 3.0, r = 2.0 + 2.0 * i;
+        Entity light = s.createEntity("Light " + std::to_string(i));
+        light.transform().position = {std::cos(angle) * r, 1.2 + 0.4 * i, std::sin(angle) * r};
+        auto& pl = light.add<PointLightComponent>();
+        pl.color = colors[i];
+        pl.intensity = 40.0f;
+        pl.radius = 12.0f;
+        light.setParent(hub);
+    }
+    return {{0.0, 9.0, 14.0}, {0.0, 0.5, 0.0}};
+}
+
+void statusLights(Scene&) {
+    const RenderStats& st = Application::get().renderer().stats();
+    ImGui::Text("Point lights with shadow maps: %u (0 while shadows are ray traced)", st.pointShadowMaps);
+}
+
 // Occlusion culling: a street-level camera before a wall, a city of 900 blocks (and 900 balls)
 // behind it. Most of it is hidden; fly over the wall to see it come into view.
 View buildOcclusion(Scene& s, const BenchMeshes& m) {
@@ -973,6 +1010,8 @@ const std::vector<Scenario>& scenarios() {
                      buildSkinning});
         v.push_back({"Tiny circular world", "48 m on every axis: meshes cut at the seam (split, half a lap from the camera; fly to slide it), a crate stack on the Z seam.",
                      buildTiny, nullptr, nullptr, 0.0f, statusTiny, false, false, enterTiny});
+        v.push_back({"Point lights", "Three point lights circling pillars and balls: their shadows (ray traced, or cube shadow maps with --no-rt).",
+                     buildLights, nullptr, nullptr, 0.0f, statusLights});
         v.push_back({"Occlusion", "A wall before a city of 900 blocks: what it hides is not drawn (occlusion culling). Fly over it.",
                      buildOcclusion, nullptr, nullptr, 0.0f, statusOcclusion});
 

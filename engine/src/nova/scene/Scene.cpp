@@ -175,7 +175,7 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
     TransformComponent drawn;
     for (auto [e, t, l] : m_registry.view<TransformComponent, PointLightComponent>().each()) {
         const TransformComponent& at = drawnPose(e, t, drawn) ? drawn : t;
-        out.pointLights.push_back({(at.position - out.camera.origin).toVec3(), l.radius, l.color, l.intensity});
+        out.pointLights.push_back({(at.position - out.camera.origin).toVec3(), l.radius, l.color, l.intensity, l.castShadows});
     }
 
     for (auto [e, t, m] : m_registry.view<TransformComponent, MeshComponent>().each()) {

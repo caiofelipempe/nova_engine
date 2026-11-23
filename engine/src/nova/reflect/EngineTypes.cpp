@@ -91,6 +91,7 @@ void registerEngineTypes() {
         .field("color", &PointLightComponent::color, {.color = true})
         .field("intensity", &PointLightComponent::intensity, {.speed = 0.1f})
         .field("radius", &PointLightComponent::radius, {.speed = 0.05f})
+        .field("castShadows", &PointLightComponent::castShadows)
         .component();
 
     type<RigidBodyLocks>("RigidBodyLocks")

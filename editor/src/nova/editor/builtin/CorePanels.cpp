@@ -436,6 +436,11 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     ImGui::Checkbox("Occlusion", &s.occlusionCulling);
     ImGui::EndDisabled();
     if (s.shadowMaps) ImGui::SliderFloat("Shadow distance", &s.shadowDistance, 10.0f, 500.0f, "%.0f m");
+    ImGui::Checkbox("Point light shadow maps (without RT)", &s.pointShadowMaps);
+    if (s.pointShadowMaps) {
+        int lights = static_cast<int>(s.maxPointShadows);
+        if (ImGui::SliderInt("Point lights with shadows", &lights, 0, 16)) s.maxPointShadows = static_cast<u32>(lights);
+    }
     ImGui::BeginDisabled(!caps.wireframe);
     ImGui::Checkbox("Wireframe", &s.wireframe);
     ImGui::EndDisabled();

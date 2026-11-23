@@ -10,6 +10,7 @@
 
 #define FRAME_FLAG_RT_SHADOWS 1u
 #define FRAME_FLAG_SHADOW_MAPS 2u
+#define FRAME_FLAG_POINT_SHADOW_MAPS 4u
 
 #define MATERIAL_FLAG_CHECKER 1u
 
@@ -46,6 +47,8 @@ struct FrameData {
     float shadowBias;
     float _pad0;
     PointLight pointLights[MAX_POINT_LIGHTS];
+    vec4 pointShadowParams;  // point shadow maps: x atlas (bindless), y face resolution, z near plane, w depth bias
+    ivec4 pointShadowSlots[MAX_POINT_LIGHTS / 4]; // per light: its atlas row, -1 none, -2 casts no shadows
 };
 
 struct InstanceData {

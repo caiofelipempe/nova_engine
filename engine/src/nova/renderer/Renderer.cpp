@@ -534,7 +534,8 @@ void Renderer::expandDraws(const RenderScene& scene, const glm::mat4& viewProj) 
 // sphere and seen by an orthographic camera along the light, snapped to whole texels in the world
 // (no shimmer as the camera moves), rendered into one quarter of the atlas.
 RGTexture Renderer::addShadowMapPass(RenderGraph& graph, const RenderScene& scene, gpu::FrameData& fd, u64 instances,
-                                     u64 joints) {
+                                     u64 joints, const glm::vec4& wrap) {
+    std::array<glm::mat4, gpu::kShadowCascades> matrices; // kept here: the frame data is not read back
     const RenderSettings& s = m_settings;
     const u32 res = std::clamp(s.shadowMapSize, 256u, 4096u);
     const RGTexture atlas = graph.create({res * 2, res * 2, kDepthFormat, "shadow atlas"}); // a transient
@@ -580,7 +581,8 @@ RGTexture Renderer::addShadowMapPass(RenderGraph& graph, const RenderScene& scen
         const glm::mat4 lightView = glm::lookAt(eye, snapped, up);
         glm::mat4 lightProj = glm::ortho(-radius, radius, -radius, radius, 0.0f, 2.0f * radius + kCasterReach);
         lightProj[1][1] *= -1.0f; // as the camera's: y down in Vulkan's clip space
-        fd.shadowMatrices[c] = lightProj * lightView;
+        matrices[c] = lightProj * lightView;
+        fd.shadowMatrices[c] = matrices[c];
         fd.shadowSplits[c] = d1;
         fd.shadowTexels[c] = static_cast<f32>(texel);
     }
@@ -588,53 +590,118 @@ RGTexture Renderer::addShadowMapPass(RenderGraph& graph, const RenderScene& scen
     fd.cameraForward = glm::vec4(forward, 0.0f);
     fd.flags |= gpu::kFrameFlagShadowMaps;
 
-    // Each cascade: the scene's casters into its quarter, through a copy of the frame data seen
-    // from the light (the forward vertex shader reads viewProj).
+    // Each cascade: the scene's casters into its quarter, through frame data seen from the light
+    // (the vertex shader reads only viewProj and wrapSize; the frame data in the upload buffer is
+    // write-combined memory, never read back).
     gpu::FrameData* frame = &fd;
-    graph.addPass("Shadow maps").depth(atlas).execute([this, &scene, frame, atlas, res, instances, joints](RenderPassContext& ctx) {
+    graph.addPass("Shadow maps").depth(atlas).execute([this, &scene, frame, atlas, res, instances, joints, wrap,
+                                                       matrices](RenderPassContext& ctx) {
         CommandList& cmd = ctx.cmd;
         frame->shadowParams.x = static_cast<f32>(ctx.bindlessIndex(atlas)); // mapped memory, read when the GPU runs
         for (u32 c = 0; c < gpu::kShadowCascades; ++c) {
             FrameAllocation cascade = allocate(sizeof(gpu::FrameData));
             if (!cascade.cpu) break;
-            auto& cf = *static_cast<gpu::FrameData*>(cascade.cpu);
-            cf = *frame;
-            cf.viewProj = frame->shadowMatrices[c];
+            auto* cf = static_cast<gpu::FrameData*>(cascade.cpu);
+            cf->viewProj = matrices[c];
+            cf->wrapSize = wrap;
             const f32 x = static_cast<f32>((c & 1u) * res), y = static_cast<f32>((c >> 1) * res);
             cmd.setViewport(x, y, static_cast<f32>(res), static_cast<f32>(res));
             cmd.setScissor(static_cast<i32>(x), static_cast<i32>(y), res, res);
-            gpu::DrawPush push{};
-            push.frame = cascade.gpu;
-            push.instances = instances;
-            BufferHandle boundIndex{};
-            PipelineHandle bound{};
-            for (u32 i = 0; i < m_instances.size(); ++i) {
-                const WrapInstance& di = m_instances[i];
-                const DrawItem& d = scene.draws[di.draw];
-                if (!d.castShadows || d.material.alphaMode == AlphaMode::Blend) continue;
-                const PipelineHandle want =
-                    d.material.alphaMode == AlphaMode::Mask && m_shadowMaskPipeline ? m_shadowMaskPipeline : m_shadowPipeline;
-                if (!(want == bound)) {
-                    cmd.bindPipeline(want);
-                    bound = want;
-                }
-                const GpuMesh& mesh = m_meshes[d.mesh.id];
-                if (!(mesh.indexBuffer == boundIndex)) {
-                    cmd.bindIndexBuffer(mesh.indexBuffer);
-                    boundIndex = mesh.indexBuffer;
-                }
-                push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
-                push.instanceIndex = i;
-                push.indices = di.triangles ? m_device.deviceAddress(mesh.indexBuffer) : 0;
-                const bool skinned =
-                    d.jointCount > 0 && mesh.skinBuffer && joints && d.jointOffset + d.jointCount <= scene.joints.size();
-                push.skin = skinned ? m_device.deviceAddress(mesh.skinBuffer) : 0;
-                push.joints = skinned ? joints + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
-                cmd.pushConstants(push);
-                if (di.triangles) cmd.draw(mesh.indexCount);
-                else cmd.drawIndexed(mesh.indexCount);
-            }
+            drawCasters(cmd, scene, nullptr, cascade.gpu, instances, joints);
         }
+    });
+    return atlas;
+}
+
+void Renderer::drawCasters(CommandList& cmd, const RenderScene& scene, const std::vector<u32>* list, u64 frame,
+                           u64 instances, u64 joints) {
+    gpu::DrawPush push{};
+    push.frame = frame;
+    push.instances = instances;
+    BufferHandle boundIndex{};
+    PipelineHandle bound{};
+    const u32 count = list ? static_cast<u32>(list->size()) : static_cast<u32>(m_instances.size());
+    for (u32 k = 0; k < count; ++k) {
+        const u32 i = list ? (*list)[k] : k;
+        const WrapInstance& di = m_instances[i];
+        const DrawItem& d = scene.draws[di.draw];
+        if (!d.castShadows || d.material.alphaMode == AlphaMode::Blend) continue;
+        const PipelineHandle want =
+            d.material.alphaMode == AlphaMode::Mask && m_shadowMaskPipeline ? m_shadowMaskPipeline : m_shadowPipeline;
+        if (!(want == bound)) {
+            cmd.bindPipeline(want);
+            bound = want;
+        }
+        const GpuMesh& mesh = m_meshes[d.mesh.id];
+        if (!(mesh.indexBuffer == boundIndex)) {
+            cmd.bindIndexBuffer(mesh.indexBuffer);
+            boundIndex = mesh.indexBuffer;
+        }
+        push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
+        push.instanceIndex = i;
+        push.indices = di.triangles ? m_device.deviceAddress(mesh.indexBuffer) : 0;
+        const bool skinned = d.jointCount > 0 && mesh.skinBuffer && joints && d.jointOffset + d.jointCount <= scene.joints.size();
+        push.skin = skinned ? m_device.deviceAddress(mesh.skinBuffer) : 0;
+        push.joints = skinned ? joints + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
+        cmd.pushConstants(push);
+        if (di.triangles) cmd.draw(mesh.indexCount);
+        else cmd.drawIndexed(mesh.indexCount);
+    }
+}
+
+// Cube shadow maps of point lights: each light a row of the atlas, six 90° faces (along ±X, ±Y,
+// ±Z, as lighting.glsl's kNovaFaceDir / kNovaFaceUp), drawing the casters within its radius.
+RGTexture Renderer::addPointShadowPass(RenderGraph& graph, const RenderScene& scene, const std::vector<u32>& lights,
+                                       gpu::FrameData& fd, u64 instances, u64 joints, const glm::vec4& wrap) {
+    const u32 res = std::clamp(m_settings.pointShadowMapSize, 64u, 1024u);
+    const u32 count = static_cast<u32>(lights.size());
+    const RGTexture atlas = graph.create({res * 6, res * count, kDepthFormat, "point shadow atlas"});
+    constexpr f32 kNear = 0.05f;
+    static const glm::vec3 kDirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    static const glm::vec3 kUps[6] = {{0, 1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}, {0, 1, 0}, {0, 1, 0}};
+    struct Light {
+        std::array<glm::mat4, 6> faces;
+        std::vector<u32> casters; // instances whose bounding sphere reaches the light's
+    };
+    std::vector<Light> jobs(count);
+    for (u32 k = 0; k < count; ++k) {
+        const PointLightData& l = scene.pointLights[lights[k]];
+        glm::mat4 proj = glm::perspective(glm::half_pi<f32>(), 1.0f, kNear, std::max(l.radius, kNear * 2.0f));
+        proj[1][1] *= -1.0f; // as the camera's: y down in Vulkan's clip space
+        for (int f = 0; f < 6; ++f) jobs[k].faces[f] = proj * glm::lookAt(l.position, l.position + kDirs[f], kUps[f]);
+        for (u32 i = 0; i < m_instances.size(); ++i) {
+            const WrapInstance& wi = m_instances[i];
+            const DrawItem& d = scene.draws[wi.draw];
+            if (!d.castShadows || d.material.alphaMode == AlphaMode::Blend) continue;
+            glm::mat4 model = d.transform;
+            model[3] += glm::vec4(wi.offset, 0.0f);
+            const Bounds& b = m_meshes[d.mesh.id].bounds;
+            const f32 scale = std::max({glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])),
+                                        glm::length(glm::vec3(model[2]))});
+            const glm::vec3 center(model * glm::vec4(b.center(), 1.0f));
+            if (glm::length(center - l.position) <= glm::length(b.extents()) * scale + l.radius) jobs[k].casters.push_back(i);
+        }
+    }
+    fd.pointShadowParams = glm::vec4(-1.0f, static_cast<f32>(res), kNear, 0.0005f); // x: the atlas, set when it exists
+    m_stats.pointShadowMaps += count;
+
+    gpu::FrameData* frame = &fd;
+    graph.addPass("Point shadow maps").depth(atlas).execute([this, &scene, frame, atlas, res, instances, joints, wrap,
+                                                             jobs](RenderPassContext& ctx) {
+        CommandList& cmd = ctx.cmd;
+        frame->pointShadowParams.x = static_cast<f32>(ctx.bindlessIndex(atlas));
+        for (u32 k = 0; k < jobs.size(); ++k)
+            for (u32 f = 0; f < 6; ++f) {
+                FrameAllocation face = allocate(sizeof(gpu::FrameData));
+                if (!face.cpu) return;
+                auto* cf = static_cast<gpu::FrameData*>(face.cpu);
+                cf->viewProj = jobs[k].faces[f];
+                cf->wrapSize = wrap;
+                const f32 x = static_cast<f32>(f * res), y = static_cast<f32>(k * res);
+                cmd.setViewport(x, y, static_cast<f32>(res), static_cast<f32>(res));
+                cmd.setScissor(static_cast<i32>(x), static_cast<i32>(y), res, res);
+                drawCasters(cmd, scene, &jobs[k].casters, face.gpu, instances, joints);
+            }
     });
     return atlas;
 }
@@ -682,18 +749,39 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     fd.groundColor = glm::vec4(s.groundColor, 0.0f);
     fd.originTiled = glm::vec4(tiledOrigin(scene.camera.origin), gpu::kWorldTile);
 #if NOVA_WRAP_RENDER_MODES
-    fd.wrapSize = glm::vec4(scene.wrapSize, static_cast<f32>(wrapMode()));
+    const glm::vec4 wrap(scene.wrapSize, static_cast<f32>(wrapMode()));
 #else
-    fd.wrapSize = glm::vec4(scene.wrapSize, 0.0f);
+    const glm::vec4 wrap(scene.wrapSize, 0.0f);
 #endif
+    fd.wrapSize = wrap;
     m_lastOrigin = scene.camera.origin;
-    fd.pointLightCount = std::min<u32>(static_cast<u32>(scene.pointLights.size()), gpu::kMaxPointLights);
-    fd.flags = useRt ? gpu::kFrameFlagRtShadows : 0u;
+    const u32 pointLightCount = std::min<u32>(static_cast<u32>(scene.pointLights.size()), gpu::kMaxPointLights);
+    fd.pointLightCount = pointLightCount;
+    u32 frameFlags = useRt ? gpu::kFrameFlagRtShadows : 0u;
     fd.shadowBias = s.shadowBias;
-    for (u32 i = 0; i < fd.pointLightCount; ++i) {
+    // Point shadow maps (without ray tracing): the nearest lights that cast shadows, one atlas row each.
+    std::array<glm::ivec4, gpu::kMaxPointLights / 4> slots;
+    slots.fill(glm::ivec4(-1));
+    std::vector<u32> shadowLights;
+    for (u32 i = 0; i < pointLightCount; ++i) {
         const PointLightData& l = scene.pointLights[i];
         fd.pointLights[i] = {glm::vec4(l.position, l.radius), glm::vec4(l.color, l.intensity)};
+        if (!l.castShadows) slots[i / 4][i % 4] = -2;
+        else if (l.radius > 0.0f && l.intensity > 0.0f) shadowLights.push_back(i);
     }
+    if (!useRt && s.pointShadowMaps && s.maxPointShadows > 0 && m_shadowPipeline && !shadowLights.empty()) {
+        auto reach = [&](u32 i) { return glm::length(scene.pointLights[i].position) - scene.pointLights[i].radius; };
+        std::stable_sort(shadowLights.begin(), shadowLights.end(), [&](u32 a, u32 b) { return reach(a) < reach(b); });
+        const u32 rowLimit = 8192u / std::clamp(s.pointShadowMapSize, 64u, 1024u); // the atlas stays within 8192 texels
+        shadowLights.resize(std::min<size_t>(shadowLights.size(), std::min({s.maxPointShadows, 16u, rowLimit})));
+        for (u32 k = 0; k < shadowLights.size(); ++k) slots[shadowLights[k] / 4][shadowLights[k] % 4] = static_cast<i32>(k);
+        frameFlags |= gpu::kFrameFlagPointShadowMaps;
+    } else {
+        shadowLights.clear();
+    }
+    for (u32 k = 0; k < slots.size(); ++k) fd.pointShadowSlots[k] = slots[k];
+    fd.pointShadowParams = glm::vec4(-1.0f, 0.0f, 0.0f, 0.0f);
+    fd.flags = frameFlags;
 
     // Joint matrices of skinned draws, for this frame.
     u64 jointsAddress = 0;
@@ -853,7 +941,10 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     // ---- shadow maps (the sun), when rays do not draw the shadows
     RGTexture shadowAtlas;
     if (!useRt && s.shadowMaps && s.shadowDistance > 0.0f && m_shadowPipeline)
-        shadowAtlas = addShadowMapPass(graph, scene, fd, instAlloc.gpu, jointsAddress);
+        shadowAtlas = addShadowMapPass(graph, scene, fd, instAlloc.gpu, jointsAddress, wrap);
+    RGTexture pointShadowAtlas;
+    if (!shadowLights.empty())
+        pointShadowAtlas = addPointShadowPass(graph, scene, shadowLights, fd, instAlloc.gpu, jointsAddress, wrap);
 
     // ---- sky + opaque + see-through
     const bool wireframe = s.wireframe && m_wireframePipeline;
@@ -1110,6 +1201,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         RenderPassBuilder forward = graph.addPass("Forward");
         forward.color(hdrTex, LoadOp::DontCare).depth(depthTex); // depth is kept for the debug lines
         if (shadowAtlas) forward.sample(shadowAtlas);
+        if (pointShadowAtlas) forward.sample(pointShadowAtlas);
         forward.execute([&record](RenderPassContext& ctx) { record(ctx.cmd, false); });
     }
     if (lateCull) {
@@ -1147,6 +1239,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         RenderPassBuilder late = graph.addPass("Forward (late)");
         late.color(hdrTex, LoadOp::Load).depth(depthTex, LoadOp::Load);
         if (shadowAtlas) late.sample(shadowAtlas);
+        if (pointShadowAtlas) late.sample(pointShadowAtlas);
         late.execute([&record](RenderPassContext& ctx) { record(ctx.cmd, true); });
     }
     m_stats.instances += drawCount;
