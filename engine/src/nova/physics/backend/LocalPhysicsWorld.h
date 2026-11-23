@@ -116,6 +116,8 @@ public:
     /// @brief Friction, restitution, damping, gravity factor, sensor, layer and continuous
     ///        collision from `desc` (the rest is ignored).
     virtual void setBodyProperties(BodyId body, const BodyDesc& desc) = 0;
+    /// @brief Replaces the shape of a body (static ones too; mass properties are kept). Wakes what touches it.
+    virtual void setShape(BodyId body, const ShapeDesc& shape) = 0;
     /// @}
 
     /// @name Motion

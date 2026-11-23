@@ -27,7 +27,9 @@ namespace nova::physics {
 /// - in small worlds (axes of at most kGhostMaxSize) static bodies also get **ghost copies** one
 ///   lap over on those axes: the float window has its own seam half a lap from the origin, and
 ///   without them what is beyond it would have no floor (dynamic bodies only meet across the
-///   window seam's far side through the statics; keep the focus near the action);
+///   window seam’s far side through the statics; keep the focus near the action). The copies are
+///   part of the static body’s own shape (a compound): something rolling from one copy onto the
+///   next stays on one body, where the engine removes the bumps of internal edges;
 /// - joints to the world are placed again after a recenter (Jolt keeps their anchor in world
 ///   coordinates); breakable joints break here, from the load of the last step.
 class TorusWorld final : public PhysicsWorld {
@@ -109,20 +111,20 @@ private:
     void rewrap(bool everything);
     void placeJoint(u32 index);
     std::vector<glm::vec3> ghostOffsets() const;
-    void placeGhosts(BodyId primary);
-    void removeGhosts(BodyId primary);
+    void shapeStatic(BodyId id);
 
     Scope<local::World> m_world;
     WorldOrigin m_origin;             // what float (0, 0, 0) is in the world
     std::map<u32, BodyType> m_bodies; // live bodies by id (ordered: re-wrapping is deterministic)
     std::set<u32> m_characters;       // live characters by id
-    // Static bodies in small worlds: their description and ghost copies (body, offset in meters).
-    struct Ghosts {
-        BodyDesc desc;
-        std::vector<std::pair<BodyId, glm::vec3>> copies;
+    // Static bodies: their own shape, and the rotation and ghost offsets (m) their shape was made
+    // for (in small worlds it holds the copies one lap over).
+    struct Static {
+        ShapeDesc shape;
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        std::vector<glm::vec3> offsets;
     };
-    std::map<u32, Ghosts> m_ghosts;
-    u32 m_ghostCount = 0;
+    std::map<u32, Static> m_statics;
     std::vector<Joint> m_joints;
     std::vector<u32> m_freeJoints;
     std::vector<JointBreakEvent> m_jointBreaks;

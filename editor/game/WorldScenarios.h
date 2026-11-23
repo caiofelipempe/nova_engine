@@ -35,11 +35,13 @@ struct EdgeFlash : nova::Script {
     void onUpdate(float dt) override;
 };
 
-/// Keeps its body moving: tops the velocity up along `direction` to `speed` (m/s); if `kickEvery`
-/// is positive, also kicks it in a new pseudo-random direction that often (deterministic).
+/// Keeps its body moving: steers it along `direction` at `speed` (m/s), accelerating at most
+/// `steering` (m/s²); if `kickEvery` is positive, also turns to a new pseudo-random direction that
+/// often (deterministic).
 struct Mover : nova::Script {
     glm::vec3 direction{1.0f, 0.0f, 0.0f};
     float speed = 6.0f;
+    float steering = 6.0f;
     float kickEvery = 0.0f;
     float sinceKick = 0.0f;
     unsigned seed = 1;

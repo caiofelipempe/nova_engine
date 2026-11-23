@@ -78,7 +78,7 @@ void TorusWorld::rewrap(bool everything) {
         if (wrapped != p) m_world->setTransform(id, wrapped, q);
     }
     if (everything)
-        for (const auto& [value, g] : m_ghosts) placeGhosts(BodyId{value}); // one lap over from where the statics are now
+        for (const auto& [value, s] : m_statics) shapeStatic(BodyId{value}); // the world's size may have changed
     for (u32 value : m_characters) {
         const CharacterId id{value};
         const local::CharacterState s = m_world->characterState(id);
@@ -112,51 +112,66 @@ std::vector<glm::vec3> TorusWorld::ghostOffsets() const {
     return out;
 }
 
-// Puts the ghosts of a static body where they belong (one lap over from the body), creating or
-// recreating them when the world's small axes changed.
-void TorusWorld::placeGhosts(BodyId primary) {
-    auto it = m_ghosts.find(primary.value);
-    if (it == m_ghosts.end()) return;
-    Ghosts& g = it->second;
-    const std::vector<glm::vec3> offsets = ghostOffsets();
-    glm::vec3 p;
-    glm::quat q;
-    m_world->getTransform(primary, p, q);
-    bool same = offsets.size() == g.copies.size();
-    for (size_t i = 0; same && i < offsets.size(); ++i) same = g.copies[i].second == offsets[i];
-    if (!same) {
-        for (const auto& [id, offset] : g.copies) m_world->destroyBody(id);
-        m_ghostCount -= static_cast<u32>(g.copies.size());
-        g.copies.clear();
-        for (const glm::vec3& offset : offsets) {
-            local::BodyDesc d = toLocalDesc(g.desc, p + offset);
-            d.rotation = q;
-            if (const BodyId id = m_world->createBody(d)) g.copies.emplace_back(id, offset);
+namespace {
+
+// `shape` and its copies moved by `offsets` (world meters; the body is turned by `rotation`), as
+// one compound: the parts of a compound shape are flattened (compounds do not nest).
+ShapeDesc withCopies(const ShapeDesc& shape, const glm::quat& rotation, const std::vector<glm::vec3>& offsets) {
+    if (offsets.empty()) return shape;
+    auto parts = std::make_shared<std::vector<ShapeDesc>>();
+    auto add = [&](const glm::vec3& shift) {
+        if (shape.type == ShapeType::Compound && shape.children) {
+            for (ShapeDesc c : *shape.children) {
+                c.offset = shape.offset + shape.rotation * c.offset + shift;
+                c.rotation = shape.rotation * c.rotation;
+                parts->push_back(c);
+            }
+            return;
         }
-        m_ghostCount += static_cast<u32>(g.copies.size());
-        return;
-    }
-    for (const auto& [id, offset] : g.copies) m_world->setTransform(id, p + offset, q);
+        ShapeDesc c = shape;
+        c.offset += shift;
+        parts->push_back(c);
+    };
+    add(glm::vec3(0.0f));
+    const glm::quat toBody = glm::conjugate(rotation);
+    for (const glm::vec3& o : offsets) add(toBody * o);
+    ShapeDesc out;
+    out.type = ShapeType::Compound;
+    out.children = std::move(parts);
+    return out;
 }
 
-void TorusWorld::removeGhosts(BodyId primary) {
-    auto it = m_ghosts.find(primary.value);
-    if (it == m_ghosts.end()) return;
-    for (const auto& [id, offset] : it->second.copies) m_world->destroyBody(id);
-    m_ghostCount -= static_cast<u32>(it->second.copies.size());
-    m_ghosts.erase(it);
+} // namespace
+
+// Gives a static body the shape it needs now: its own, plus its copies one lap over on the small
+// axes of the world (built again when the world's size or the body's rotation changed).
+void TorusWorld::shapeStatic(BodyId id) {
+    auto it = m_statics.find(id.value);
+    if (it == m_statics.end()) return;
+    Static& s = it->second;
+    std::vector<glm::vec3> offsets = ghostOffsets();
+    glm::vec3 p;
+    glm::quat q;
+    m_world->getTransform(id, p, q);
+    if (offsets == s.offsets && (offsets.empty() || q == s.rotation)) return;
+    s.offsets = std::move(offsets);
+    s.rotation = q;
+    m_world->setShape(id, withCopies(s.shape, q, s.offsets));
 }
 
 // ------------------------------------------------------------------ bodies --
 BodyId TorusWorld::createBody(const BodyDesc& desc) {
     if (!isValidBody(desc)) return {};
-    const BodyId id = m_world->createBody(toLocalDesc(desc, toLocal(desc.position)));
+    local::BodyDesc l = toLocalDesc(desc, toLocal(desc.position));
+    std::vector<glm::vec3> offsets;
+    if (desc.type == BodyType::Static) { // in small worlds: with its copies one lap over
+        offsets = ghostOffsets();
+        l.shape = withCopies(desc.shape, desc.rotation, offsets);
+    }
+    const BodyId id = m_world->createBody(l);
     if (!id) return id;
     m_bodies[id.value] = desc.type;
-    if (desc.type == BodyType::Static) { // kept for ghost copies (made only in small worlds)
-        m_ghosts[id.value].desc = desc;
-        placeGhosts(id);
-    }
+    if (desc.type == BodyType::Static) m_statics[id.value] = {desc.shape, desc.rotation, std::move(offsets)};
     return id;
 }
 
@@ -164,16 +179,16 @@ void TorusWorld::destroyBody(BodyId id) {
     if (!id || !m_bodies.contains(id.value)) return;
     for (u32 j = 0; j < m_joints.size(); ++j) // its joints go first
         if (m_joints[j].alive && (m_joints[j].desc.bodyA == id || m_joints[j].desc.bodyB == id)) destroyJoint({j});
-    removeGhosts(id);
+    m_statics.erase(id.value);
     m_world->destroyBody(id);
     m_bodies.erase(id.value);
 }
 
-u32 TorusWorld::bodyCount() const { return m_world->bodyCount() - m_ghostCount; } // ghosts are not bodies of the caller
+u32 TorusWorld::bodyCount() const { return m_world->bodyCount(); }
 
 void TorusWorld::setTransform(BodyId id, const GlobalPosition& position, const glm::quat& rotation) {
     m_world->setTransform(id, toLocal(position), rotation);
-    placeGhosts(id); // statics: their ghosts follow
+    shapeStatic(id); // turned: its copies are one lap over in the world, not in the body
 }
 
 void TorusWorld::getTransform(BodyId id, GlobalPosition& position, glm::quat& rotation) const {
@@ -194,10 +209,6 @@ void TorusWorld::moveKinematic(BodyId id, const GlobalPosition& position, const 
 
 void TorusWorld::setBodyProperties(BodyId id, const BodyDesc& desc) {
     m_world->setBodyProperties(id, toLocalDesc(desc, glm::vec3(0.0f)));
-    if (auto it = m_ghosts.find(id.value); it != m_ghosts.end()) {
-        it->second.desc = desc;
-        for (const auto& [ghost, offset] : it->second.copies) m_world->setBodyProperties(ghost, toLocalDesc(desc, glm::vec3(0.0f)));
-    }
 }
 
 glm::vec3 TorusWorld::linearVelocity(BodyId id) const { return m_world->linearVelocity(id); }

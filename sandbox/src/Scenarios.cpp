@@ -96,11 +96,12 @@ struct Shuttle : Script {
     }
 };
 
-// Keeps its body moving along `direction`, kicking it in a new pseudo-random direction every so
-// often (deterministic); keeps going through the seams of the world.
+// Keeps its body moving along `direction`, turning to a new pseudo-random direction every so often
+// (deterministic) without sudden turns (at most `steering` m/s²); keeps going through the seams.
 struct Mover : Script {
     glm::vec3 direction{1.0f, 0.0f, 0.0f};
     float speed = 7.0f, kickEvery = 3.0f, sinceKick = 0.0f;
+    float steering = 6.0f;
     unsigned seed = 1;
     void onUpdate(float dt) override {
         if ((sinceKick += dt) >= kickEvery) {
@@ -110,8 +111,10 @@ struct Mover : Script {
             direction = {std::cos(a), 0.0f, std::sin(a)};
         }
         const glm::vec3 v = scene().linearVelocity(entity()).toGlm();
-        const float along = glm::dot(v, direction);
-        if (along < speed) scene().setLinearVelocity(entity(), v + direction * (speed - along));
+        glm::vec3 change = direction * speed - glm::vec3(v.x, 0.0f, v.z);
+        const float most = steering * dt, length = glm::length(change);
+        if (length > most) change *= most / length;
+        scene().setLinearVelocity(entity(), v + change);
     }
 };
 
@@ -521,10 +524,15 @@ View buildPlayers(Scene& s, const BenchMeshes& m) {
     return {{0.0, 4.0, 10.0}, {0.0, 0.5, 0.0}};
 }
 
-// A floor of `count` × `count` tiles of `tile` meters centered on the origin (top face at y = 0).
-// In a small circular world one floor body would only cover the copy nearest its center; tiles
-// are each placed on the copy nearest the physics origin, so the floor surrounds the focus.
+// A floor of `count` × `count` tiles of `tile` meters centered on the origin (top face at y = 0):
+// ONE static body under them (where tiles meet there is no edge to bump into; in a small world
+// the physics gives it copies one lap over, in the same body, so it surrounds the focus).
 void tiledFloor(Scene& s, const BenchMeshes& m, int count, float tile, bool visible, const glm::vec4& color) {
+    Entity floor = s.createEntity("Floor");
+    floor.transform().scale = glm::vec3(count * tile, 1.0f, count * tile);
+    floor.add<RigidBodyComponent>(physics::BodyType::Static);
+    floor.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
+    if (!visible) return;
     for (int x = 0; x < count; ++x)
         for (int z = 0; z < count; ++z) {
             const double cx = (x - (count - 1) * 0.5) * tile, cz = (z - (count - 1) * 0.5) * tile;
@@ -532,13 +540,9 @@ void tiledFloor(Scene& s, const BenchMeshes& m, int count, float tile, bool visi
             Entity t = s.createEntity("Floor tile");
             t.transform().position = {cx, 0.0, cz};
             t.transform().scale = glm::vec3(tile, 1.0f, tile);
-            if (visible) {
-                auto& mc = t.add<MeshComponent>(m.plane);
-                mc.material.baseColor = glm::vec4(glm::vec3(color) * shade, 1.0f);
-                mc.material.checker = true;
-            }
-            t.add<RigidBodyComponent>(physics::BodyType::Static);
-            t.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
+            auto& mc = t.add<MeshComponent>(m.plane);
+            mc.material.baseColor = glm::vec4(glm::vec3(color) * shade, 1.0f);
+            mc.material.checker = true;
         }
 }
 
@@ -582,8 +586,8 @@ View buildEdges(Scene& s, const BenchMeshes& m) {
 // A tiny circular world, 48 m on every axis (Y too: what falls below comes in from above), to see
 // the circular world. The floor you see is ONE mesh of 48 × 48 m, placed across the X seam: drawn
 // per object it shows on one side only, per triangle or split (NOVA_WRAP_RENDER_MODES builds) it
-// covers the world; with further laps the world repeats up to the horizon. The floor the bodies
-// stand on are invisible tiles (each one goes to the copy nearest the physics origin).
+// covers the world; with further laps the world repeats up to the horizon. The bodies stand on an
+// invisible floor body (the physics gives it copies one lap over, in the same body).
 constexpr double kTinySize = 48.0;
 
 View buildTiny(Scene& s, const BenchMeshes& m) {

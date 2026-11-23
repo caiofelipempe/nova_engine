@@ -623,6 +623,16 @@ void JoltPhysicsWorld::setBodyProperties(BodyId body, const BodyDesc& d) {
     wakeAround(m_impl->system, id);  // and on what touches it (a floor turned into a sensor...)
 }
 
+void JoltPhysicsWorld::setShape(BodyId body, const ShapeDesc& s) {
+    const JPH::BodyID id = toJ(body);
+    JPH::BodyInterface& bi = m_impl->bodies();
+    if (!bi.IsAdded(id)) return;
+    JPH::ShapeRefC shape = buildShape(s);
+    if (!shape) return;
+    bi.SetShape(id, shape, false, JPH::EActivation::DontActivate);
+    wakeAround(m_impl->system, id);
+}
+
 glm::vec3 JoltPhysicsWorld::linearVelocity(BodyId body) const {
     return toG(m_impl->bodies().GetLinearVelocity(toJ(body)));
 }

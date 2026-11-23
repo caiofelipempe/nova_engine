@@ -26,10 +26,14 @@ void Mover::onUpdate(float dt) {
         const float angle = static_cast<float>(seed % 3600u) * 0.1f * 3.14159265f / 180.0f;
         direction = {std::cos(angle), 0.0f, std::sin(angle)};
     }
+    // Steers towards `direction` at `speed` on the ground plane, accelerating at most `steering`
+    // (no sudden turns: what is seen to change its way hit something); vertical motion is kept.
     const glm::vec3 d = glm::normalize(direction);
     const glm::vec3 v = scene().linearVelocity(entity()).toGlm();
-    const float along = glm::dot(v, d);
-    if (along < speed) scene().setLinearVelocity(entity(), v + d * (speed - along)); // keep its vertical motion
+    glm::vec3 change = d * speed - glm::vec3(v.x, 0.0f, v.z);
+    const float most = steering * dt, length = glm::length(change);
+    if (length > most) change *= most / length;
+    scene().setLinearVelocity(entity(), v + change);
 }
 
 void reflectScenarioTypes() {
@@ -39,6 +43,7 @@ void reflectScenarioTypes() {
     reflect::type<Mover>("Mover")
         .field("direction", &Mover::direction, {.speed = 0.01f})
         .field("speed", &Mover::speed, {.min = 0.0f, .max = 30.0f})
+        .field("steering", &Mover::steering, {.min = 0.1f, .max = 100.0f, .tooltip = "Most acceleration (m/s²) to reach the speed and turn"})
         .field("kickEvery", &Mover::kickEvery, {.min = 0.0f, .max = 10.0f, .tooltip = "Seconds; 0 = never"})
         .script();
 }
@@ -54,6 +59,16 @@ Entity mesh(Scene& scene, const std::string& name, MeshHandle m, const GlobalPos
     auto& mc = e.add<MeshComponent>(m);
     mc.material.baseColor = color;
     return e;
+}
+
+// The floor everything rolls on: one static box, its top face at y = 0 (one body: no bumps where
+// tiles meet; in small worlds the physics also gives it copies one lap over, in the same body).
+void floorBody(Scene& scene, const GlobalPosition& center, double sizeX, double sizeZ) {
+    Entity f = scene.createEntity("Floor");
+    f.transform().position = center;
+    f.transform().scale = glm::vec3(static_cast<float>(sizeX), 1.0f, static_cast<float>(sizeZ));
+    f.add<RigidBodyComponent>(physics::BodyType::Static);
+    f.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
 }
 
 Entity ball(Scene& scene, const ScenarioMeshes& m, const std::string& name, const GlobalPosition& at,
@@ -85,13 +100,13 @@ Entity camera(Scene& scene, const GlobalPosition& at, const GlobalPosition& look
 const glm::vec4 kColors[] = {{0.9f, 0.3f, 0.25f, 1}, {0.25f, 0.6f, 0.95f, 1}, {0.95f, 0.8f, 0.2f, 1},
                              {0.4f, 0.85f, 0.4f, 1}, {0.75f, 0.4f, 0.9f, 1}, {0.95f, 0.55f, 0.2f, 1}};
 
-// A 60 × 60 m world on X and Z (Y keeps the default size). The floor is 6 × 6 tiles: each one is
-// a static body the physics places on the copy nearest its origin, so the floor surrounds what is
-// near the focus, across the seams too.
+// A 60 × 60 m world on X and Z (Y keeps the default size). The floor is one body (6 × 6 tiles
+// drawn on it); the physics gives it copies one lap over, so it surrounds the focus across the seams.
 Entity buildSmall(Scene& scene, const ScenarioMeshes& m) {
     common(scene);
     scene.setWorldSize(WorldSize::meters(kSmallWorldSize, 0.0, kSmallWorldSize));
     constexpr double tile = 10.0;
+    floorBody(scene, GlobalPosition(), kSmallWorldSize, kSmallWorldSize);
     const int count = static_cast<int>(kSmallWorldSize / tile);
     for (int x = 0; x < count; ++x)
         for (int z = 0; z < count; ++z) {
@@ -100,8 +115,6 @@ Entity buildSmall(Scene& scene, const ScenarioMeshes& m) {
             Entity t = mesh(scene, "Tile " + std::to_string(x) + "," + std::to_string(z), m.plane, at,
                             {static_cast<float>(tile), 1.0f, static_cast<float>(tile)}, {shade, shade + 0.04f, shade + 0.07f, 1});
             t.get<MeshComponent>().material.checker = true;
-            t.add<RigidBodyComponent>(physics::BodyType::Static);
-            t.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
         }
     // Corner posts mark the seams (decoration: they do not collide).
     const double half = kSmallWorldSize / 2;
@@ -137,6 +150,7 @@ Entity buildOpen(Scene& scene, const ScenarioMeshes& m) {
     // A floor strip across the X seam of the default world (+8 192 m ≡ −8 192 m): 400 m long, 60 m wide.
     common(scene);
     const double seam = WorldSpace::kDefaultSize / 2, tile = 10.0;
+    floorBody(scene, GlobalPosition(seam, 0.0, 0.0), kSeamFloorLength, kSmallWorldSize); // across the seam
     const int along = static_cast<int>(kSeamFloorLength / tile), across = static_cast<int>(kSmallWorldSize / tile);
     for (int x = 0; x < along; ++x)
         for (int z = 0; z < across; ++z) {
@@ -147,8 +161,6 @@ Entity buildOpen(Scene& scene, const ScenarioMeshes& m) {
             Entity t = mesh(scene, "Tile " + std::to_string(x) + "," + std::to_string(z), m.plane, at,
                             {static_cast<float>(tile), 1.0f, static_cast<float>(tile)}, {shade, shade, shade + 0.03f, 1});
             t.get<MeshComponent>().material.checker = true;
-            t.add<RigidBodyComponent>(physics::BodyType::Static);
-            t.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
         }
     // Landmarks: a red pillar just before the seam, a blue one just after it (all off the runners'
     // lanes, which are 6 m apart from z = −21 to +21).
@@ -180,6 +192,7 @@ Entity buildTiny(Scene& scene, const ScenarioMeshes& m) {
     common(scene);
     scene.setWorldSize(WorldSize::cube(kTinyWorldSize));
     constexpr double tile = 8.0;
+    floorBody(scene, GlobalPosition(), kTinyWorldSize, kTinyWorldSize);
     const int count = static_cast<int>(kTinyWorldSize / tile);
     for (int x = 0; x < count; ++x)
         for (int z = 0; z < count; ++z) {
@@ -188,8 +201,6 @@ Entity buildTiny(Scene& scene, const ScenarioMeshes& m) {
             Entity t = mesh(scene, "Tile " + std::to_string(x) + "," + std::to_string(z), m.plane, at,
                             {static_cast<float>(tile), 1.0f, static_cast<float>(tile)}, {shade, shade + 0.03f, shade + 0.06f, 1});
             t.get<MeshComponent>().material.checker = true;
-            t.add<RigidBodyComponent>(physics::BodyType::Static);
-            t.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
         }
     const double e = kTinyWorldSize / 2 - 1.0;
     mesh(scene, "Pillar +X", m.cube, {e, 2.0, -6.0}, {0.8f, 4.0f, 0.8f}, {0.9f, 0.2f, 0.2f, 1});

@@ -28,6 +28,7 @@ public:
     void getTransform(BodyId body, glm::vec3& position, glm::quat& rotation) const override;
     void moveKinematic(BodyId body, const glm::vec3& position, const glm::quat& rotation, f32 dt) override;
     void setBodyProperties(BodyId body, const BodyDesc& desc) override;
+    void setShape(BodyId body, const ShapeDesc& shape) override;
 
     glm::vec3 linearVelocity(BodyId body) const override;
     glm::vec3 angularVelocity(BodyId body) const override;
