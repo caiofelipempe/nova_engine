@@ -307,6 +307,13 @@ void wrapInstances() {
     }
     CHECK(bounded);
     // Looking down 45° in a world circular on X and Z only: Y does not limit it.
+    // Bigger (RenderSettings::wrapCropViewSize): 1 = half the lap (the lap trims its corners),
+    // in between in proportion; looking along an axis it already is.
+    const f32 fits = 24.0f / std::sqrt(2.0f);
+    CHECK(std::abs(viewCropHalf(yaw45, cube, 1.0f) - 24.0f) < 1e-3f);
+    CHECK(std::abs(viewCropHalf(yaw45, cube, 0.5f) - (fits + 24.0f) / 2.0f) < 1e-3f);
+    CHECK(std::abs(viewCropHalf(glm::mat3(1.0f), cube, 1.0f) - 24.0f) < 1e-4f);
+    CHECK(viewCropHalf(yaw45, glm::vec3(0.0f), 1.0f) > 1e20f); // not circular: no crop
     const glm::mat3 pitch45 = glm::mat3_cast(glm::angleAxis(glm::radians(45.0f), glm::vec3(1, 0, 0)));
     CHECK(std::abs(viewCropHalf(pitch45, {48.0f, 0.0f, 48.0f}) - 24.0f / std::sqrt(2.0f)) < 1e-3f);
     // Not circular: nothing changes, whatever the mode.

@@ -476,7 +476,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
 #if NOVA_RENDER_ORIGIN_ROTATION
     if (wrapMode() == WrapShift::Crop && s.wrapCrop == WrapCrop::View) {
         fd.wrapSize.w = 4.0f; // NOVA_WRAP_CROP_VIEW
-        fd.cropHalf = viewCropHalf(glm::mat3(scene.camera.view), scene.wrapSize);
+        fd.cropHalf = viewCropHalf(glm::mat3(scene.camera.view), scene.wrapSize, s.wrapCropViewSize);
     }
 #endif
 #else

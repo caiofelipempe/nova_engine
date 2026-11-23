@@ -645,6 +645,8 @@ void wrapControls() {
 #if NOVA_RENDER_ORIGIN_ROTATION
         // The crop turning with the camera: its front face always perpendicular to the view.
         ImGui::RadioButton("Turning with the camera", &crop, static_cast<int>(WrapCrop::View));
+        if (rs.wrapCrop == WrapCrop::View)
+            ImGui::SliderFloat("Box size (0: fits, 1: a whole lap)", &rs.wrapCropViewSize, 0.0f, 1.0f, "%.2f");
 #endif
         rs.wrapCrop = static_cast<WrapCrop>(crop);
     }
@@ -681,8 +683,9 @@ void statusTiny(Scene& s) {
 #if NOVA_RENDER_ORIGIN_ROTATION
         // The crop turning with the camera: as big as fits in the lap around it at this angle.
         const glm::mat3 view = glm::mat3_cast(glm::conjugate(cam.transform().orientation()));
-        ImGui::Text("Crop turning with the camera: a box %.1f m a side (%.1f to %.1f by the angle)",
-                    2.0f * viewCropHalf(view, glm::vec3(s.worldSize().sizes())), kTinySize / std::sqrt(3.0), kTinySize);
+        const f32 grow = Application::get().renderer().settings().wrapCropViewSize;
+        ImGui::Text("Crop turning with the camera: a box %.1f m a side (fits: %.1f to %.1f by the angle)",
+                    2.0f * viewCropHalf(view, glm::vec3(s.worldSize().sizes()), grow), kTinySize / std::sqrt(3.0), kTinySize);
 #endif
     }
     wrapControls();
