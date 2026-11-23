@@ -161,6 +161,9 @@ public:
     std::vector<Entity> recordCreation(std::string name, const std::function<void()>& create);
     /// @brief Destroys entities as one undo step (they are restored, components and scripts included, on undo).
     void destroyEntities(std::string name, const std::vector<Entity>& entities);
+    /// @brief The selected entities with no selected ancestor: what duplicating, deleting or
+    ///        moving acts on (their descendants go with them).
+    std::vector<Entity> selectionRoots() const;
     /// @brief Automatic tracking of the selection, called by the editor once per frame after the UI.
     ///
     /// When nothing is being interacted with, compares the selected entities with their state

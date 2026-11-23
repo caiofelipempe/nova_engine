@@ -118,7 +118,7 @@ void CoreCommandsPlugin::onRegister(Registry& r) {
     r.command(std::move(selectAll));
 
     Command dup = make("edit.duplicate", "Edit/Duplicate", [](EditorContext& ctx) {
-        const auto source = ctx.selection();
+        const auto source = ctx.selectionRoots(); // each copied with its descendants
         std::vector<Entity> copies;
         ctx.recordCreation(source.size() == 1 ? "Duplicate " + source[0].name() : "Duplicate entities", [&] {
             for (Entity e : source)
@@ -130,7 +130,7 @@ void CoreCommandsPlugin::onRegister(Registry& r) {
     dup.separatorBefore = true;
     r.command(std::move(dup));
     Command del = make("edit.delete", "Edit/Delete", [](EditorContext& ctx) {
-        const auto victims = ctx.selection();
+        const auto victims = ctx.selectionRoots(); // each with its descendants
         ctx.destroyEntities(victims.size() == 1 ? "Delete " + victims[0].name() : "Delete entities", victims);
     }, "Delete", 1);
     del.isEnabled = hasSelection;

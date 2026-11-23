@@ -181,12 +181,33 @@ std::vector<Entity> EditorContext::recordCreation(std::string name, const std::f
 }
 
 void EditorContext::destroyEntities(std::string name, const std::vector<Entity>& entities) {
-    auto snap = snapshot(entities);
+    // Their descendants go with them: in the snapshot too, so undo brings the whole tree back.
+    std::vector<Entity> all;
+    for (Entity e : entities) {
+        if (!e.valid() || std::find(all.begin(), all.end(), e) != all.end()) continue;
+        all.push_back(e);
+        for (Entity d : m_scene->descendantsOf(e))
+            if (std::find(all.begin(), all.end(), d) == all.end()) all.push_back(d);
+    }
+    auto snap = snapshot(all);
     if (snap.empty()) return;
     std::vector<u64> ids;
     for (auto& [uuid, json] : snap) ids.push_back(uuid);
     destroyByUuid(ids);
     pushRecorded({std::move(name), [this, snap] { restore(snap); }, [this, ids] { destroyByUuid(ids); }});
+}
+
+std::vector<Entity> EditorContext::selectionRoots() const {
+    std::vector<Entity> roots;
+    for (Entity e : m_selection) {
+        if (!e.valid()) continue;
+        bool ancestorSelected = false;
+        int guard = 0;
+        for (Entity up = m_scene->parentOf(e); up.valid() && !ancestorSelected && guard++ < 1024; up = m_scene->parentOf(up))
+            ancestorSelected = isSelected(up);
+        if (!ancestorSelected) roots.push_back(e);
+    }
+    return roots;
 }
 
 void EditorContext::updateEditTracking(bool interacting) {

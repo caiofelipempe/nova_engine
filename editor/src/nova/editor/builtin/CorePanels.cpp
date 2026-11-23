@@ -9,10 +9,14 @@
 
 #include <imgui.h> // must precede ImGuizmo.h
 #include <ImGuizmo.h>
+#include <imgui_internal.h> // ImRect, BeginDragDropTargetCustom
 
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <unordered_set>
+#include <unordered_map>
+#include <functional>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -201,6 +205,8 @@ void ViewportPanel::onImGui(EditorContext& ctx) {
 HierarchyPanel::HierarchyPanel() : Panel("Hierarchy", DockSlot::Left) {}
 
 namespace {
+constexpr const char* kEntityDragPayload = "NOVA_ENTITY"; // a u64 UUID, dragged in the Hierarchy
+
 // Lists every enabled command under "Entity/" (built-in and game-registered) as create entries.
 void createMenuItems(EditorContext& ctx) {
     for (const Command& c : ctx.registry().commands()) {
@@ -212,55 +218,136 @@ void createMenuItems(EditorContext& ctx) {
 
 void HierarchyPanel::onImGui(EditorContext& ctx) {
     Scene& scene = ctx.scene();
-    // Display order: same as the view iteration, captured once so Shift ranges are well defined.
+    // The tree: roots in view order, each child under its parent. `rows` is the display order of
+    // every entity (depth first), for Shift ranges.
+    std::vector<Entity> all;
+    for (auto [handle, name] : scene.registry().view<NameComponent>().each()) all.push_back({handle, &scene});
+    std::unordered_map<u64, std::vector<Entity>> kids;
+    std::vector<Entity> roots;
+    for (Entity e : all) {
+        Entity up = scene.parentOf(e);
+        if (up.valid() && up != e) kids[up.uuid()].push_back(e);
+        else roots.push_back(e);
+    }
     std::vector<Entity> rows;
-    for (auto [handle, name] : scene.registry().view<NameComponent>().each()) rows.push_back({handle, &scene});
+    std::unordered_set<u64> listed;
+    std::function<void(Entity)> flatten = [&](Entity e) {
+        if (!listed.insert(e.uuid()).second) return;
+        rows.push_back(e);
+        if (auto it = kids.find(e.uuid()); it != kids.end())
+            for (Entity c : it->second) flatten(c);
+    };
+    for (Entity r : roots) flatten(r);
+    for (Entity e : all) // in a loop of parents (a hand-edited file): shown as roots
+        if (!listed.contains(e.uuid())) {
+            roots.push_back(e);
+            flatten(e);
+        }
 
     ImGui::TextDisabled("%s  (%zu entities, %zu selected)", scene.name().c_str(), rows.size(), ctx.selection().size());
     ImGui::Separator();
 
     std::vector<Entity> toDelete;
-    for (size_t i = 0; i < rows.size(); ++i) {
-        Entity e = rows[i];
-        ImGui::PushID(static_cast<int>(entt::to_integral(e.handle())));
+    Entity dropOn;       // a row an entity was dropped on: becomes the parent
+    u64 dropped = 0;     // the dragged entity
+    bool dropToRoot = false;
+    std::unordered_set<u64> drawn;
+    std::function<void(Entity)> drawNode = [&](Entity e) {
+        if (!drawn.insert(e.uuid()).second) return;
+        const auto kidsIt = kids.find(e.uuid());
+        const bool hasKids = kidsIt != kids.end() && !kidsIt->second.empty();
         const char* icon = e.has<CameraComponent>()             ? "[C] "
                            : e.has<DirectionalLightComponent>() ? "[S] "
                            : e.has<PointLightComponent>()       ? "[L] "
                            : e.has<MeshComponent>()             ? "[M] "
                                                                 : "[ ] ";
         const std::string label = std::string(icon) + e.name();
-        if (ImGui::Selectable(label.c_str(), ctx.isSelected(e))) {
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
+                                   ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
+        if (!hasKids) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        if (ctx.isSelected(e)) flags |= ImGuiTreeNodeFlags_Selected;
+        const u64 uuid = e.uuid();
+        const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<uintptr_t>(uuid)), flags, "%s", label.c_str());
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
             const ImGuiIO& io = ImGui::GetIO();
             if (io.KeyShift && m_anchor) {
                 // Range from the anchor to this row (in display order).
                 auto anchorIt = std::find_if(rows.begin(), rows.end(), [&](Entity r) { return r.uuid() == m_anchor; });
-                if (anchorIt != rows.end()) {
-                    size_t a = static_cast<size_t>(anchorIt - rows.begin()), b = i;
-                    if (a > b) std::swap(a, b);
-                    std::vector<Entity> range(rows.begin() + static_cast<std::ptrdiff_t>(a),
-                                              rows.begin() + static_cast<std::ptrdiff_t>(b + 1));
+                auto hereIt = std::find(rows.begin(), rows.end(), e);
+                if (anchorIt != rows.end() && hereIt != rows.end()) {
+                    auto first = std::min(anchorIt, hereIt), last = std::max(anchorIt, hereIt);
+                    std::vector<Entity> range(first, last + 1);
                     std::erase(range, e);
                     range.push_back(e); // clicked row is primary
                     ctx.setSelection(std::move(range));
                 }
             } else if (io.KeyCtrl) {
                 ctx.toggleSelection(e);
-                m_anchor = e.uuid();
+                m_anchor = uuid;
             } else {
                 ctx.select(e);
-                m_anchor = e.uuid();
+                m_anchor = uuid;
             }
+        }
+        // Drag a row onto another to make it its child (the selection, if the row is selected).
+        if (ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload(kEntityDragPayload, &uuid, sizeof(u64));
+            ImGui::TextUnformatted(ctx.isSelected(e) && ctx.selection().size() > 1 ? "Selected entities" : e.name().c_str());
+            ImGui::EndDragDropSource();
+        }
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kEntityDragPayload)) {
+                std::memcpy(&dropped, payload->Data, sizeof(u64));
+                dropOn = e;
+            }
+            ImGui::EndDragDropTarget();
         }
         if (ImGui::BeginPopupContextItem()) {
             if (!ctx.isSelected(e)) ctx.select(e);
             if (ImGui::MenuItem("Focus")) ctx.camera().focus(e.transform().position);
             if (ImGui::MenuItem("Duplicate")) ctx.registry().execute("edit.duplicate");
-            if (ImGui::MenuItem("Delete")) toDelete = ctx.selection();
+            if (ImGui::MenuItem("Unparent", nullptr, false, scene.parentOf(e).valid())) {
+                dropped = uuid;
+                dropToRoot = true;
+            }
+            if (ImGui::MenuItem("Delete")) toDelete = ctx.selectionRoots();
             ImGui::EndPopup();
         }
-        ImGui::PopID();
+        if (open && hasKids) {
+            for (Entity c : kidsIt->second) drawNode(c);
+            ImGui::TreePop();
+        }
+    };
+    for (Entity r : roots) drawNode(r);
+
+    // Below the rows: drop here to make an entity a root again.
+    const ImVec2 rest = ImGui::GetContentRegionAvail();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(std::max(rest.x, 1.0f), std::max(rest.y, 24.0f)));
+    if (ImGui::BeginDragDropTargetCustom(ImRect(at, ImVec2(at.x + std::max(rest.x, 1.0f), at.y + std::max(rest.y, 24.0f))),
+                                         ImGui::GetID("##hierarchy_root"))) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kEntityDragPayload)) {
+            std::memcpy(&dropped, payload->Data, sizeof(u64));
+            dropToRoot = true;
+        }
+        ImGui::EndDragDropTarget();
     }
+
     if (!toDelete.empty()) ctx.destroyEntities(toDelete.size() == 1 ? "Delete " + toDelete[0].name() : "Delete entities", toDelete);
+
+    // A drop: the dragged entity (the selection's roots, if it is selected) changes parent,
+    // keeping its pose in the world; one undo step.
+    if (dropped && (dropOn.valid() || dropToRoot)) {
+        Entity dragged = scene.findEntityByUuid(dropped);
+        std::vector<Entity> moving = dragged.valid() && ctx.isSelected(dragged) ? ctx.selectionRoots() : std::vector<Entity>{dragged};
+        std::erase_if(moving, [&](Entity m) { return !m.valid() || m == dropOn; });
+        if (!moving.empty()) {
+            const std::string what = moving.size() == 1 ? moving[0].name() : "entities";
+            ctx.edit(dropToRoot ? "Unparent " + what : "Parent " + what + " to " + dropOn.name(), moving, [&] {
+                for (Entity m : moving) scene.setParent(m, dropToRoot ? Entity{} : dropOn); // refuses loops
+            });
+        }
+    }
 
     if (ImGui::BeginPopupContextWindow("hierarchy_ctx", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         createMenuItems(ctx);

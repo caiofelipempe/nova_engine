@@ -768,6 +768,43 @@ void worldSeam() {
     CHECK(f.ctx.camera().position == GlobalPosition(-seam + 0.5, 0.0, 0.0));
 }
 
+void hierarchyEditing() {
+    Fixture f;
+    Entity car = f.scene.createEntity("Car");
+    Entity wheel = f.scene.createEntity("Wheel");
+    wheel.transform().position = {2, 0, 0};
+    const u64 carId = car.uuid(), wheelId = wheel.uuid();
+
+    // Parenting as an edit: one undo step, the pose in the world kept.
+    f.ctx.edit("Parent Wheel to Car", {wheel}, [&] { f.scene.setParent(wheel, car); });
+    CHECK(wheel.parent() == car);
+    f.ctx.undo();
+    CHECK(!wheel.parent().valid() && wheel.transform().position == glm::vec3(2, 0, 0));
+    f.ctx.redo();
+    CHECK(wheel.parent() == car);
+
+    // The selection's roots: a selected child of a selected parent goes with it.
+    f.ctx.setSelection({wheel, car});
+    CHECK(f.ctx.selectionRoots().size() == 1 && f.ctx.selectionRoots()[0] == car);
+
+    // Deleting the parent deletes the child; undo brings both back, still linked.
+    f.ctx.destroyEntities("Delete Car", {car});
+    CHECK(!f.scene.findEntityByUuid(carId).valid() && !f.scene.findEntityByUuid(wheelId).valid());
+    f.ctx.undo();
+    Entity car2 = f.scene.findEntityByUuid(carId), wheel2 = f.scene.findEntityByUuid(wheelId);
+    CHECK(car2.valid() && wheel2.valid() && wheel2.parent() == car2);
+
+    // Duplicating the selection's roots (as Edit/Duplicate does) copies the tree once, even with
+    // the child selected too.
+    f.ctx.setSelection({car2, wheel2});
+    f.ctx.recordCreation("Duplicate", [&] {
+        for (Entity e : f.ctx.selectionRoots()) duplicateEntity(e);
+    });
+    CHECK(f.scene.registry().view<IdComponent>().size() == 4);
+    f.ctx.undo();
+    CHECK(f.scene.registry().view<IdComponent>().size() == 2);
+}
+
 int main() {
     Log::init();
     Log::core().set_level(spdlog::level::warn);
@@ -787,6 +824,7 @@ int main() {
         {"undo transactions (edit / create / destroy)", transactions},
         {"automatic undo tracking", automaticTracking},
         {"multi-selection", multiSelection},
+        {"hierarchy (parent as an edit, delete and duplicate trees)", hierarchyEditing},
         {"tools", tools},
         {"picking", picking},
         {"world: the torus seam is continuous (pick, render, camera)", worldSeam},

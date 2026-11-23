@@ -93,6 +93,12 @@ void buildDemoScene(editor::EditorContext& ctx) {
     crate.get<MeshComponent>().material.baseColor = {0.2f, 0.45f, 0.9f, 1.0f};
     crate.add<RotatorComponent>(glm::vec3(0.4f, 1.0f, 0.2f), 0.7f);
     crate.add<RigidBodyComponent>(physics::BodyType::Kinematic);
+    // A child: it keeps its offset from the crate, so it orbits as the crate turns.
+    Entity moon = primitive(scene, "Moon", r.sphere());
+    moon.transform().position = {1.6f, 2.2f, -1.5f};
+    moon.transform().scale = glm::vec3(0.35f);
+    moon.get<MeshComponent>().material.baseColor = {0.9f, 0.85f, 0.7f, 1.0f};
+    moon.setParent(crate);
 
     const std::pair<const char*, glm::vec3> lamps[] = {{"Lamp", {1.0f, 0.55f, 0.2f}}, {"Lamp 2", {0.3f, 0.6f, 1.0f}}};
     for (int i = 0; i < 2; ++i) {
