@@ -654,7 +654,7 @@ void wrapControls() {
     const RenderStats& st = Application::get().renderer().stats();
     ImGui::Text("%u instances, %u of them extra copies", st.instances, st.wrapCopies);
 #else
-    ImGui::TextDisabled("Build with -DNOVA_WRAP_RENDER_MODES=ON (preset windows-vs2022-wrap)");
+    ImGui::TextDisabled("Built with -DNOVA_WRAP_RENDER_MODES=OFF: turn it on (the default)");
     ImGui::TextDisabled("to draw across the seams and repeat the world.");
 #endif
 }

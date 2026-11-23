@@ -6,7 +6,8 @@
       "name": "base",
       "hidden": true,
       "binaryDir": "${sourceDir}/build",
-      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": { "NOVA_WRAP_RENDER_MODES": "ON" }
     },
     {
       "name": "windows-vs2022",
@@ -18,12 +19,12 @@
       "cacheVariables": { "VCPKG_TARGET_TRIPLET": "x64-windows" }
     },
     {
-      "name": "windows-vs2022-wrap",
-      "displayName": "Windows x64 (Visual Studio 2022), wrap render modes",
-      "description": "NOVA_WRAP_RENDER_MODES=ON: choose how objects across the world seam are drawn.",
+      "name": "windows-vs2022-nowrap",
+      "displayName": "Windows x64 (Visual Studio 2022), without wrap render modes",
+      "description": "NOVA_WRAP_RENDER_MODES=OFF: each object drawn once, at its copy nearest the camera.",
       "inherits": "windows-vs2022",
-      "binaryDir": "${sourceDir}/build-wrap",
-      "cacheVariables": { "NOVA_WRAP_RENDER_MODES": "ON" }
+      "binaryDir": "${sourceDir}/build-nowrap",
+      "cacheVariables": { "NOVA_WRAP_RENDER_MODES": "OFF" }
     },
     {
       "name": "ninja",
@@ -35,13 +36,13 @@
   "buildPresets": [
     { "name": "debug",   "configurePreset": "windows-vs2022", "configuration": "Debug" },
     { "name": "release", "configurePreset": "windows-vs2022", "configuration": "Release" },
-    { "name": "wrap-debug", "configurePreset": "windows-vs2022-wrap", "configuration": "Debug" },
+    { "name": "nowrap-debug", "configurePreset": "windows-vs2022-nowrap", "configuration": "Debug" },
     { "name": "ninja-debug",   "configurePreset": "ninja", "configuration": "Debug" },
     { "name": "ninja-release", "configurePreset": "ninja", "configuration": "Release" }
   ],
   "testPresets": [
     { "name": "debug",   "configurePreset": "windows-vs2022", "configuration": "Debug",   "output": { "outputOnFailure": true } },
     { "name": "release", "configurePreset": "windows-vs2022", "configuration": "Release", "output": { "outputOnFailure": true } },
-    { "name": "wrap-debug", "configurePreset": "windows-vs2022-wrap", "configuration": "Debug", "output": { "outputOnFailure": true } }
+    { "name": "nowrap-debug", "configurePreset": "windows-vs2022-nowrap", "configuration": "Debug", "output": { "outputOnFailure": true } }
   ]
 }

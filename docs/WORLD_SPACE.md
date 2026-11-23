@@ -524,9 +524,10 @@ Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Ba
 ### Renderização na emenda (`NOVA_WRAP_RENDER_MODES`)
 - Tudo continua relativo à câmera: cada objeto é posto na cópia mais próxima dela, pela sua origem.
   Um objeto que cruza a emenda do outro lado da câmera, a meia volta, aparece inteiro de um lado só.
-- A opção de CMake `NOVA_WRAP_RENDER_MODES` vem **desligada** por padrão. Desligada, não há código
-  novo no shader. O preset `windows-vs2022-wrap` compila com ela ligada em `build-wrap/`. Ligada,
-  `RenderSettings::wrapShift` escolhe:
+- A opção de CMake `NOVA_WRAP_RENDER_MODES` vem **ligada** por padrão (os presets também a ligam).
+  Desligada, não há código novo no shader e cada objeto aparece na cópia mais próxima da câmera; o
+  preset `windows-vs2022-nowrap` compila assim em `build-nowrap/` (os testes rodam nos dois).
+  Ligada, `RenderSettings::wrapShift` escolhe:
   - **`Triangle`** (padrão): cada objeto cuja esfera envolvente cruza a borda da volta da câmera é
     desenhado sem índice. O `forward.vert` lê os três vértices do triângulo e leva o triângulo
     inteiro para a volta do seu centróide, então o objeto aparece em parte de cada lado. O corte

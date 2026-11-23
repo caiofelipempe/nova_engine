@@ -63,7 +63,7 @@ doxygen docs/Doxyfile             # referência da API em build/docs/html (reque
 
 Shaders do jogo podem ser compilados em runtime (`NOVA_SHADER_COMPILER=ON`, padrão: usa o `shaderc_combined` do Vulkan SDK). Com `-DNOVA_SHADER_COMPILER=OFF` o compilador fica fora da engine e o jogo usa só SPIR-V pré-compilado (veja [Shaders do jogo](#shaders-do-jogo)).
 
-O mundo é circular. Com `-DNOVA_WRAP_RENDER_MODES=ON` (preset `windows-vs2022-wrap`, em `build-wrap/`), `RenderSettings::wrapShift` escolhe como desenhar o que cruza a emenda: por triângulo (o padrão), por objeto, ou recortado na emenda. `wrapRepeat` repete o mundo até o horizonte. Com a opção desligada (padrão), cada objeto aparece na cópia mais próxima da câmera.
+O mundo é circular. Com `NOVA_WRAP_RENDER_MODES` (ligada por padrão), `RenderSettings::wrapShift` escolhe como desenhar o que cruza a emenda: por triângulo (o padrão), por objeto, recortado na emenda, ou cortado numa volta só (`Crop`, a maquete). `wrapRepeat` repete o mundo até o horizonte. Com a opção desligada (`-DNOVA_WRAP_RENDER_MODES=OFF`, preset `windows-vs2022-nowrap`, em `build-nowrap/`), cada objeto aparece na cópia mais próxima da câmera.
 
 Engine e editor são compilados como DLLs (`NOVA_SHARED=ON`, padrão) para que o código do jogo possa ser uma DLL recarregada a quente; com `-DNOVA_SHARED=OFF` viram bibliotecas estáticas (sem hot reload).
 

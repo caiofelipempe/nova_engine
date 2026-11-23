@@ -35,7 +35,7 @@ option(NOVA_SHADER_COMPILER  "Compile game shaders at runtime (shaderc), with ho
 # placed around the camera (per triangle by default, per object, or split exactly at the seam) and
 # RenderSettings::wrapRepeat draws further laps of the world. OFF: each object at its copy nearest the
 # camera, with no extra shader code.
-option(NOVA_WRAP_RENDER_MODES "Choose how objects across the world seam are drawn (triangle / object / split)" OFF)
+option(NOVA_WRAP_RENDER_MODES "Choose how objects across the world seam are drawn (triangle / object / split / crop)" ON)
 
 if(NOT NOVA_RHI_VULKAN)
     message(FATAL_ERROR "At least one RHI backend is required (only Vulkan is implemented).")
