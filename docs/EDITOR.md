@@ -312,6 +312,7 @@ Widgets prontos com o visual do editor: `nova::editor::widgets::vec3`, `widgets:
 | View/Tools/Move · Rotate · Scale · Local Space | W · E · R |
 | View/Show Selection Bounds · All Colliders · Light and Camera Gizmos · Grid | — |
 | Viewport: clique seleciona (Ctrl alterna, Shift adiciona); Hierarchy: Ctrl/Shift (intervalo) | — |
+| Hierarchy: arrastar uma entidade para outra (vira filha) ou para o espaço vazio (vira raiz); menu *Unparent* | — |
 | Game/Build and Reload · Reload Code · Reload When the DLL Changes | Ctrl+B · Ctrl+R · — |
 | Window/Reset Layout · Command Palette... | — · Ctrl+Shift+P |
 

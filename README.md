@@ -171,6 +171,20 @@ nova::loadScene(scene, "assets/levels/forest.scene.json", assets.serializeOption
 - Arquivos antigos continuam abrindo: campos novos usam o padrão, componentes/scripts desconhecidos são ignorados com aviso.
 - Os componentes da engine são refletidos em [engine/src/nova/reflect/EngineTypes.cpp](engine/src/nova/reflect/EngineTypes.cpp).
 
+**Hierarquia.** Uma entidade pode ser filha de outra e segue o pai, mantendo o deslocamento dela (posição, rotação e escala no referencial do pai):
+
+```cpp
+wheel.setParent(car);                       // mantém a pose no mundo; recusa laços
+car.transform().position = {20, 0, 0};      // a roda vai junto (no próximo update, ou scene.updateTransforms())
+scene.setLocalTransform(wheel, {{2, 0, 1}, glm::dquat(1, 0, 0, 0), glm::dvec3(1)}); // deslocamento do pai
+for (nova::Entity c : car.children()) { /* ... */ }  // e parent(), scene.descendantsOf(car)
+```
+
+- O `TransformComponent` continua sendo a pose **no mundo** (posição `int64`): renderização, física e ferramentas não mudam. O `ParentComponent` guarda só a referência ao pai (por UUID, salva e remapeada em prefabs); o deslocamento sai das poses salvas.
+- A cena põe os filhos no lugar antes dos scripts, depois deles e depois da física (`Scene::update`), e antes de desenhar. Um filho movido por outra coisa (script, gizmo, o próprio corpo dinâmico) fica onde foi posto e passa a ter o deslocamento dali. Corpos estáticos e cinemáticos filhos seguem o pai; um dinâmico se move sozinho.
+- Apagar um pai apaga os descendentes; duplicar copia a subárvore (os filhos copiados seguem a cópia); um prefab leva os descendentes, e um pai que fica de fora é esquecido. Os filhos de um corpo interpolado são desenhados com ele.
+- No editor, a *Hierarchy* é uma árvore: arraste uma entidade para outra para torná-la filha, ou para o espaço vazio abaixo para virar raiz (com desfazer). Duplicar e apagar agem nas raízes da seleção.
+
 ## Física (Jolt Physics)
 
 A física 3D usa o [Jolt Physics](https://github.com/jrouwe/JoltPhysics) (multi-thread, usado em Horizon Forbidden West), atrás da interface `physics::PhysicsWorld` — mesmo esquema de backends do RHI (`NOVA_PHYSICS_JOLT`). Nenhum header do Jolt vaza para a API pública.
@@ -320,4 +334,4 @@ Próximos passos (a estrutura já está preparada):
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
 - Renderer: materiais com mais texturas (normal, metallic-roughness, emissive), shadow maps como fallback sem RT, render graph, culling em GPU, backend D3D12.
-- Cena: hierarquia de transforms.
+- Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*). Próximos: modelos glTF instanciados com a hierarquia dos nós (hoje achatada em poses no mundo).
