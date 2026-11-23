@@ -117,6 +117,25 @@ std::shared_ptr<const SkinData> Scene::findSkin(const std::string& skin) const {
 // to the pose, in the mesh's own space (the draw's model matrix places it). Worked out from poses
 // relative to the mesh, in doubles: exact however far out in the world.
 bool Scene::skinJoints(entt::entity e, const TransformComponent& pose, RenderScene& out, u32& offset, u32& count) {
+    offset = static_cast<u32>(out.joints.size());
+    if (!jointMatrices(e, pose, out.joints, true)) {
+        out.joints.resize(offset);
+        return false;
+    }
+    count = static_cast<u32>(out.joints.size()) - offset;
+    return true;
+}
+
+bool Scene::skinPose(Entity entity, std::vector<glm::mat4>& joints) {
+    joints.clear();
+    if (!entity.valid() || entity.scene() != this || !entity.has<SkinComponent>()) return false;
+    updateTransforms(); // the joints where their parents put them now
+    return jointMatrices(entity.handle(), entity.transform(), joints, false);
+}
+
+// The joint matrices of entity `e`'s skin, appended to `out` (mesh space, for the mesh at `pose`).
+// `drawn`: the poses drawn between physics steps (rendering) rather than the transforms (tools).
+bool Scene::jointMatrices(entt::entity e, const TransformComponent& pose, std::vector<glm::mat4>& out, bool drawn) {
     auto& sc = m_registry.get<SkinComponent>(e);
     if (!sc.skin.empty() && (sc.resolved != sc.skin || !sc.data)) {
         sc.data = findSkin(sc.skin);
@@ -135,20 +154,18 @@ bool Scene::skinJoints(entt::entity e, const TransformComponent& pose, RenderSce
         sc.boundRoot = sc.root.uuid;
     }
     const glm::dmat4 meshInverse = glm::inverse(poseMatrix(pose, glm::dvec3(0.0))); // the mesh's frame, at its origin
-    offset = static_cast<u32>(out.joints.size());
-    count = static_cast<u32>(skin->joints.size());
-    TransformComponent drawn;
+    TransformComponent between;
     for (size_t i = 0; i < skin->joints.size(); ++i) {
         const entt::entity j = sc.joints[i];
         const glm::dmat4 bindInverse = i < skin->inverseBind.size() ? glm::dmat4(skin->inverseBind[i]) : glm::dmat4(1.0);
         if (j == entt::null || !m_registry.valid(j)) {
-            out.joints.push_back(glm::mat4(1.0f)); // a missing joint: that part stays in the bind pose
+            out.push_back(glm::mat4(1.0f)); // a missing joint: that part stays in the bind pose
             continue;
         }
         const TransformComponent& jt = m_registry.get<TransformComponent>(j);
-        const TransformComponent& at = drawnPose(j, jt, drawn) ? drawn : jt; // between physics steps, like the mesh
+        const TransformComponent& at = drawn && drawnPose(j, jt, between) ? between : jt; // like the mesh
         const glm::dmat4 joint = poseMatrix(at, (at.position - pose.position).toMeters());
-        out.joints.push_back(glm::mat4(meshInverse * joint * bindInverse));
+        out.push_back(glm::mat4(meshInverse * joint * bindInverse));
     }
     return true;
 }

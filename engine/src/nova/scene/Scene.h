@@ -123,6 +123,9 @@ public:
     static void setDefaultSkinSource(SkinSource source);
     /// @brief The skeleton a reference names (through the skin source), or null.
     std::shared_ptr<const SkinData> findSkin(const std::string& skin) const;
+    /// @brief The joint matrices of a skinned entity in its current pose (mesh space: each maps the
+    ///        bind pose to the pose; see MeshData::posed). False without a skin, a skeleton or its root.
+    bool skinPose(Entity entity, std::vector<glm::mat4>& joints);
     /// @}
 
     /// @brief Runs scripts, built-in systems and (if simulating) physics.
@@ -338,6 +341,7 @@ private:
     AnimationSource m_animationSource;
     SkinSource m_skinSource;
     bool skinJoints(entt::entity e, const TransformComponent& pose, RenderScene& out, u32& offset, u32& count);
+    bool jointMatrices(entt::entity e, const TransformComponent& pose, std::vector<glm::mat4>& out, bool drawn);
     void updateAnimations(Duration frame);
     entt::entity findByPath(entt::entity from, const std::string& path);
     entt::entity lookup(u64 uuid) const;

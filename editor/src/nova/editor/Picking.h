@@ -31,7 +31,8 @@ struct PickOptions {
     f32 maxDistance = std::numeric_limits<f32>::infinity(); ///< Maximum ray length.
 };
 
-/// @brief Closest entity along a ray: exact triangles for meshes, a small sphere for the rest.
+/// @brief Closest entity along a ray: exact triangles for meshes (skinned ones in their current
+///        pose), a small sphere for the rest.
 /// Geometry is tested relative to `origin`, so picking stays precise far from the world origin.
 std::optional<PickHit> pick(Scene& scene, const MeshLookup& meshes, const GlobalPosition& origin,
                             const glm::vec3& direction, const PickOptions& options = {});

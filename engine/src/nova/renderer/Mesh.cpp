@@ -56,6 +56,25 @@ MeshData MeshData::plane(f32 size, u32 subdivisions) {
     return m;
 }
 
+MeshData MeshData::posed(const std::vector<glm::mat4>& joints) const {
+    MeshData out;
+    out.vertices = vertices;
+    out.indices = indices;
+    if (skin.size() != vertices.size() || joints.empty()) return out;
+    const u32 last = static_cast<u32>(joints.size()) - 1;
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        const SkinVertex& s = skin[i];
+        const u32 j[4] = {s.joints01 & 0xFFFFu, s.joints01 >> 16, s.joints23 & 0xFFFFu, s.joints23 >> 16};
+        glm::mat4 m(0.0f);
+        for (int k = 0; k < 4; ++k) m += s.weights[k] * joints[std::min(j[k], last)];
+        Vertex& v = out.vertices[i];
+        v.position = glm::vec3(m * glm::vec4(v.position, 1.0f));
+        const glm::vec3 n = glm::mat3(m) * v.normal;
+        v.normal = glm::length(n) > 0.0f ? glm::normalize(n) : v.normal;
+    }
+    return out;
+}
+
 Bounds MeshData::bounds() const {
     if (vertices.empty()) return {};
     Bounds b{vertices[0].position, vertices[0].position};

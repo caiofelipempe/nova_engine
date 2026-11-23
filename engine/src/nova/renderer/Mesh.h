@@ -80,6 +80,10 @@ struct MeshData {
 
     /// @brief Bounding box of the vertices (zero box when empty).
     Bounds bounds() const;
+    /// @brief A skinned mesh in a pose: the vertices moved by `joints` (one matrix per joint, mesh
+    ///        space, as Scene::skinPose gives), the same math as the shaders; no skin in the copy.
+    ///        A rigid mesh (or no joints) comes back as it is.
+    MeshData posed(const std::vector<glm::mat4>& joints) const;
 };
 
 /// @brief Exact ray/mesh intersection (CPU): bounding-box early-out, then every triangle.

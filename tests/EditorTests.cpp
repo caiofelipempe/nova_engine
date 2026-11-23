@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -805,6 +806,50 @@ void hierarchyEditing() {
     CHECK(f.scene.registry().view<IdComponent>().size() == 2);
 }
 
+void pickingSkinned() {
+    // A plate bound to a bone (bind pose: x from −0.5 to 0.5, y from 1 to 2, facing +Z). The bone
+    // moves 5 m along X: clicks find the plate where it is drawn, not where the bind pose had it.
+    MeshData plate;
+    for (glm::vec2 c : {glm::vec2(-0.5f, 1.0f), glm::vec2(0.5f, 1.0f), glm::vec2(0.5f, 2.0f), glm::vec2(-0.5f, 2.0f)}) {
+        Vertex v;
+        v.position = {c.x, c.y, 0.0f};
+        v.normal = {0, 0, 1};
+        plate.vertices.push_back(v);
+        plate.skin.push_back(SkinVertex{}); // all on joint 0
+    }
+    plate.indices = {0, 1, 2, 0, 2, 3};
+    MeshLookup meshes = [&](MeshHandle h) { return h.id == 1 ? &plate : nullptr; };
+
+    Fixture f;
+    Entity rig = f.scene.createEntity("Rig");
+    Entity bone = f.scene.createEntity("Bone");
+    bone.setParent(rig);
+    Entity body = f.scene.createEntity("Body");
+    body.add<MeshComponent>(MeshHandle{1});
+    body.setParent(rig);
+    auto skin = std::make_shared<SkinData>();
+    skin->joints = {"Bone"};
+    skin->inverseBind = {glm::mat4(1.0f)};
+    auto& sc = body.add<SkinComponent>();
+    sc.root = Scene::refOf(rig);
+    sc.data = skin;
+    PickOptions noMarkers;
+    noMarkers.markerRadius = 0.0f;
+
+    auto hits = [&](f64 x) {
+        auto hit = pick(f.scene, meshes, GlobalPosition(x, 1.5, 10.0), {0, 0, -1}, noMarkers);
+        return hit && hit->entity == body;
+    };
+    CHECK(hits(0.0) && !hits(5.0)); // the bind pose
+    bone.transform().position = {5, 0, 0};
+    CHECK(hits(5.0) && !hits(0.0)); // where it is drawn now
+    std::vector<glm::mat4> joints;
+    CHECK(f.scene.skinPose(body, joints) && joints.size() == 1);
+    const MeshData posed = plate.posed(joints);
+    CHECK(posed.skin.empty() && glm::length(posed.vertices[0].position - glm::vec3(4.5f, 1.0f, 0.0f)) < 1e-5f);
+    CHECK(!f.scene.skinPose(rig, joints)); // not skinned
+}
+
 int main() {
     Log::init();
     Log::core().set_level(spdlog::level::warn);
@@ -827,6 +872,7 @@ int main() {
         {"hierarchy (parent as an edit, delete and duplicate trees)", hierarchyEditing},
         {"tools", tools},
         {"picking", picking},
+        {"picking skinned meshes in their current pose", pickingSkinned},
         {"world: the torus seam is continuous (pick, render, camera)", worldSeam},
         {"signals", signals},
         {"assets (prefabs, instantiate + undo, actions)", assets},

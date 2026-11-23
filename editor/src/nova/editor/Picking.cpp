@@ -1,6 +1,7 @@
 #include "nova/editor/Picking.h"
 
 #include <cmath>
+#include <vector>
 
 namespace nova::editor {
 
@@ -9,6 +10,7 @@ std::optional<PickHit> pick(Scene& scene, const MeshLookup& meshes, const Global
     if (glm::dot(direction, direction) < 1e-20f) return std::nullopt;
     const glm::vec3 dir = glm::normalize(direction);
     std::optional<PickHit> best;
+    std::vector<glm::mat4> joints;
     f32 bestDistance = options.maxDistance;
 
     for (auto [handle, t] : scene.registry().view<TransformComponent>().each()) {
@@ -17,6 +19,12 @@ std::optional<PickHit> pick(Scene& scene, const MeshLookup& meshes, const Global
 
         const MeshComponent* mc = e.tryGet<MeshComponent>();
         const MeshData* mesh = (mc && mc->mesh && meshes) ? meshes(mc->mesh) : nullptr;
+        // Skinned: the triangles where they are drawn (the current pose), not the bind pose.
+        MeshData posed;
+        if (mesh && !mesh->skin.empty() && e.has<SkinComponent>() && scene.skinPose(e, joints)) {
+            posed = mesh->posed(joints);
+            mesh = &posed;
+        }
         if (mesh) {
             // Ray at the local origin, mesh placed relative to it.
             if (auto hit = raycastMesh(*mesh, t.matrixRelativeTo(origin), glm::vec3(0.0f), dir, bestDistance)) {
