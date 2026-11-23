@@ -52,7 +52,13 @@ struct InstanceData {
     vec4 extra;     // x = Material::customTexture (bindless, < 0 = none), yzw = center of the lap of this copy
     vec4 maps;      // bindless (< 0 = none): x normal, y metallic-roughness, z occlusion, w emissive
     vec4 surface;   // x normalScale, y occlusionStrength, z alphaCutoff, w alpha mode (0 opaque, 1 mask, 2 blend)
+    vec4 uvMatrix;  // the UV transform's 2x2 by columns: (xy) (zw)
+    vec4 uvOffset;  // xy = its offset
+    uvec4 mesh;     // device addresses (lo, hi): xy vertices, zw indices
 };
+
+// A mesh UV through the material's UV transform (Material::uvScale, uvRotation, uvOffset).
+vec2 nova_materialUv(InstanceData inst, vec2 uv) { return mat2(inst.uvMatrix.xy, inst.uvMatrix.zw) * uv + inst.uvOffset.xy; }
 
 struct Vertex {
     vec3 position;

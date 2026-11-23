@@ -355,6 +355,7 @@ View buildSurfaces(Scene& s, const BenchMeshes& m) {
         mat.normalTexture = tex.bumps;
         mat.occlusionTexture = tex.groovesAo;
         mat.roughness = 0.8f;
+        mat.uvScale = {4.0f, 3.0f}; // the bumps repeated: 1 m each
     }
     Entity plain = visual(s, "Plain cube", m.cube, {-5.0, 1.0, 0.0}, glm::vec3(2.0f), {0.8f, 0.45f, 0.3f, 1});
     Entity bumpy = visual(s, "Bumpy cube", m.cube, {-2.2, 1.0, 0.0}, glm::vec3(2.0f), {0.8f, 0.45f, 0.3f, 1});
@@ -387,6 +388,14 @@ View buildSurfaces(Scene& s, const BenchMeshes& m) {
     fence.transform().setEulerDegrees({90.0f, 0.0f, 0.0f});
     {
         Material& mat = fence.get<MeshComponent>().material;
+        mat.baseColorTexture = tex.fence;
+        mat.alphaMode = AlphaMode::Mask;
+        mat.doubleSided = true;
+    }
+    // A grate over the floor (cut out too): its ray-traced shadow has the holes.
+    Entity grate = visual(s, "Grate", m.plane, {5.0, 2.4, 4.0}, {3.0f, 1.0f, 3.0f}, {1, 1, 1, 1});
+    {
+        Material& mat = grate.get<MeshComponent>().material;
         mat.baseColorTexture = tex.fence;
         mat.alphaMode = AlphaMode::Mask;
         mat.doubleSided = true;

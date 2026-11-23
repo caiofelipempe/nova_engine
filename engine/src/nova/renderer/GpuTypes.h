@@ -58,8 +58,11 @@ struct InstanceData {
     glm::vec4 extra;        ///< x = Material::customTexture index (-1 = none); yzw = center of the lap this copy is drawn in (camera-relative m).
     glm::vec4 maps;         ///< Bindless indices (-1 = none): x normal, y metallic-roughness, z occlusion, w emissive.
     glm::vec4 surface;      ///< x normalScale, y occlusionStrength, z alphaCutoff, w AlphaMode.
+    glm::vec4 uvMatrix;     ///< The UV transform's 2×2 (rotation · scale), by columns: (xy) (zw).
+    glm::vec4 uvOffset;     ///< xy = its offset.
+    glm::uvec4 mesh;        ///< Device addresses (lo, hi): xy the vertices, zw the indices (alpha-tested shadows).
 };
-static_assert(sizeof(InstanceData) == 240);
+static_assert(sizeof(InstanceData) == 288);
 
 /// @brief Push constants of the forward pass (`forward_push.glsl`).
 struct DrawPush {

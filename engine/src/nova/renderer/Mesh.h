@@ -143,6 +143,11 @@ struct Material {
     AlphaMode alphaMode = AlphaMode::Opaque; ///< How alpha is used.
     f32 alphaCutoff = 0.5f;              ///< AlphaMode::Mask: cut where alpha is below this.
     bool doubleSided = false;            ///< Both faces drawn (otherwise back faces are culled).
+    /// @brief UV transform of every texture (as glTF's KHR_texture_transform): scaled, then
+    ///        rotated (radians), then offset. A scale of 4 repeats a texture 4 times across.
+    glm::vec2 uvScale{1.0f};
+    f32 uvRotation = 0.0f;
+    glm::vec2 uvOffset{0.0f};
     /// @brief Optional game material: a fragment shader written against `nova/material.glsl`
     ///        (invalid = the engine's default shading).
     ShaderHandle shader;

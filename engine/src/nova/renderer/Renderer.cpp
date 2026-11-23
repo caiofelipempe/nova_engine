@@ -641,6 +641,15 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
                               mapIndex(d.material.occlusionTexture), mapIndex(d.material.emissiveTexture));
         inst.surface = glm::vec4(d.material.normalScale, d.material.occlusionStrength, d.material.alphaCutoff,
                                  static_cast<f32>(d.material.alphaMode));
+        { // UV transform: offset · rotation · scale (KHR_texture_transform)
+            const f32 cosine = std::cos(d.material.uvRotation), sine = std::sin(d.material.uvRotation);
+            const glm::vec2 k = d.material.uvScale;
+            inst.uvMatrix = glm::vec4(cosine * k.x, sine * k.x, -sine * k.y, cosine * k.y);
+            inst.uvOffset = glm::vec4(d.material.uvOffset, 0.0f, 0.0f);
+            const GpuMesh& gm = m_meshes[d.mesh.id];
+            const u64 v = m_device.deviceAddress(gm.vertexBuffer), ix = m_device.deviceAddress(gm.indexBuffer);
+            inst.mesh = glm::uvec4(u32(v), u32(v >> 32), u32(ix), u32(ix >> 32));
+        }
 
         // Split copies (moved off their lap's center) stay out of the TLAS: the rays see each
         // object whole, once per lap; a copy laid over its original would shadow itself.
@@ -657,7 +666,9 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             r.instanceCustomIndex = i;
             r.mask = 0xFF;
             r.sbtRecordOffset = 0;
-            r.flags = AccelInstanceTriangleCullDisable;
+            // Cut-out materials are tested by their alpha in the shadow rays; the rest is opaque.
+            r.flags = AccelInstanceTriangleCullDisable |
+                      (d.material.alphaMode == AlphaMode::Mask ? AccelInstanceForceNoOpaque : AccelInstanceForceOpaque);
             r.blasAddress = m_device.accelStructAddress(blas);
         }
     }

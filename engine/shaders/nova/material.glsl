@@ -38,7 +38,7 @@ struct Surface {
     // Read-only inputs (changing them has no effect on lighting):
     vec3 worldPos;    // world position modulo NOVA_WORLD_TILE (4096 m): for patterns and noise
     vec3 relativePos; // position relative to the camera (exact; what lighting uses)
-    vec2 uv;
+    vec2 uv;          // the mesh UV through the material's UV transform
     vec3 viewDir;     // unit vector from the surface to the camera
     vec4 custom;      // Material::customParams
 };
@@ -84,10 +84,10 @@ void main() {
     if (!gl_FrontFacing) s.normal = -s.normal;
     s.relativePos = vWorldPos;
     s.worldPos = vWorldPos + pc.frame.data.originTiled.xyz;
-    s.uv = vUV;
+    s.uv = nova_materialUv(inst, vUV); // through the material's UV transform
     s.viewDir = normalize(nova_cameraPos() - vWorldPos);
     s.custom = inst.custom;
-    const vec4 base = inst.baseColor * nova_texture(int(inst.params.w), vUV);
+    const vec4 base = inst.baseColor * nova_texture(int(inst.params.w), s.uv);
     s.albedo = base.rgb;
     s.alpha = base.a;
     if ((matFlags & MATERIAL_FLAG_CHECKER) != 0u) {
@@ -95,15 +95,15 @@ void main() {
         s.albedo *= mod(c.x + c.y, 2.0) < 1.0 ? 1.0 : 0.6;
     }
     // Metallic-roughness (glTF: G roughness, B metallic), occlusion (R), emissive and normal maps.
-    const vec4 mr = nova_texture(int(inst.maps.y), vUV);
+    const vec4 mr = nova_texture(int(inst.maps.y), s.uv);
     s.metallic = inst.params.x * mr.b;
     s.roughness = inst.params.y * mr.g;
-    s.occlusion = inst.maps.z >= 0.0 ? mix(1.0, nova_texture(int(inst.maps.z), vUV).r, inst.surface.y) : 1.0;
-    s.emissive = inst.emissive.rgb * inst.emissive.w * nova_texture(int(inst.maps.w), vUV).rgb;
+    s.occlusion = inst.maps.z >= 0.0 ? mix(1.0, nova_texture(int(inst.maps.z), s.uv).r, inst.surface.y) : 1.0;
+    s.emissive = inst.emissive.rgb * inst.emissive.w * nova_texture(int(inst.maps.w), s.uv).rgb;
     if (inst.maps.x >= 0.0) {
-        vec3 tn = nova_texture(int(inst.maps.x), vUV).xyz * 2.0 - 1.0;
+        vec3 tn = nova_texture(int(inst.maps.x), s.uv).xyz * 2.0 - 1.0;
         tn.xy *= inst.surface.x;
-        s.normal = nova_perturbNormal(s.normal, vWorldPos, vUV, normalize(tn));
+        s.normal = nova_perturbNormal(s.normal, vWorldPos, s.uv, normalize(tn));
     }
     s.unlit = false;
 

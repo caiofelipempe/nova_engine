@@ -140,6 +140,12 @@ Material buildMaterial(const cgltf_data* data, const cgltf_material* m, const Mo
         mat.metallic = pbr.metallic_factor;
         mat.roughness = pbr.roughness_factor;
         mat.baseColorTexture = pick(pbr.base_color_texture, textures.color);
+        if (pbr.base_color_texture.has_transform) { // KHR_texture_transform (one per material here)
+            const cgltf_texture_transform& t = pbr.base_color_texture.transform;
+            mat.uvScale = {t.scale[0], t.scale[1]};
+            mat.uvRotation = t.rotation;
+            mat.uvOffset = {t.offset[0], t.offset[1]};
+        }
         mat.metallicRoughnessTexture = pick(pbr.metallic_roughness_texture, textures.data);
     }
     mat.normalTexture = pick(m->normal_texture, textures.data);

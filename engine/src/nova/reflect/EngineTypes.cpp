@@ -49,6 +49,9 @@ void registerEngineTypes() {
         .field("alphaMode", &Material::alphaMode, {.tooltip = "Mask: cut out below the cutoff. Blend: see-through"})
         .field("alphaCutoff", &Material::alphaCutoff, {.min = 0.0f, .max = 1.0f})
         .field("doubleSided", &Material::doubleSided)
+        .field("uvScale", &Material::uvScale, {.speed = 0.01f, .tooltip = "Repeats the textures (4 = four times across)"})
+        .field("uvRotation", &Material::uvRotation, {.degrees = true})
+        .field("uvOffset", &Material::uvOffset, {.speed = 0.01f})
         .field("shader", &Material::shader, {.tooltip = "Game material shader (nova/material.glsl); empty = default shading"})
         .field("customParams", &Material::customParams, {.speed = 0.01f, .tooltip = "Surface::custom in the material shader"})
         .field("customTexture", &Material::customTexture, {.tooltip = "nova_customTexture(uv) in the material shader"});

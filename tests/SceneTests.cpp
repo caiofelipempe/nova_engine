@@ -563,6 +563,9 @@ void fullMaterials() {
     m.alphaMode = AlphaMode::Mask;
     m.alphaCutoff = 0.3f;
     m.doubleSided = true;
+    m.uvScale = {4.0f, 2.0f};
+    m.uvRotation = 0.5f;
+    m.uvOffset = {0.25f, 0.0f};
     Entity glass = scene.createEntity("Glass");
     glass.add<MeshComponent>(MeshHandle{1}).material.alphaMode = AlphaMode::Blend;
     const std::string json = serializeScene(scene);
@@ -571,6 +574,7 @@ void fullMaterials() {
     CHECK(deserializeScene(back, json));
     const Material& r = back.findEntity("Leaf").get<MeshComponent>().material;
     CHECK(r.normalScale == 2.0f && r.occlusionStrength == 0.5f && r.alphaMode == AlphaMode::Mask && r.alphaCutoff == 0.3f && r.doubleSided);
+    CHECK(r.uvScale == glm::vec2(4.0f, 2.0f) && r.uvRotation == 0.5f && r.uvOffset == glm::vec2(0.25f, 0.0f));
     CHECK(back.findEntity("Glass").get<MeshComponent>().material.alphaMode == AlphaMode::Blend);
     const Material plain;
     CHECK(plain.alphaMode == AlphaMode::Opaque && !plain.doubleSided && !plain.normalTexture && plain.normalScale == 1.0f);

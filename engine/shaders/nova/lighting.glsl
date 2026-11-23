@@ -37,15 +37,40 @@ vec3 nova_brdf(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roughn
     return (kd * albedo / NOVA_PI + specular) * NdotL;
 }
 
+#ifdef NOVA_RAY_QUERY
+// A shadow ray met a triangle of a cut-out material (alpha Mask, non-opaque in the TLAS): does it
+// block the light there? Its alpha at that point (base color × texture, through the UV transform).
+bool nova_shadowAlphaBlocks(uint instance, uint primitive, vec2 bary) {
+    InstanceData inst = pc.instances.items[instance];
+    VertexBuffer vertices = VertexBuffer(packUint2x32(inst.mesh.xy));
+    IndexBuffer indices = IndexBuffer(packUint2x32(inst.mesh.zw));
+    if (uint64_t(vertices) == 0ul || uint64_t(indices) == 0ul) return true;
+    Vertex a = vertices.items[indices.items[primitive * 3u + 0u]];
+    Vertex b = vertices.items[indices.items[primitive * 3u + 1u]];
+    Vertex c = vertices.items[indices.items[primitive * 3u + 2u]];
+    vec2 uv = vec2(a.u, a.v) * (1.0 - bary.x - bary.y) + vec2(b.u, b.v) * bary.x + vec2(c.u, c.v) * bary.y;
+    uv = nova_materialUv(inst, uv);
+    int tex = int(inst.params.w);
+    float alpha = inst.baseColor.a * (tex >= 0 ? textureLod(g_textures[nonuniformEXT(tex)], uv, 0.0).a : 1.0);
+    return alpha >= inst.surface.z;
+}
+#endif
+
 // 1 = lit, 0 = occluded. Without ray query support this is a no-op (future: shadow maps).
 float nova_traceShadow(vec3 origin, vec3 dir, float tMax) {
 #ifdef NOVA_RAY_QUERY
     if (pc.tlas == 0ul) return 1.0;
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, accelerationStructureEXT(pc.tlas),
-                          gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFF,
+    // Opaque instances are opaque in the TLAS; cut-out ones are tested here, by their alpha.
+    rayQueryInitializeEXT(rq, accelerationStructureEXT(pc.tlas), gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,
                           origin, 0.0, dir, tMax);
-    while (rayQueryProceedEXT(rq)) {}
+    while (rayQueryProceedEXT(rq)) {
+        if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT &&
+            nova_shadowAlphaBlocks(uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)),
+                                   uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)),
+                                   rayQueryGetIntersectionBarycentricsEXT(rq, false)))
+            rayQueryConfirmIntersectionEXT(rq);
+    }
     return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
 #else
     return 1.0;
