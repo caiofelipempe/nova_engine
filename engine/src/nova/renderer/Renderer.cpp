@@ -432,6 +432,13 @@ void Renderer::expandDraws(const RenderScene& scene, const glm::mat4& viewProj) 
     options.repeat = m_settings.wrapRepeat;
     options.repeatAxes = m_settings.wrapRepeatAxes;
     options.crop = m_settings.wrapCrop;
+#if NOVA_RENDER_ORIGIN_ROTATION
+    if (options.mode == WrapShift::Split && m_settings.wrapSplitTurnWithCamera)
+        m_slab = wrapSlab(glm::mat3(scene.camera.view), scene.wrapSize, m_slab.axis);
+    else
+        m_slab = {};
+    options.slab = m_slab;
+#endif
     options.worldCenter = scene.worldCenter;
 #endif
     auto bounds = [this](MeshHandle h) -> const Bounds* {
@@ -473,6 +480,8 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     fd.originTiled = glm::vec4(tiledOrigin(scene.camera.origin), gpu::kWorldTile);
 #if NOVA_WRAP_RENDER_MODES
     fd.wrapSize = glm::vec4(scene.wrapSize, static_cast<f32>(wrapMode()));
+    fd.wrapSlab = glm::vec4(m_slab.normal, m_slab.half);
+    if (m_slab.axis >= 0) fd.wrapSize.w = static_cast<f32>(5 + m_slab.axis); // NOVA_WRAP_SPLIT_SLAB + axis
 #if NOVA_RENDER_ORIGIN_ROTATION
     if (wrapMode() == WrapShift::Crop && s.wrapCrop == WrapCrop::View) {
         fd.wrapSize.w = 4.0f; // NOVA_WRAP_CROP_VIEW
@@ -481,6 +490,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
 #endif
 #else
     fd.wrapSize = glm::vec4(scene.wrapSize, 0.0f);
+    fd.wrapSlab = glm::vec4(0.0f);
 #endif
     m_lastOrigin = scene.camera.origin;
     fd.pointLightCount = std::min<u32>(static_cast<u32>(scene.pointLights.size()), gpu::kMaxPointLights);

@@ -28,6 +28,7 @@ struct WrapOptions {
     u32 repeat = 0;                     ///< Further laps on each side (circular axes), frustum culled.
     glm::bvec3 repeatAxes{true};        ///< The axes `repeat` applies to.
     WrapCrop crop = WrapCrop::World;    ///< WrapShift::Crop: the world's lap or the camera's.
+    WrapSlab slab;                      ///< WrapShift::Split turning with the camera (axis −1: not).
     glm::vec3 worldCenter{0.0f};        ///< The world's center from the camera (RenderScene::worldCenter).
     u32 maxInstances = 16384;           ///< Stop there.
 };
@@ -54,5 +55,13 @@ void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLoo
 /// @param size World size per axis (m); 0 = not circular.
 /// @param grow RenderSettings::wrapCropViewSize, 0..1.
 f32 viewCropHalf(const glm::mat3& view, const glm::vec3& size, f32 grow = 0.0f);
+
+/// @brief The slab of split turning with the camera: along the circular axis nearest the camera's
+///        direction (kept while still within 10% of the nearest, so it does not flicker near 45°),
+///        a slab one lap thick with its faces square to that direction.
+/// @param view World → view rotation of the camera.
+/// @param size World size per axis (m); 0 = not circular.
+/// @param previousAxis Last frame's axis (−1: none).
+WrapSlab wrapSlab(const glm::mat3& view, const glm::vec3& size, int previousAxis);
 
 } // namespace nova

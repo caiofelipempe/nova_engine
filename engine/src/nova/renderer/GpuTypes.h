@@ -39,13 +39,14 @@ struct FrameData {
     glm::vec4 groundColor;   ///< rgb = ground color.
     glm::vec4 originTiled;   ///< xyz = frame origin (camera) modulo kWorldTile, w = kWorldTile.
     glm::vec4 wrapSize;      ///< xyz = size of the circular world per axis (m), w = WrapShift (NOVA_WRAP_RENDER_MODES builds).
+    glm::vec4 wrapSlab;      ///< Split turning with the camera: xyz = the camera's direction, w = half the slab's thickness (m).
     u32 pointLightCount;     ///< Number of valid entries in pointLights.
     u32 flags;               ///< kFrameFlag* bits.
     f32 shadowBias;          ///< Shadow ray origin offset along the normal.
     f32 cropHalf;            ///< WrapCrop::View: half a side of the crop box, in the camera's axes (m).
     PointLight pointLights[kMaxPointLights]; ///< Point lights.
 };
-static_assert(sizeof(FrameData) == 256 + 8 * 16 + 16 + kMaxPointLights * 32);
+static_assert(sizeof(FrameData) == 256 + 9 * 16 + 16 + kMaxPointLights * 32);
 
 /// @brief Per-draw instance data, indexed by DrawPush::instanceIndex.
 struct InstanceData {

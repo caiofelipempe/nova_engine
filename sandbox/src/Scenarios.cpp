@@ -650,6 +650,10 @@ void wrapControls() {
 #endif
         rs.wrapCrop = static_cast<WrapCrop>(crop);
     }
+#if NOVA_RENDER_ORIGIN_ROTATION
+    if (rs.wrapShift == WrapShift::Split)
+        ImGui::Checkbox("Turn with the camera (cut square to the view)", &rs.wrapSplitTurnWithCamera);
+#endif
     int laps = static_cast<int>(rs.wrapRepeat);
     if (ImGui::SliderInt("Laps around", &laps, 0, 6)) rs.wrapRepeat = static_cast<u32>(laps);
     ImGui::TextUnformatted("Laps on:");

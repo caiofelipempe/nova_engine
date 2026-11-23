@@ -76,6 +76,9 @@ public:
 #if NOVA_WRAP_RENDER_MODES
         if (s_wrapShift >= 0) r.settings().wrapShift = static_cast<nova::WrapShift>(s_wrapShift);
         if (s_cropSize >= 0.0f) r.settings().wrapCropViewSize = s_cropSize;
+#if NOVA_RENDER_ORIGIN_ROTATION
+        if (s_turn) r.settings().wrapSplitTurnWithCamera = true;
+#endif
         if (s_wrapShift == 3)
             r.settings().wrapCrop = s_crop == "camera" ? nova::WrapCrop::Camera
                                   : s_crop == "view"   ? nova::WrapCrop::View
@@ -98,6 +101,7 @@ public:
     static inline int s_wrapShift = -1, s_wrapRepeat = -1; // --wrap triangle|object|split|crop|crop-camera|crop-view, --laps N
     static inline std::string s_crop;                       // "camera", "view" or "" (the world's lap)
     static inline float s_cropSize = -1.0f;                 // --crop-size 0..1 (crop-view)
+    static inline bool s_turn = false;                      // --turn: split turning with the camera
 
     // Like GameLayer::onUpdate, plus pause, single step and time scale.
     void onUpdate(float dt) override {
@@ -434,6 +438,7 @@ int main(int argc, char** argv) {
         const bool hasValue = i + 1 < argc;
         if (arg == "--check") PhysicsBench::s_selfCheck = true;
         else if (arg == "--scenario" && hasValue) PhysicsBench::s_startScenario = argv[++i];
+        else if (arg == "--turn") PhysicsBench::s_turn = true;
         else if (arg == "--crop-size" && hasValue) PhysicsBench::s_cropSize = static_cast<float>(std::atof(argv[++i]));
         else if (arg == "--laps" && hasValue) PhysicsBench::s_wrapRepeat = std::atoi(argv[++i]);
         else if (arg == "--wrap" && hasValue) {
