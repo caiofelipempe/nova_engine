@@ -126,6 +126,17 @@ public:
     /// @brief The joint matrices of a skinned entity in its current pose (mesh space: each maps the
     ///        bind pose to the pose; see MeshData::posed). False without a skin, a skeleton or its root.
     bool skinPose(Entity entity, std::vector<glm::mat4>& joints);
+    /// @brief Changes `entity`'s AnimatorComponent (added if missing) to `clip`, cross-fading
+    ///        from the clip it was playing over `fadeSeconds` (0: at once). The new clip starts
+    ///        from its beginning; the old one keeps playing while it fades out.
+    void playAnimation(Entity entity, std::shared_ptr<const AnimationClip> clip, f32 fadeSeconds = 0.0f, bool loop = true);
+    /// @brief Same, with the clip by reference (saved in AnimatorComponent::clip; resolved
+    ///        through the animation source).
+    void playAnimation(Entity entity, const std::string& clip, f32 fadeSeconds = 0.0f, bool loop = true);
+    /// @brief Mixes `clip` into `entity`'s animator with `weight` (relative to the main clip's,
+    ///        which is 1 once faded in); calling it again changes the weight, 0 removes it. With
+    ///        `sync`, it follows the main clip's phase (a walk and a run, feet in step).
+    void blendAnimation(Entity entity, std::shared_ptr<const AnimationClip> clip, f32 weight, bool sync = true);
     /// @}
 
     /// @brief Runs scripts, built-in systems and (if simulating) physics.
@@ -343,6 +354,7 @@ private:
     bool skinJoints(entt::entity e, const TransformComponent& pose, RenderScene& out, u32& offset, u32& count);
     bool jointMatrices(entt::entity e, const TransformComponent& pose, std::vector<glm::mat4>& out, bool drawn);
     void updateAnimations(Duration frame);
+    void bindTargets(entt::entity e, const AnimationClip* clip, const AnimationClip*& bound, std::vector<entt::entity>& targets);
     entt::entity findByPath(entt::entity from, const std::string& path);
     entt::entity lookup(u64 uuid) const;
     // Poses of what the physics moved, before and after the last step (interpolatePhysics).

@@ -55,8 +55,26 @@ struct AnimationClip {
     std::vector<AnimationChannel> channels;
 };
 
+/// @brief A clip playing beside an animator's own: fading out after a change of clip, or mixed in
+///        with a weight (Scene::playAnimation, Scene::blendAnimation). Not saved.
+struct AnimationLayer {
+    std::shared_ptr<const AnimationClip> data; ///< The clip.
+    f64 time = 0.0;                            ///< Position in it (seconds).
+    f32 speed = 1.0f;                          ///< Playback rate.
+    bool loop = true;                          ///< Wrap around at the end.
+    f32 weight = 1.0f;                         ///< Its share of the mix (relative to the others).
+    f32 fade = 0.0f;                           ///< Weight change per second (negative: fading out, gone at 0).
+    bool sync = false;                         ///< Follows the main clip's phase (walk and run in step).
+    const AnimationClip* boundClip = nullptr;  ///< The clip `targets` were found for.
+    std::vector<entt::entity> targets;         ///< One per channel.
+};
+
 /// @brief Plays a clip on this entity's descendants (and itself): each channel sets the local
 ///        pose (offset from the parent) of the entity its `target` path names.
+///
+/// Clips can also be changed with a cross-fade (Scene::playAnimation) and mixed with others by
+/// weight (Scene::blendAnimation): per node and property, the clips' values are averaged by
+/// weight (rotations as quaternions); what no clip animates keeps its pose.
 ///
 /// Added to a model's root by instantiateModel / AssetDatabase::instantiate when the model has
 /// animations. The clip is either set directly (`data`) or named by `clip`, a reference the
@@ -75,6 +93,9 @@ struct AnimatorComponent {
     std::string resolved;                       ///< The `clip` reference `data` came from.
     const AnimationClip* boundClip = nullptr;   ///< The clip `targets` were found for.
     std::vector<entt::entity> targets;          ///< One per channel (entt::null: not found).
+    f32 weight = 1.0f;                          ///< The main clip's share of the mix.
+    f32 fade = 0.0f;                            ///< Its weight change per second (fading in to 1).
+    std::vector<AnimationLayer> layers;         ///< Fading out and mixed-in clips.
 };
 
 /// @brief A skeleton for skinned meshes: its joints and how each one sat in the bind pose.

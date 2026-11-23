@@ -583,10 +583,25 @@ View buildEdges(Scene& s, const BenchMeshes& m) {
     return {{0.0, 22.0, 40.0}, {0.0, 0.0, 0.0}};
 }
 
+// Changes its animator between two clips every few seconds, cross-fading (Scene::playAnimation).
+struct ClipSwitcher : Script {
+    std::shared_ptr<const AnimationClip> a, b;
+    float every = 3.0f, fade = 0.6f, t = 0.0f;
+    bool onB = false;
+    void onUpdate(float dt) override {
+        if ((t += dt) < every) return;
+        t = 0.0f;
+        onB = !onB;
+        scene().playAnimation(entity(), onB ? b : a, fade);
+    }
+};
+
 // Skinning: columns that bend. Each is ONE skinned mesh (MeshData::skin) following a two-joint
 // skeleton (SkinComponent): its foot and its middle, entities under the column's root. An
 // AnimatorComponent swings the middle joint: below the bend the column stays, above it it leans,
 // blended around the bend. The roots turn slowly (RotatorComponent): the skin goes along.
+// Clips change and mix: columns 0-3 switch between swinging sideways and nodding, cross-fading;
+// column 4 plays both at once, in step and in equal parts (it swings along a diagonal).
 View buildSkinning(Scene& s, const BenchMeshes& m) {
     sun(s);
     tiledFloor(s, m, 4, 6.0f, true, {0.74f, 0.79f, 0.82f, 1});
@@ -606,6 +621,13 @@ View buildSkinning(Scene& s, const BenchMeshes& m) {
         lean.values.push_back({q.x, q.y, q.z, q.w});
     }
     swing->channels = {lean};
+    auto nod = std::make_shared<AnimationClip>(*swing); // the same swing, forward and back
+    nod->name = "nod";
+    nod->channels[0].values.clear();
+    for (float deg : {0.0f, 45.0f, 0.0f, -45.0f, 0.0f}) {
+        const glm::quat q = glm::angleAxis(glm::radians(deg), glm::vec3(1, 0, 0));
+        nod->channels[0].values.push_back({q.x, q.y, q.z, q.w});
+    }
     for (int i = 0; i < 5; ++i) {
         const double x = -6.0 + 3.0 * i;
         Entity root = s.createEntity("Column " + std::to_string(i));
@@ -625,6 +647,14 @@ View buildSkinning(Scene& s, const BenchMeshes& m) {
         auto& anim = root.add<AnimatorComponent>();
         anim.data = swing;
         anim.speed = 0.6f + 0.2f * static_cast<float>(i);
+        if (i < 4) {
+            auto& switcher = root.addScript<ClipSwitcher>();
+            switcher.a = swing;
+            switcher.b = nod;
+            switcher.every = 2.0f + 0.5f * static_cast<float>(i);
+        } else {
+            s.blendAnimation(root, nod, 1.0f, true); // both at once, in step
+        }
     }
     return {{0.0, 3.5, 11.0}, {0.0, 1.5, 0.0}};
 }
@@ -755,7 +785,7 @@ const std::vector<Scenario>& scenarios() {
                      nullptr, nullptr, 0.0f, nullptr, false, true});
         v.push_back({"Edges: wrap", "60 x 60 m world that wraps around: balls flash cyan and come in the other side.",
                      buildEdges});
-        v.push_back({"Skinning", "Bending columns: one skinned mesh each, a two-joint skeleton swung by an animation clip.",
+        v.push_back({"Skinning", "Bending columns: one skinned mesh each, a two-joint skeleton; clips cross-fade (left four) and mix (right).",
                      buildSkinning});
         v.push_back({"Tiny circular world", "48 m on every axis: meshes cut at the seam (split, half a lap from the camera; fly to slide it), a crate stack on the Z seam.",
                      buildTiny, nullptr, nullptr, 0.0f, statusTiny, false, false, enterTiny});

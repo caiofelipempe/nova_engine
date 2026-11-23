@@ -571,6 +571,86 @@ void gltfSkin() {
     fs::remove_all(dir);
 }
 
+// A clip holding one value on the node "Node": x for a translation, an angle around Y for a rotation.
+std::shared_ptr<AnimationClip> holdClip(const char* name, f32 value, bool rotation = false, f32 duration = 1.0f) {
+    auto clip = std::make_shared<AnimationClip>();
+    clip->name = name;
+    clip->duration = duration;
+    AnimationChannel ch;
+    ch.target = "Node";
+    ch.times = {0.0f, duration};
+    if (rotation) {
+        ch.path = AnimationPath::Rotation;
+        const glm::quat q = glm::angleAxis(glm::radians(value), glm::vec3(0, 1, 0));
+        ch.values = {glm::vec4(q.x, q.y, q.z, q.w), glm::vec4(q.x, q.y, q.z, q.w)};
+    } else {
+        ch.values = {glm::vec4(value, 0, 0, 0), glm::vec4(value, 0, 0, 0)};
+    }
+    clip->channels = {ch};
+    return clip;
+}
+
+void animationMixing() {
+    Scene scene;
+    Entity root = scene.createEntity("Root");
+    Entity node = scene.createEntity("Node");
+    node.setParent(root);
+    auto x = [&] { return node.transform().position.toMeters().x; };
+    auto idle = holdClip("idle", 0.0f), walk = holdClip("walk", 10.0f);
+
+    // Changing clips at once, then with a cross-fade: halfway, halfway between.
+    scene.playAnimation(root, idle);
+    scene.update(Duration::fromSeconds(0.1));
+    CHECK(std::abs(x()) < 1e-6);
+    scene.playAnimation(root, walk, 1.0f);
+    scene.update(Duration::fromSeconds(0.5));
+    CHECK(std::abs(x() - 5.0) < 1e-4 && root.get<AnimatorComponent>().layers.size() == 1);
+    scene.update(Duration::fromSeconds(0.6));
+    CHECK(std::abs(x() - 10.0) < 1e-4 && root.get<AnimatorComponent>().layers.empty()); // the old clip is gone
+    scene.playAnimation(root, idle); // no fade: at once
+    scene.update(Duration::fromSeconds(0.1));
+    CHECK(std::abs(x()) < 1e-6);
+
+    // Mixing by weight (relative to the main clip's 1): a quarter of walk in idle = 2 m.
+    scene.blendAnimation(root, walk, 0.25f);
+    scene.update(Duration::fromSeconds(0.1));
+    CHECK(std::abs(x() - 2.0) < 1e-4);
+    scene.blendAnimation(root, walk, 1.0f); // a new weight: half and half
+    scene.update(Duration::fromSeconds(0.1));
+    CHECK(std::abs(x() - 5.0) < 1e-4 && root.get<AnimatorComponent>().layers.size() == 1);
+    scene.blendAnimation(root, walk, 0.0f); // removed
+    scene.update(Duration::fromSeconds(0.1));
+    CHECK(std::abs(x()) < 1e-6 && root.get<AnimatorComponent>().layers.empty());
+
+    // Rotations mix as quaternions: 0° and 90° in equal parts make 45°.
+    auto aside = holdClip("aside", 90.0f, true);
+    scene.playAnimation(root, holdClip("ahead", 0.0f, true));
+    scene.blendAnimation(root, aside, 1.0f);
+    scene.update(Duration::fromSeconds(0.1));
+    CHECK(std::abs(glm::degrees(glm::angle(node.transform().orientation())) - 45.0f) < 0.01f);
+    // Mixed-in clips stay mixed in when the main clip changes, until their weight goes to 0.
+    scene.playAnimation(root, idle);
+    CHECK(root.get<AnimatorComponent>().layers.size() == 1);
+    scene.blendAnimation(root, aside, 0.0f);
+
+    // In step: a synced layer follows the main clip's phase whatever its own length.
+    auto slow = holdClip("slow", 0.0f, false, 2.0f), fast = holdClip("fast", 0.0f, false, 0.5f);
+    scene.playAnimation(root, slow);
+    scene.blendAnimation(root, fast, 1.0f, true);
+    scene.update(Duration::fromSeconds(0.5)); // a quarter of the main clip
+    const auto& anim = root.get<AnimatorComponent>();
+    CHECK(std::abs(anim.time - 0.5) < 1e-9 && std::abs(anim.layers[0].time - 0.125) < 1e-9);
+
+    scene.blendAnimation(root, fast, 0.0f);
+
+    // By reference: the clip the animator saves.
+    scene.setAnimationSource([&](const std::string& ref) { return ref == "test:walk" ? walk : nullptr; });
+    scene.playAnimation(root, std::string("test:walk"), 0.2f);
+    CHECK(root.get<AnimatorComponent>().clip == "test:walk" && root.get<AnimatorComponent>().data == walk);
+    scene.update(Duration::fromSeconds(1.0));
+    CHECK(std::abs(x() - 10.0) < 1e-4);
+}
+
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // keep output if a check crashes
     Log::init();
@@ -585,6 +665,7 @@ int main() {
         {"animation: sampling (linear, step, cubic, slerp)", animationSampling},
         {"animation: a model's clip plays on its nodes (loop, pause, speed, saved by reference)", nodeAnimation},
         {"animation: read from a glTF file", gltfAnimation},
+        {"animation: cross-fades, mixing by weight, rotations, in step, by reference", animationMixing},
         {"skinning: joint matrices (bend, the model moving, far out, no skeleton)", skinning},
         {"skinning: a glTF skeleton", gltfSkin},
         {"import", importFiles},

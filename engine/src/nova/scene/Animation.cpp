@@ -170,10 +170,43 @@ bool Scene::jointMatrices(entt::entity e, const TransformComponent& pose, std::v
     return true;
 }
 
+// Finds the entities a clip's channels name, again when the clip changed or one of them is gone.
+void Scene::bindTargets(entt::entity e, const AnimationClip* clip, const AnimationClip*& bound,
+                        std::vector<entt::entity>& targets) {
+    bool stale = bound != clip || targets.size() != clip->channels.size();
+    for (entt::entity t : targets) stale = stale || (t != entt::null && !m_registry.valid(t));
+    if (!stale) return;
+    targets.clear();
+    for (const AnimationChannel& ch : clip->channels) targets.push_back(findByPath(e, ch.target));
+    bound = clip;
+}
+
+namespace {
+
+// Moves a clip's time by `seconds`, wrapping or holding at its ends.
+void advance(f64& time, f64 seconds, const AnimationClip& clip, bool loop) {
+    time += seconds;
+    const f64 length = clip.duration;
+    if (length <= 0.0) time = 0.0;
+    else if (loop) time -= std::floor(time / length) * length;
+    else time = std::clamp(time, 0.0, length);
+}
+
+// One node's mix: the weighted sums of each property's values.
+struct Mix {
+    glm::dvec3 position{0.0}, scale{0.0};
+    glm::dvec4 rotation{0.0}; // quaternions (x, y, z, w), each turned to the side of the first
+    f64 positionWeight = 0.0, rotationWeight = 0.0, scaleWeight = 0.0;
+};
+
+} // namespace
+
 void Scene::updateAnimations(Duration frame) {
+    const f64 dt = frame.seconds();
     std::vector<entt::entity> animated;
     for (auto e : m_registry.view<AnimatorComponent>()) animated.push_back(e);
     std::reverse(animated.begin(), animated.end()); // creation order
+    std::vector<std::pair<entt::entity, Mix>> mixes; // per node, in the order first met
     for (entt::entity e : animated) {
         if (!m_registry.valid(e)) continue;
         auto& anim = m_registry.get<AnimatorComponent>(e);
@@ -183,41 +216,134 @@ void Scene::updateAnimations(Duration frame) {
             anim.resolved = anim.clip;
         }
         const AnimationClip* clip = anim.data.get();
-        if (!clip) continue;
-        // Its channels' entities, found again when the clip changed or one of them is gone.
-        bool stale = anim.boundClip != clip || anim.targets.size() != clip->channels.size();
-        for (entt::entity t : anim.targets) stale = stale || (t != entt::null && !m_registry.valid(t));
-        if (stale) {
-            anim.targets.clear();
-            for (const AnimationChannel& ch : clip->channels) anim.targets.push_back(findByPath(e, ch.target));
-            anim.boundClip = clip;
-        }
+        if (clip) bindTargets(e, clip, anim.boundClip, anim.targets);
+
+        // Time and weights move on.
         if (anim.playing) {
-            anim.time += toDouble(anim.speed) * frame.seconds();
-            const f64 length = clip->duration;
-            if (length > 0.0) {
-                if (anim.loop) anim.time -= std::floor(anim.time / length) * length;
-                else anim.time = std::clamp(anim.time, 0.0, length);
-            } else {
-                anim.time = 0.0;
+            if (clip) advance(anim.time, toDouble(anim.speed) * dt, *clip, anim.loop);
+            anim.weight = std::clamp(anim.weight + anim.fade * static_cast<f32>(dt), 0.0f, 1.0f);
+            if (anim.weight >= 1.0f) anim.fade = 0.0f;
+            const f64 phase = clip && clip->duration > 0.0f ? anim.time / clip->duration : 0.0;
+            for (AnimationLayer& layer : anim.layers) {
+                if (!layer.data) continue;
+                if (layer.sync && clip) layer.time = phase * layer.data->duration;
+                else advance(layer.time, layer.speed * dt, *layer.data, layer.loop);
+                layer.weight += layer.fade * static_cast<f32>(dt);
             }
+            std::erase_if(anim.layers, [](const AnimationLayer& l) { return !l.data || (l.fade < 0.0f && l.weight <= 0.0f); });
         }
-        // Each channel sets one property of its entity's offset from its parent.
-        for (size_t i = 0; i < clip->channels.size(); ++i) {
-            const entt::entity target = anim.targets[i];
-            if (target == entt::null || !m_registry.valid(target)) continue;
-            const AnimationChannel& ch = clip->channels[i];
-            const glm::vec4 v = ch.sample(static_cast<f32>(anim.time));
+
+        // Every clip's channels, weighted, into the mix of the node each one moves.
+        mixes.clear();
+        auto mixOf = [&](entt::entity target) -> Mix& {
+            for (auto& [t, m] : mixes)
+                if (t == target) return m;
+            return mixes.emplace_back(target, Mix{}).second;
+        };
+        auto accumulate = [&](const AnimationClip& c, const std::vector<entt::entity>& targets, f64 time, f32 weight) {
+            if (weight <= 0.0f) return;
+            for (size_t i = 0; i < c.channels.size() && i < targets.size(); ++i) {
+                const entt::entity target = targets[i];
+                if (target == entt::null || !m_registry.valid(target)) continue;
+                const AnimationChannel& ch = c.channels[i];
+                const glm::dvec4 v(ch.sample(static_cast<f32>(time)));
+                Mix& m = mixOf(target);
+                switch (ch.path) {
+                    case AnimationPath::Translation:
+                        m.position += glm::dvec3(v) * f64(weight);
+                        m.positionWeight += weight;
+                        break;
+                    case AnimationPath::Rotation: {
+                        const bool flip = m.rotationWeight > 0.0 && glm::dot(m.rotation, v) < 0.0; // the same side
+                        m.rotation += (flip ? -v : v) * f64(weight);
+                        m.rotationWeight += weight;
+                        break;
+                    }
+                    case AnimationPath::Scale:
+                        m.scale += glm::dvec3(v) * f64(weight);
+                        m.scaleWeight += weight;
+                        break;
+                }
+            }
+        };
+        if (clip) accumulate(*clip, anim.targets, anim.time, anim.weight);
+        for (AnimationLayer& layer : anim.layers) {
+            if (!layer.data) continue;
+            bindTargets(e, layer.data.get(), layer.boundClip, layer.targets);
+            accumulate(*layer.data, layer.targets, layer.time, layer.weight);
+        }
+
+        // Each node's offset from its parent: the weighted averages (what no clip moves stays).
+        for (const auto& [target, m] : mixes) {
             Entity te{target, this};
             LocalTransform local = localTransform(te);
-            switch (ch.path) {
-                case AnimationPath::Translation: local.position = glm::dvec3(v); break;
-                case AnimationPath::Rotation: local.rotation = glm::dquat(v.w, v.x, v.y, v.z); break;
-                case AnimationPath::Scale: local.scale = glm::dvec3(v); break;
+            if (m.positionWeight > 0.0) local.position = m.position / m.positionWeight;
+            if (m.rotationWeight > 0.0 && glm::length(m.rotation) > 1e-12) {
+                const glm::dvec4 q = glm::normalize(m.rotation);
+                local.rotation = glm::dquat(q.w, q.x, q.y, q.z);
             }
+            if (m.scaleWeight > 0.0) local.scale = m.scale / m.scaleWeight;
             setLocalTransform(te, local);
         }
     }
+}
+
+void Scene::playAnimation(Entity entity, std::shared_ptr<const AnimationClip> clip, f32 fadeSeconds, bool loop) {
+    if (!entity.valid() || entity.scene() != this) return;
+    if (!entity.has<AnimatorComponent>()) entity.add<AnimatorComponent>();
+    auto& anim = entity.get<AnimatorComponent>();
+    // The clip it was playing fades out from where it is (no fade: it stops at once).
+    if (anim.data && fadeSeconds > 0.0f && anim.weight > 0.0f) {
+        AnimationLayer old;
+        old.data = anim.data;
+        old.time = anim.time;
+        old.speed = toFloat(anim.speed);
+        old.loop = anim.loop;
+        old.weight = anim.weight;
+        old.fade = -anim.weight / fadeSeconds;
+        anim.layers.push_back(std::move(old));
+    }
+    for (AnimationLayer& layer : anim.layers) // earlier fades: out in the same time at most
+        if (layer.fade < 0.0f && fadeSeconds > 0.0f) layer.fade = std::min(layer.fade, -layer.weight / fadeSeconds);
+    if (fadeSeconds <= 0.0f) std::erase_if(anim.layers, [](const AnimationLayer& l) { return l.fade < 0.0f; });
+    anim.data = std::move(clip);
+    anim.clip.clear();
+    anim.resolved.clear();
+    anim.time = 0.0;
+    anim.loop = loop;
+    anim.playing = true;
+    anim.weight = fadeSeconds > 0.0f ? 0.0f : 1.0f;
+    anim.fade = fadeSeconds > 0.0f ? 1.0f / fadeSeconds : 0.0f;
+}
+
+void Scene::playAnimation(Entity entity, const std::string& clip, f32 fadeSeconds, bool loop) {
+    playAnimation(entity, findAnimation(clip), fadeSeconds, loop);
+    if (entity.valid() && entity.has<AnimatorComponent>()) { // saved by its reference
+        auto& anim = entity.get<AnimatorComponent>();
+        anim.clip = clip;
+        anim.resolved = clip;
+    }
+}
+
+void Scene::blendAnimation(Entity entity, std::shared_ptr<const AnimationClip> clip, f32 weight, bool sync) {
+    if (!entity.valid() || entity.scene() != this || !clip) return;
+    if (!entity.has<AnimatorComponent>()) entity.add<AnimatorComponent>();
+    auto& anim = entity.get<AnimatorComponent>();
+    for (auto it = anim.layers.begin(); it != anim.layers.end(); ++it)
+        if (it->data == clip && it->fade >= 0.0f) { // already mixed in: a new weight
+            if (weight <= 0.0f) anim.layers.erase(it);
+            else {
+                it->weight = weight;
+                it->sync = sync;
+            }
+            return;
+        }
+    if (weight <= 0.0f) return;
+    AnimationLayer layer;
+    layer.data = std::move(clip);
+    layer.weight = weight;
+    layer.sync = sync;
+    anim.layers.push_back(std::move(layer));
 }
 
 } // namespace nova
