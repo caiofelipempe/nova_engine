@@ -648,14 +648,6 @@ void wrapControls() {
 #endif
         rs.wrapCrop = static_cast<WrapCrop>(crop);
     }
-#if NOVA_RENDER_ORIGIN_ROTATION
-    // The lap around the camera turning with it, in every mode that has one.
-    const bool fixedBox = rs.wrapShift == WrapShift::Crop && rs.wrapCrop != WrapCrop::Camera;
-    ImGui::BeginDisabled(fixedBox);
-    ImGui::Checkbox("Turn with the camera", &rs.wrapTurnWithCamera);
-    ImGui::EndDisabled();
-    if (fixedBox) ImGui::TextDisabled("(the crop of the world's lap and the view box do not turn this way)");
-#endif
     int laps = static_cast<int>(rs.wrapRepeat);
     if (ImGui::SliderInt("Laps around", &laps, 0, 6)) rs.wrapRepeat = static_cast<u32>(laps);
     ImGui::TextUnformatted("Laps on:");

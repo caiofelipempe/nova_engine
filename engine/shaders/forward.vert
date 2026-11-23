@@ -9,13 +9,22 @@ layout(location = 2) out vec2 vUV;
 #if NOVA_WRAP_RENDER_MODES
 // Objects across a seam of the circular world (RenderSettings::wrapShift). Positions are camera
 // relative; `cell` is the center of the lap this copy is drawn in (0 for the lap around the camera).
-#include "nova/wrap.glsl"
+#define NOVA_WRAP_TRIANGLE 0u
+#define NOVA_WRAP_OBJECT 1u
+#define NOVA_WRAP_SPLIT 2u
+#define NOVA_WRAP_CROP 3u
+#define NOVA_WRAP_CROP_VIEW 4u // crop in the camera's own axes (NOVA_RENDER_ORIGIN_ROTATION builds)
 
 out gl_PerVertex {
     vec4 gl_Position;
     float gl_ClipDistance[3];
 };
 
+// Whole laps that bring `d` (from the lap's center) within half a lap, on the circular axes.
+vec3 lapShift(vec3 d, vec3 size) {
+    vec3 laps = floor(d / max(size, vec3(1e-6)) + 0.5);
+    return mix(vec3(0.0), -laps * size, greaterThan(size, vec3(0.0)));
+}
 #endif
 
 void main() {
@@ -24,12 +33,6 @@ void main() {
     const vec3 size = pc.frame.data.wrapSize.xyz;
     const uint mode = uint(pc.frame.data.wrapSize.w);
     const vec3 cell = inst.extra.yzw;
-#if NOVA_RENDER_ORIGIN_ROTATION
-    // The lap around the camera turning with it (RenderSettings::wrapTurnWithCamera).
-    const bool turned = (pc.frame.data.flags & FRAME_FLAG_TURN_LAP) != 0u;
-#else
-    const bool turned = false;
-#endif
     Vertex v;
     vec4 world;
     if (uint64_t(pc.indices) != 0ul) {
@@ -43,16 +46,13 @@ void main() {
             if (k == corner) v = vk;
         }
         const vec3 middle = (p[0] + p[1] + p[2]) / 3.0; // the centroid
-        const vec3 shift = turned ? nova_turnedLapShift(middle - cell, size, mat3(pc.frame.data.view))
-                                  : nova_lapShift(middle - cell, size);
-        world = vec4(p[corner] + shift, 1.0);
+        world = vec4(p[corner] + lapShift(middle - cell, size), 1.0);
     } else {
         v = pc.vertices.items[gl_VertexIndex];
         world = inst.model * vec4(v.position, 1.0);
     }
     // Split and crop: every copy is cut at the edges of its lap (the planes half a lap from its center).
-    // (Turned, they are cut per fragment instead: the turned lap is not a box of the world's axes.)
-    const bool clipped = !turned && (mode == NOVA_WRAP_SPLIT || mode == NOVA_WRAP_CROP);
+    const bool clipped = mode == NOVA_WRAP_SPLIT || mode == NOVA_WRAP_CROP;
     for (int i = 0; i < 3; ++i)
         gl_ClipDistance[i] = (clipped && size[i] > 0.0) ? size[i] * 0.5 - abs(world[i] - cell[i]) : 1.0;
 #if NOVA_RENDER_ORIGIN_ROTATION

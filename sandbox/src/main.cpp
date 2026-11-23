@@ -75,9 +75,6 @@ public:
         load(first, false); // GameLayer starts the simulation after onStart()
 #if NOVA_WRAP_RENDER_MODES
         if (s_wrapShift >= 0) r.settings().wrapShift = static_cast<nova::WrapShift>(s_wrapShift);
-#if NOVA_RENDER_ORIGIN_ROTATION
-        if (s_turn) r.settings().wrapTurnWithCamera = true;
-#endif
         if (s_wrapShift == 3)
             r.settings().wrapCrop = s_crop == "camera" ? nova::WrapCrop::Camera
                                   : s_crop == "view"   ? nova::WrapCrop::View
@@ -99,7 +96,6 @@ public:
     static inline std::string s_startScenario;              // --scenario "<name>"
     static inline int s_wrapShift = -1, s_wrapRepeat = -1; // --wrap triangle|object|split|crop|crop-camera|crop-view, --laps N
     static inline std::string s_crop;                       // "camera", "view" or "" (the world's lap)
-    static inline bool s_turn = false;                      // --turn: the lap around the camera turns with it
 
     // Like GameLayer::onUpdate, plus pause, single step and time scale.
     void onUpdate(float dt) override {
@@ -436,7 +432,6 @@ int main(int argc, char** argv) {
         const bool hasValue = i + 1 < argc;
         if (arg == "--check") PhysicsBench::s_selfCheck = true;
         else if (arg == "--scenario" && hasValue) PhysicsBench::s_startScenario = argv[++i];
-        else if (arg == "--turn") PhysicsBench::s_turn = true;
         else if (arg == "--laps" && hasValue) PhysicsBench::s_wrapRepeat = std::atoi(argv[++i]);
         else if (arg == "--wrap" && hasValue) {
             const std::string_view v = argv[++i];

@@ -410,14 +410,6 @@ void Renderer::renderToBackbuffer(CommandList& cmd, const RenderScene& scene) {
 
 // ------------------------------------------------------------- instances --
 
-#if NOVA_RENDER_ORIGIN_ROTATION
-// The lap around the camera turns with it: asked for, and not a crop of a fixed or view box.
-bool Renderer::turnsWithCamera() const {
-    if (!m_settings.wrapTurnWithCamera) return false;
-    return wrapMode() != WrapShift::Crop || m_settings.wrapCrop == WrapCrop::Camera;
-}
-#endif
-
 #if NOVA_WRAP_RENDER_MODES
 // The seam mode this GPU can draw: without clip distances, split falls back to per triangle and
 // crop to per object.
@@ -441,10 +433,6 @@ void Renderer::expandDraws(const RenderScene& scene, const glm::mat4& viewProj) 
     options.repeatAxes = m_settings.wrapRepeatAxes;
     options.crop = m_settings.wrapCrop;
     options.worldCenter = scene.worldCenter;
-#if NOVA_RENDER_ORIGIN_ROTATION
-    options.turn = turnsWithCamera();
-    options.view = glm::mat3(scene.camera.view);
-#endif
 #endif
     auto bounds = [this](MeshHandle h) -> const Bounds* {
         return h.id < m_meshes.size() && m_meshes[h.id].alive ? &m_meshes[h.id].bounds : nullptr;
@@ -486,11 +474,6 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
 #if NOVA_WRAP_RENDER_MODES
     fd.wrapSize = glm::vec4(scene.wrapSize, static_cast<f32>(wrapMode()));
 #if NOVA_RENDER_ORIGIN_ROTATION
-    if (turnsWithCamera()) {
-        const WrapShift m = wrapMode();
-        if (m != WrapShift::Object) fd.flags |= gpu::kFrameFlagTurnLap;
-        if (m == WrapShift::Split || m == WrapShift::Crop) fd.flags |= gpu::kFrameFlagTurnCut;
-    }
     if (wrapMode() == WrapShift::Crop && s.wrapCrop == WrapCrop::View) {
         fd.wrapSize.w = 4.0f; // NOVA_WRAP_CROP_VIEW
         fd.cropHalf = viewCropHalf(glm::mat3(scene.camera.view), scene.wrapSize);

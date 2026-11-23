@@ -15,8 +15,6 @@ namespace nova::gpu {
 
 constexpr u32 kMaxPointLights = 16;      ///< Point lights per frame (`MAX_POINT_LIGHTS`).
 constexpr u32 kFrameFlagRtShadows = 1u;  ///< FrameData::flags: trace shadow rays (`FRAME_FLAG_RT_SHADOWS`).
-constexpr u32 kFrameFlagTurnLap = 2u;    ///< The lap around the camera turns with it (`FRAME_FLAG_TURN_LAP`).
-constexpr u32 kFrameFlagTurnCut = 4u;    ///< Fragments outside their turned lap are discarded (`FRAME_FLAG_TURN_CUT`).
 constexpr u32 kMaterialFlagChecker = 1u; ///< InstanceData::params.z bit: checker pattern (`MATERIAL_FLAG_CHECKER`).
 /// @brief Period (m) of the world position shaders see (`NOVA_WORLD_TILE`): patterns whose period divides it are seamless.
 constexpr f32 kWorldTile = 4096.0f;
