@@ -307,6 +307,41 @@ void wrapInstances() {
     }
     CHECK(bounded);
     // Looking down 45° in a world circular on X and Z only: Y does not limit it.
+    // The lap around the camera turning with it: each point has exactly one copy in it (the turned
+    // laps tile the world), measured in the camera's axes. Not turned, it is the plain nearest copy.
+    CHECK(turnedLapShift({30.0f, -5.0f, 25.0f}, cube, glm::mat3(1.0f)) == glm::vec3(-48.0f, 0.0f, -48.0f));
+    bool tiles = true, nearest = true;
+    for (int k = 0; k < 300; ++k) {
+        const glm::vec3 axis = glm::normalize(glm::vec3(std::cos(k * 0.9f), std::sin(k * 1.7f) + 0.2f, std::cos(k * 2.3f)));
+        const glm::mat3 r = glm::mat3_cast(glm::angleAxis(k * 0.53f, axis));
+        const glm::vec3 p(std::sin(k * 3.1f) * 70.0f, std::cos(k * 1.1f) * 70.0f, std::sin(k * 0.3f) * 70.0f);
+        const glm::vec3 q = p + turnedLapShift(p, cube, r); // its copy in the turned lap
+        tiles &= turnedLapShift(q, cube, r) == glm::vec3(0.0f);                                    // already in it
+        tiles &= glm::all(glm::lessThan(glm::abs(p + glm::vec3(48, -48, 96) + turnedLapShift(p + glm::vec3(48, -48, 96), cube, r) - q), glm::vec3(1e-3f))); // same copy from another
+        auto norm = [&](const glm::vec3& v) { const glm::vec3 a = glm::abs(r * v); return std::max({a.x, a.y, a.z}); };
+        for (int s = 0; s < 27; ++s) // no copy one lap over is nearer
+            nearest &= norm(q) <= norm(q + glm::vec3(s % 3 - 1, s / 3 % 3 - 1, s / 9 - 1) * 48.0f) + 1e-4f;
+    }
+    CHECK(tiles && nearest);
+    // Turned, per object: the copy whose origin is nearest in the camera's axes (near the camera,
+    // where it is; farther out, as turnedLapShift says).
+    WrapOptions turned;
+    turned.size = cube;
+    turned.mode = WrapShift::Object;
+    turned.turn = true;
+    turned.view = yaw45;
+    expandWrapInstances({at({0, 0, -5})}, lookup, viewProj, turned, out);
+    CHECK(out.size() == 1 && out[0].offset == glm::vec3(0.0f)); // near the camera: as it is
+    const glm::vec3 far(20.0f, 0.0f, -20.0f);
+    expandWrapInstances({at(far)}, lookup, viewProj, turned, out);
+    CHECK(out.size() == 1 && out[0].offset == turnedLapShift(far, cube, yaw45));
+    // Turned split: the copies one lap over that may reach the turned lap, all but one left out of
+    // the ray-traced shadows (the fragment shader keeps what is in the lap).
+    turned.mode = WrapShift::Split;
+    expandWrapInstances({at({23.8f, 0, -5})}, lookup, viewProj, turned, out);
+    u32 kept = 0;
+    for (const WrapInstance& w : out) kept += !w.splitCopy;
+    CHECK(out.size() > 1 && kept == 1 && out.size() <= 27);
     const glm::mat3 pitch45 = glm::mat3_cast(glm::angleAxis(glm::radians(45.0f), glm::vec3(1, 0, 0)));
     CHECK(std::abs(viewCropHalf(pitch45, {48.0f, 0.0f, 48.0f}) - 24.0f / std::sqrt(2.0f)) < 1e-3f);
     // Not circular: nothing changes, whatever the mode.

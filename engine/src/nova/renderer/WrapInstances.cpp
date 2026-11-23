@@ -12,7 +12,15 @@ void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLoo
     const glm::vec3 size = options.size;
     const bool circular = size.x > 0.0f || size.y > 0.0f || size.z > 0.0f;
     const int repeat = circular ? static_cast<int>(std::min<u32>(options.repeat, 16)) : 0;
-    const bool simple = !circular || (options.mode == WrapShift::Object && repeat == 0);
+    const bool turn = circular && options.turn;
+    const bool simple = !circular || (options.mode == WrapShift::Object && repeat == 0 && !turn);
+    // Turned: a sphere around the camera inside its turned lap (the turned distance of a lattice
+    // step is at least L/sqrt(3)), and one around the turned lap (its points are within sqrt(3)
+    // times half the lap's diagonal).
+    f32 smallest = 1e30f, diagonal = 0.0f;
+    for (int a = 0; a < 3; ++a)
+        if (size[a] > 0.0f) smallest = std::min(smallest, size[a]), diagonal += size[a] * size[a];
+    const f32 inner = smallest / (2.0f * std::sqrt(3.0f)), outer = std::sqrt(3.0f) * 0.5f * std::sqrt(diagonal);
 
     // Frustum planes (Gribb–Hartmann, depth 0..1): a sphere is outside when it is behind one.
     glm::vec4 planes[6];
@@ -42,6 +50,8 @@ void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLoo
             // is. The world's lap: each object at its copy whose origin is in that lap (where its
             // transform says), cut where it sticks out past a seam.
             glm::vec3 offset(0.0f), cell(0.0f);
+            if (turn && options.crop == WrapCrop::Camera) // the copy whose origin is in the turned lap
+                offset = turnedLapShift(glm::vec3(d.transform[3]), size, options.view);
             if (options.crop == WrapCrop::World)
                 for (int a = 0; a < 3; ++a) {
                     if (size[a] <= 0.0f) continue;
@@ -63,9 +73,16 @@ void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLoo
             across[a] = std::abs(center[a]) + radius > size[a] * 0.5f;
             laps[a] = options.repeatAxes[a] ? repeat : 0;
         }
-        const bool crosses = glm::any(across);
+        bool crosses = glm::any(across);
+        // Turned: per object, the copy whose origin is nearest in the camera's axes; per triangle
+        // and split, what may reach past the sphere inside the turned lap.
+        glm::vec3 own(0.0f);
+        if (turn) {
+            crosses = glm::length(center) + radius > inner;
+            if (options.mode == WrapShift::Object) own = turnedLapShift(glm::vec3(d.transform[3]), size, options.view);
+        }
         // A sphere around a copy and its split parts, for culling the further laps.
-        const f32 reach = radius + (crosses ? glm::length(size) : 0.0f);
+        const f32 reach = radius + (crosses ? glm::length(size) : 0.0f) + glm::length(own);
         for (int kx = -laps.x; kx <= laps.x; ++kx)
             for (int ky = -laps.y; ky <= laps.y; ++ky)
                 for (int kz = -laps.z; kz <= laps.z; ++kz) {
@@ -73,8 +90,22 @@ void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLoo
                     const bool central = kx == 0 && ky == 0 && kz == 0;
                     if (!central && !visible(center + cell, reach)) continue;
                     if (out.size() >= options.maxInstances) return;
-                    out.push_back({i, cell, cell, options.mode == WrapShift::Triangle && crosses});
-                    if (options.mode != WrapShift::Split || !crosses) continue;
+                    if (turn && options.mode == WrapShift::Split && crosses) {
+                        // Every copy one lap over that may reach the turned lap: the fragment
+                        // shader keeps what is in it (FRAME_FLAG_TURN_CUT).
+                        for (int sx = -1; sx <= 1; ++sx)
+                            for (int sy = -1; sy <= 1; ++sy)
+                                for (int sz = -1; sz <= 1; ++sz) {
+                                    if ((sx && size.x <= 0.0f) || (sy && size.y <= 0.0f) || (sz && size.z <= 0.0f)) continue;
+                                    const glm::vec3 lap = glm::vec3(sx, sy, sz) * size;
+                                    if (glm::length(center + lap) - radius >= outer) continue;
+                                    if (out.size() >= options.maxInstances) return;
+                                    out.push_back({i, cell + lap, cell, false, lap != glm::vec3(0.0f)});
+                                }
+                        continue;
+                    }
+                    out.push_back({i, cell + own, cell, options.mode == WrapShift::Triangle && crosses});
+                    if (options.mode != WrapShift::Split || !crosses || turn) continue;
                     // The copies one lap over on the crossed axes (all of them at a corner), each
                     // clipped at the edges of `cell` by the vertex shader.
                     for (u32 subset = 1; subset < 8; ++subset) {
@@ -104,6 +135,27 @@ f32 viewCropHalf(const glm::mat3& view, const glm::vec3& size) {
         half = std::min(half, size[i] * 0.5f / std::max(reach, 1e-6f));
     }
     return half;
+}
+
+glm::vec3 turnedLapShift(const glm::vec3& d, const glm::vec3& size, const glm::mat3& view) {
+    auto norm = [&](const glm::vec3& v) {
+        const glm::vec3 a = glm::abs(view * v);
+        return std::max(a.x, std::max(a.y, a.z));
+    };
+    glm::vec3 base(0.0f);
+    for (int a = 0; a < 3; ++a)
+        if (size[a] > 0.0f) base[a] = -std::floor(d[a] / size[a] + 0.5f) * size[a];
+    glm::vec3 best = base;
+    f32 bestNorm = norm(d + base);
+    for (int i = -1; i <= 1; ++i)
+        for (int j = -1; j <= 1; ++j)
+            for (int k = -1; k <= 1; ++k) {
+                if ((i && size.x <= 0.0f) || (j && size.y <= 0.0f) || (k && size.z <= 0.0f)) continue;
+                const glm::vec3 shift = base + glm::vec3(i, j, k) * size;
+                const f32 n = norm(d + shift);
+                if (n < bestNorm) best = shift, bestNorm = n;
+            }
+    return best;
 }
 
 } // namespace nova

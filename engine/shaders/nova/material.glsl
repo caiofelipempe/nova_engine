@@ -56,10 +56,16 @@ vec4 nova_customTexture(vec2 uv) { return nova_texture(int(nova_instance().extra
 void material(inout Surface s);
 
 #include "nova/lighting.glsl"
+#include "nova/wrap.glsl"
 
 void main() {
     InstanceData inst = nova_instance();
     uint matFlags = floatBitsToUint(inst.params.z);
+    // The lap around the camera turning with it (split, crop): only what is in this copy's lap.
+    if ((pc.frame.data.flags & FRAME_FLAG_TURN_CUT) != 0u) {
+        vec3 shift = nova_turnedLapShift(vWorldPos - inst.extra.yzw, pc.frame.data.wrapSize.xyz, mat3(pc.frame.data.view));
+        if (any(greaterThan(abs(shift), vec3(0.5)))) discard;
+    }
 
     Surface s;
     s.normal = normalize(vNormal);

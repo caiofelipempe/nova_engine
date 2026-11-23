@@ -188,6 +188,14 @@ struct RenderSettings {
     glm::bvec3 wrapRepeatAxes{true, false, true};
     /// @brief WrapShift::Crop: the lap it keeps (no further laps are drawn when cropping).
     WrapCrop wrapCrop = WrapCrop::World;
+#if NOVA_RENDER_ORIGIN_ROTATION
+    /// @brief The lap around the camera turns with it, in every mode that has one (per triangle,
+    ///        per object, split, crop around the camera): each point goes to its copy nearest the
+    ///        camera measured in the camera's own axes (the largest of |x|, |y|, |z| there). The
+    ///        turned laps still tile the world, and their faces are mostly perpendicular to the
+    ///        camera's axes. Ignored by the crops of the world's lap and WrapCrop::View.
+    bool wrapTurnWithCamera = false;
+#endif
 #endif
 };
 
@@ -403,6 +411,9 @@ private:
     void expandDraws(const RenderScene& scene, const glm::mat4& viewProj);
 #if NOVA_WRAP_RENDER_MODES
     WrapShift wrapMode() const;
+#endif
+#if NOVA_RENDER_ORIGIN_ROTATION
+    bool turnsWithCamera() const;
 #endif
     std::vector<WrapInstance> m_instances;                          // this frame's instances (WrapInstances.h), reused
     std::vector<std::pair<u64, u32>> m_drawOrder;                   // (pipeline key, instance index), reused

@@ -9,6 +9,8 @@
 #define MAX_POINT_LIGHTS 16
 
 #define FRAME_FLAG_RT_SHADOWS 1u
+#define FRAME_FLAG_TURN_LAP 2u // the lap around the camera turns with it (per triangle, split, crop)
+#define FRAME_FLAG_TURN_CUT 4u // fragments outside their turned lap are discarded (split, crop)
 
 #define MATERIAL_FLAG_CHECKER 1u
 

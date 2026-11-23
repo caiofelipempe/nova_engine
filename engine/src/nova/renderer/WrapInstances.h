@@ -29,6 +29,8 @@ struct WrapOptions {
     glm::bvec3 repeatAxes{true};        ///< The axes `repeat` applies to.
     WrapCrop crop = WrapCrop::World;    ///< WrapShift::Crop: the world's lap or the camera's.
     glm::vec3 worldCenter{0.0f};        ///< The world's center from the camera (RenderScene::worldCenter).
+    bool turn = false;                  ///< The lap around the camera turns with it (RenderSettings::wrapTurnWithCamera).
+    glm::mat3 view{1.0f};               ///< World → view rotation of the camera (`turn`).
     u32 maxInstances = 16384;           ///< Stop there.
 };
 
@@ -51,5 +53,14 @@ void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLoo
 /// @param view World → view rotation of the camera (camera-relative: no translation).
 /// @param size World size per axis (m); 0 = not circular.
 f32 viewCropHalf(const glm::mat3& view, const glm::vec3& size);
+
+/// @brief Whole laps that bring `d` nearest the lap's center measured in the camera's axes (the
+///        largest of |x|, |y|, |z| there): the lap around the camera turning with it. Every point
+///        has one such copy, so the turned laps tile the world. Same as `nova_turnedLapShift` in
+///        nova/wrap.glsl.
+/// @param d Position from the lap's center (m).
+/// @param size World size per axis (m); 0 = not circular.
+/// @param view World → view rotation of the camera.
+glm::vec3 turnedLapShift(const glm::vec3& d, const glm::vec3& size, const glm::mat3& view);
 
 } // namespace nova
