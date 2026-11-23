@@ -1,0 +1,53 @@
+#version 460
+// GPU culling: each instance's bounding sphere against the view frustum. A visible one is added to
+// its group (a pipeline and a mesh): one more instance in the group's indirect draw command, and
+// its index in the group's part of the visible list (the vertex shader reads it by gl_InstanceIndex).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 64) in;
+
+struct CullItem {
+    vec4 sphere;   // camera-relative center, radius
+    uint group;    // its draw command
+    uint instance; // index into the frame's InstanceData
+    uint pad0, pad1;
+};
+struct DrawCommand { // VkDrawIndexedIndirectCommand
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer CullItems { CullItem items[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer DrawCommands { DrawCommand items[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer VisibleList { uint items[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Planes { vec4 planes[6]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Counters { uint visible; uint tested; };
+
+layout(push_constant) uniform CullPush {
+    CullItems items;
+    DrawCommands commands;
+    VisibleList visible;
+    Planes frustum;
+    Counters counters; // statistics (0 = none)
+    uint count;
+} pc;
+
+void main() {
+    const uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.count) return;
+    const CullItem item = pc.items.items[i];
+    bool inside = true;
+    for (int k = 0; k < 6; ++k)
+        inside = inside && dot(pc.frustum.planes[k].xyz, item.sphere.xyz) + pc.frustum.planes[k].w >= -item.sphere.w;
+    if (uint64_t(pc.counters) != 0ul) {
+        atomicAdd(pc.counters.tested, 1u);
+        if (inside) atomicAdd(pc.counters.visible, 1u);
+    }
+    if (!inside) return;
+    const uint slot = atomicAdd(pc.commands.items[item.group].instanceCount, 1u);
+    pc.visible.items[pc.commands.items[item.group].firstInstance + slot] = item.instance;
+}

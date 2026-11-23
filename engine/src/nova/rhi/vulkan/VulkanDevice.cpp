@@ -303,6 +303,8 @@ void VulkanDevice::createLogicalDevice() {
     enable.f2.features.samplerAnisotropy = supported.f2.features.samplerAnisotropy;
     enable.f2.features.fillModeNonSolid = supported.f2.features.fillModeNonSolid;
     enable.f2.features.shaderClipDistance = supported.f2.features.shaderClipDistance;
+    enable.f2.features.drawIndirectFirstInstance = supported.f2.features.drawIndirectFirstInstance;
+    enable.f2.features.multiDrawIndirect = supported.f2.features.multiDrawIndirect;
     enable.f12.bufferDeviceAddress = VK_TRUE;
     enable.f12.descriptorIndexing = VK_TRUE;
     enable.f12.runtimeDescriptorArray = VK_TRUE;
@@ -386,6 +388,8 @@ void VulkanDevice::createLogicalDevice() {
     m_caps.rayTracingPipeline = rtPipeline;
     m_caps.wireframe = enable.f2.features.fillModeNonSolid == VK_TRUE;
     m_caps.clipDistance = enable.f2.features.shaderClipDistance == VK_TRUE;
+    m_caps.drawIndirectFirstInstance = enable.f2.features.drawIndirectFirstInstance == VK_TRUE;
+    m_caps.multiDrawIndirect = enable.f2.features.multiDrawIndirect == VK_TRUE;
     m_caps.framesInFlight = kFramesInFlight;
     m_caps.maxPushConstantSize = std::min(kPushConstantSize, m_properties.limits.maxPushConstantsSize);
 }

@@ -5,6 +5,7 @@
 layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vNormal;
 layout(location = 2) out vec2 vUV;
+layout(location = 3) flat out uint vInstance; // index into the frame's instances (nova_instance())
 
 #if NOVA_WRAP_RENDER_MODES
 // Objects across a seam of the circular world (RenderSettings::wrapShift). Positions are camera
@@ -39,7 +40,10 @@ Vertex nova_skinned(uint index, Vertex v) {
 }
 
 void main() {
-    InstanceData inst = pc.instances.items[pc.instanceIndex];
+    // A draw of one instance, or of a group culled on the GPU (its visible instances, in a list).
+    const uint instanceIndex = uint64_t(pc.visible) != 0ul ? pc.visible.items[gl_InstanceIndex] : pc.instanceIndex;
+    vInstance = instanceIndex;
+    InstanceData inst = pc.instances.items[instanceIndex];
 #if NOVA_WRAP_RENDER_MODES
     const vec3 size = pc.frame.data.wrapSize.xyz;
     const uint mode = uint(pc.frame.data.wrapSize.w);

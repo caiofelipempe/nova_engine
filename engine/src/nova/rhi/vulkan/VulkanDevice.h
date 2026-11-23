@@ -106,6 +106,7 @@ public:
     void bindIndexBuffer(BufferHandle buffer, u64 offset) override;
     void draw(u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance) override;
     void drawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset, u32 firstInstance) override;
+    void drawIndexedIndirect(BufferHandle args, u64 offset, u32 drawCount, u32 stride) override;
     void dispatch(u32 x, u32 y, u32 z) override;
     void transition(TextureHandle texture, ResourceState state) override;
     void globalBarrier() override;

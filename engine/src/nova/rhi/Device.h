@@ -51,6 +51,15 @@ public:
     /// @brief Indexed draw using the bound index buffer.
     virtual void drawIndexed(u32 indexCount, u32 instanceCount = 1, u32 firstIndex = 0, i32 vertexOffset = 0,
                              u32 firstInstance = 0) = 0;
+    /// @brief Indexed draws whose parameters are in a buffer (e.g. written by a compute shader): each
+    ///        a VkDrawIndexedIndirectCommand-like record of 5 × 32 bits (indexCount, instanceCount,
+    ///        firstIndex, vertexOffset, firstInstance), using the bound index buffer. A firstInstance
+    ///        other than 0 needs DeviceCaps::drawIndirectFirstInstance.
+    /// @param args Buffer created with BufferUsage::Indirect.
+    /// @param offset Byte offset of the first record (multiple of 4).
+    /// @param drawCount Records to draw (more than 1 needs DeviceCaps::multiDrawIndirect).
+    /// @param stride Bytes between records (at least 20).
+    virtual void drawIndexedIndirect(BufferHandle args, u64 offset, u32 drawCount = 1, u32 stride = 20) = 0;
     /// @brief Compute dispatch, in work groups.
     virtual void dispatch(u32 x, u32 y = 1, u32 z = 1) = 0;
 

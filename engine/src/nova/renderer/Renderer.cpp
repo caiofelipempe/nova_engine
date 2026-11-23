@@ -133,11 +133,13 @@ Renderer::Renderer(Device& device) : m_device(device), m_graphPool(makeScope<Ren
     createPipelines();
 
     const u32 frames = device.caps().framesInFlight;
-    BufferUsage usage = BufferUsage::Storage;
+    BufferUsage usage = BufferUsage::Storage | BufferUsage::Indirect; // indirect: GPU-culled draws
     if (device.caps().accelerationStructures) usage |= BufferUsage::AccelStructInput;
     for (u32 i = 0; i < frames; ++i) {
         m_frameBuffers.push_back(
             device.createBuffer({kFrameBufferSize, usage, MemoryUsage::CpuToGpu, "renderer.frameUpload"}));
+        m_cullCounters.push_back(device.createBuffer({16, BufferUsage::Storage, MemoryUsage::CpuToGpu, "renderer.cullCounters"}));
+        std::memset(device.mappedPointer(m_cullCounters.back()), 0, 16);
         if (device.caps().accelerationStructures)
             m_tlas.push_back(device.createTLAS({kMaxInstances, "renderer.tlas"}));
     }
@@ -156,11 +158,12 @@ Renderer::~Renderer() {
         if (m_meshes[i].alive) destroyMesh({i});
     for (TextureHandle t : m_textures) m_device.destroyTexture(t);
     for (BufferHandle b : m_frameBuffers) m_device.destroyBuffer(b);
+    for (BufferHandle b : m_cullCounters) m_device.destroyBuffer(b);
     for (AccelStructHandle t : m_tlas) m_device.destroyAccelStruct(t);
     for (auto& [key, shape] : m_skinnedShapes) releaseSkinnedShape(shape);
     m_skinnedShapes.clear();
     for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline,
-                             m_shadowPipeline, m_shadowMaskPipeline})
+                             m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline})
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
@@ -226,6 +229,13 @@ void Renderer::createPipelines() {
         shadow.fragment = loadShader("shadow.frag"); // cut-out casters: discarded where transparent
         shadow.debugName = "pipeline.shadow.mask";
         m_shadowMaskPipeline = m_device.createGraphicsPipeline(shadow);
+    }
+
+    { // GPU frustum culling
+        ComputePipelineDesc cull;
+        cull.compute = loadShader("cull.comp");
+        cull.debugName = "pipeline.cull";
+        m_cullPipeline = m_device.createComputePipeline(cull);
     }
 
     if (m_device.caps().accelerationStructures) {
@@ -450,6 +460,7 @@ PipelineHandle Renderer::computePipeline(ShaderHandle shader) {
 void Renderer::beginFrame() {
     m_shaders.update(); // hot reload: pipelines notice the new version when next used
     m_frameOffset = 0;
+    m_cullCountersRead = false;
     m_graphPool->endFrame(); // transient textures no graph used for a while are released
     m_lastStats = m_stats; // UI code runs before rendering, so expose the previous frame's numbers
     m_stats = {};
@@ -462,7 +473,7 @@ Renderer::FrameAllocation Renderer::allocate(u64 size, u64 alignment) {
     if (offset + size > kFrameBufferSize) return {};
     m_frameOffset = offset + size;
     BufferHandle buf = m_frameBuffers[m_device.frameIndex()];
-    return {static_cast<u8*>(m_device.mappedPointer(buf)) + offset, m_device.deviceAddress(buf) + offset};
+    return {static_cast<u8*>(m_device.mappedPointer(buf)) + offset, m_device.deviceAddress(buf) + offset, offset};
 }
 
 void Renderer::render(CommandList& cmd, const RenderScene& scene, RenderView& view) {
@@ -635,6 +646,15 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     }
 
     const bool useRt = s.rayTracedShadows && m_device.caps().rayQuery && !m_tlas.empty();
+
+    // GPU culling statistics, counted by the GPU the last time this frame slot ran (it has finished).
+    if (!m_cullCountersRead && !m_cullCounters.empty()) {
+        m_cullCountersRead = true;
+        auto* counters = static_cast<u32*>(m_device.mappedPointer(m_cullCounters[m_device.frameIndex()]));
+        m_stats.gpuVisible = counters[0];
+        m_stats.gpuTested = counters[1];
+        counters[0] = counters[1] = 0;
+    }
 
     auto& fd = *static_cast<gpu::FrameData*>(frameAlloc.cpu);
     fd.view = scene.camera.view;
@@ -828,20 +848,89 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     // The opaque draws grouped by pipeline (the default material's variants, then each game
     // material shader's; one whose shader is not ready falls back to the default), then the
     // see-through ones from the farthest to the nearest, blended over what is behind them.
+    // With GPU culling, the plain opaque draws (not skinned, not split per triangle) go to a compute
+    // shader instead, in groups of the same pipeline and mesh: one indirect draw per group.
     m_drawOrder.clear();
     std::vector<std::pair<f32, u32>> seeThrough; // (distance², instance)
+    const bool gpuCull = s.gpuCulling && m_cullPipeline && m_device.caps().drawIndirectFirstInstance;
+    struct CullEntry {
+        u64 key;
+        u32 mesh, instance;
+        PipelineHandle pipeline;
+    };
+    std::vector<CullEntry> cullEntries;
     for (u32 i = 0; i < drawCount; ++i) {
-        const DrawItem& d = scene.draws[m_instances[i].draw]; // meshes checked by expandDraws
+        const WrapInstance& wi = m_instances[i];
+        const DrawItem& d = scene.draws[wi.draw]; // meshes checked by expandDraws
         const u32 state = pipelineState(d.material);
         if ((state & 2u) && !wireframe) {
-            const glm::vec3 at = glm::vec3(d.transform[3]) + m_instances[i].offset; // camera-relative
+            const glm::vec3 at = glm::vec3(d.transform[3]) + wi.offset; // camera-relative
             seeThrough.emplace_back(glm::dot(at, at), i);
             continue;
         }
         PipelineHandle p = wireframe ? m_wireframePipeline : PipelineHandle{};
         if (!p && d.material.shader) p = materialPipeline(d.material.shader, useRt, state);
         if (!p) p = defaultPipeline(useRt, state);
-        m_drawOrder.emplace_back(p.key(), i);
+        if (gpuCull && !wi.triangles && d.jointCount == 0) cullEntries.push_back({p.key(), d.mesh.id, i, p});
+        else m_drawOrder.emplace_back(p.key(), i);
+    }
+    struct CullGroup {
+        PipelineHandle pipeline;
+        u32 mesh;
+    };
+    std::vector<CullGroup> cullGroups;
+    FrameAllocation cullCommands, cullItems, cullVisible, cullPlanes;
+    if (!cullEntries.empty()) {
+        std::sort(cullEntries.begin(), cullEntries.end(), [](const CullEntry& a, const CullEntry& b) {
+            return a.key != b.key ? a.key < b.key : a.mesh != b.mesh ? a.mesh < b.mesh : a.instance < b.instance;
+        });
+        u32 groups = 0;
+        for (size_t k = 0; k < cullEntries.size(); ++k)
+            groups += k == 0 || cullEntries[k].key != cullEntries[k - 1].key || cullEntries[k].mesh != cullEntries[k - 1].mesh;
+        const u64 n = cullEntries.size();
+        cullCommands = allocate(groups * sizeof(gpu::DrawIndexedCommand), 16);
+        cullItems = allocate(n * sizeof(gpu::CullItem), 16);
+        cullVisible = allocate(n * sizeof(u32), 16);
+        cullPlanes = allocate(6 * sizeof(glm::vec4), 16);
+        if (cullCommands.cpu && cullItems.cpu && cullVisible.cpu && cullPlanes.cpu) {
+            auto* commands = static_cast<gpu::DrawIndexedCommand*>(cullCommands.cpu);
+            auto* items = static_cast<gpu::CullItem*>(cullItems.cpu);
+            for (u32 k = 0; k < n; ++k) {
+                const CullEntry& e = cullEntries[k];
+                if (cullGroups.empty() || e.key != cullEntries[k - 1].key || e.mesh != cullEntries[k - 1].mesh) {
+                    // A group's instances take its part of the visible list, from firstInstance on.
+                    commands[cullGroups.size()] = {m_meshes[e.mesh].indexCount, 0u, 0u, 0, k};
+                    cullGroups.push_back({e.pipeline, e.mesh});
+                }
+                // The bounding sphere of the instance (camera relative, like viewProj).
+                const glm::mat4& model = instances[e.instance].model;
+                const Bounds& b = m_meshes[e.mesh].bounds;
+                const f32 scale = std::max({glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])),
+                                            glm::length(glm::vec3(model[2]))});
+                items[k] = {glm::vec4(glm::vec3(model * glm::vec4(b.center(), 1.0f)), glm::length(b.extents()) * scale),
+                            static_cast<u32>(cullGroups.size() - 1), e.instance, 0u, 0u};
+                m_stats.triangles += m_meshes[e.mesh].indexCount / 3; // submitted (before culling)
+            }
+            // Frustum planes (Gribb–Hartmann, depth 0..1), normalized: inside where dot(n, p) + d >= 0.
+            auto* planes = static_cast<glm::vec4*>(cullPlanes.cpu);
+            const glm::mat4 m = glm::transpose(viewProj); // rows as columns
+            const glm::vec4 rows[6] = {m[3] + m[0], m[3] - m[0], m[3] + m[1], m[3] - m[1], m[2], m[3] - m[2]};
+            for (int k = 0; k < 6; ++k) planes[k] = rows[k] / std::max(glm::length(glm::vec3(rows[k])), 1e-12f);
+        } else { // out of upload memory: drawn one by one, not culled
+            for (const CullEntry& e : cullEntries) m_drawOrder.emplace_back(e.key, e.instance);
+            cullGroups.clear();
+        }
+    }
+    if (!cullGroups.empty()) {
+        const u64 counters = m_cullCounters.empty() ? 0 : m_device.deviceAddress(m_cullCounters[m_device.frameIndex()]);
+        const gpu::CullPush push{cullItems.gpu, cullCommands.gpu, cullVisible.gpu, cullPlanes.gpu, counters,
+                                 static_cast<u32>(cullEntries.size()), 0u};
+        graph.addPass("GPU culling").sideEffect().execute([this, push](RenderPassContext& ctx) {
+            ctx.cmd.bindPipeline(m_cullPipeline);
+            ctx.cmd.pushConstants(push);
+            ctx.cmd.dispatch((push.count + 63) / 64);
+            ctx.cmd.globalBarrier(); // the commands and lists, before the draws read them
+        });
     }
     std::stable_sort(m_drawOrder.begin(), m_drawOrder.end(),
                      [](const auto& a, const auto& b) { return a.first < b.first; });
@@ -866,6 +955,30 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             push.debugView = static_cast<u32>(s.debugView);
             BufferHandle boundIndex{};
             u64 boundPipeline = ~0ull;
+            // The GPU-culled groups: one indirect draw each, of the instances the culling kept.
+            const BufferHandle upload = m_frameBuffers[m_device.frameIndex()];
+            for (u32 g = 0; g < cullGroups.size(); ++g) {
+                const CullGroup& group = cullGroups[g];
+                if (group.pipeline.key() != boundPipeline) {
+                    cmd.bindPipeline(group.pipeline);
+                    boundPipeline = group.pipeline.key();
+                }
+                const GpuMesh& mesh = m_meshes[group.mesh];
+                if (!(mesh.indexBuffer == boundIndex)) {
+                    cmd.bindIndexBuffer(mesh.indexBuffer);
+                    boundIndex = mesh.indexBuffer;
+                }
+                push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
+                push.instanceIndex = 0;
+                push.indices = push.skin = push.joints = 0;
+                push.visible = cullVisible.gpu;
+                cmd.pushConstants(push);
+                cmd.drawIndexedIndirect(upload, cullCommands.offset + g * sizeof(gpu::DrawIndexedCommand), 1,
+                                        sizeof(gpu::DrawIndexedCommand));
+                ++m_stats.drawCalls;
+                ++m_stats.cullGroups;
+            }
+            push.visible = 0;
             for (const auto& [pipelineKey, i] : m_drawOrder) {
                 const WrapInstance& di = m_instances[i];
                 const DrawItem& d = scene.draws[di.draw];

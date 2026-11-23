@@ -88,6 +88,12 @@ void VulkanCommandList::drawIndexed(u32 indexCount, u32 instanceCount, u32 first
     vkCmdDrawIndexed(m_cmd, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
 
+void VulkanCommandList::drawIndexedIndirect(BufferHandle args, u64 offset, u32 drawCount, u32 stride) {
+    VulkanBuffer* b = m_device.buffer(args);
+    NOVA_ASSERT(b, "drawIndexedIndirect: invalid buffer");
+    vkCmdDrawIndexedIndirect(m_cmd, b->buffer, offset, drawCount, stride);
+}
+
 void VulkanCommandList::dispatch(u32 x, u32 y, u32 z) { vkCmdDispatch(m_cmd, x, y, z); }
 
 void VulkanCommandList::transition(TextureHandle h, ResourceState state) {

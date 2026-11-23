@@ -179,6 +179,11 @@ struct RenderSettings {
     bool shadowMaps = true;
     f32 shadowDistance = 120.0f;                 ///< How far from the camera shadow maps reach (m).
     u32 shadowMapSize = 2048;                    ///< Texels per side of each cascade.
+    /// @brief Frustum culling on the GPU: plain opaque draws (not skinned, not split per triangle)
+    ///        are tested by a compute shader and drawn in groups of the same pipeline and mesh, one
+    ///        indirect draw each (needs DeviceCaps::drawIndirectFirstInstance; otherwise one draw each,
+    ///        not culled).
+    bool gpuCulling = true;
     bool wireframe = false;                      ///< Draw meshes as lines (needs DeviceCaps::wireframe).
     DebugView debugView = DebugView::Lit;        ///< Debug visualization.
     Tonemapper tonemapper = Tonemapper::ACES;    ///< Tonemapping operator.
@@ -222,6 +227,10 @@ struct RenderStats {
     u32 graphCulled = 0;       ///< Render graph passes dropped: nothing needed them.
     u32 transientTextures = 0; ///< Transient textures of the graphs (shadow atlas, post-process images...).
     u32 pooledTextures = 0;    ///< Textures held behind them (transients that do not overlap share one).
+    u32 cullGroups = 0;        ///< Indirect draws of GPU-culled groups (pipeline and mesh).
+    /// @brief Instances tested and found visible by GPU culling, as counted by the GPU a few frames
+    ///        ago (read back without waiting).
+    u32 gpuTested = 0, gpuVisible = 0;
 };
 
 /// @brief Where in the frame Renderer::addRenderPasses adds passes.
@@ -433,6 +442,7 @@ private:
     struct FrameAllocation {
         void* cpu = nullptr;
         u64 gpu = 0;
+        u64 offset = 0; // in this frame's upload buffer (m_frameBuffers[frameIndex])
     };
 
     void createPipelines();
@@ -464,6 +474,9 @@ private:
     rhi::PipelineHandle m_skinPipeline; // skin.comp: deformed vertices for ray tracing
     rhi::PipelineHandle m_shadowPipeline;     // depth only, for the shadow maps
     rhi::PipelineHandle m_shadowMaskPipeline; // the same, alpha-tested (cut-out casters)
+    rhi::PipelineHandle m_cullPipeline;       // cull.comp: GPU frustum culling
+    std::vector<rhi::BufferHandle> m_cullCounters; // per frame in flight: GPU culling statistics, read back later
+    bool m_cullCountersRead = false;           // this frame's were read (first render of the frame)
     // Adds the shadow map pass (the cascades, 2 × 2 in a transient atlas) and returns the atlas.
     RGTexture addShadowMapPass(RenderGraph& graph, const RenderScene& scene, gpu::FrameData& fd, u64 instances, u64 joints);
     RenderGraph m_graph;               // rebuilt every render call

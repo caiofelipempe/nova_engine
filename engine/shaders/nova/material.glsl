@@ -23,6 +23,7 @@
 layout(location = 0) in vec3 vWorldPos;
 layout(location = 1) in vec3 vNormal;
 layout(location = 2) in vec2 vUV;
+layout(location = 3) flat in uint vInstance;
 
 layout(location = 0) out vec4 outColor;
 
@@ -44,7 +45,7 @@ struct Surface {
 };
 
 // ---- helpers for material code
-InstanceData nova_instance() { return pc.instances.items[pc.instanceIndex]; }
+InstanceData nova_instance() { return pc.instances.items[vInstance]; }
 float nova_time() { return pc.frame.data.cameraPos.w; }
 vec3 nova_cameraPos() { return pc.frame.data.cameraPos.xyz; }
 // Samples a bindless texture (index < 0 → white).

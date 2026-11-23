@@ -82,6 +82,30 @@ struct DrawPush {
     u64 indices;       ///< 0: an indexed draw. Otherwise the mesh's index buffer, pulled by the vertex shader (per-triangle wrap).
     u64 skin;          ///< 0: rigid. Otherwise the mesh's SkinVertex array (skinned draw).
     u64 joints;        ///< The draw's joint matrices (mat4 each, mesh space), when `skin` is set.
+    u64 visible;       ///< 0: one instance (instanceIndex). Otherwise a GPU-culled group: instance = visible[gl_InstanceIndex].
+};
+
+/// @brief One instance to cull on the GPU (cull.comp).
+struct CullItem {
+    glm::vec4 sphere; ///< Camera-relative center, radius.
+    u32 group;        ///< Its group's draw command.
+    u32 instance;     ///< Index into the frame's InstanceData.
+    u32 pad0, pad1;
+};
+static_assert(sizeof(CullItem) == 32);
+
+/// @brief A group's indirect draw (VkDrawIndexedIndirectCommand).
+struct DrawIndexedCommand {
+    u32 indexCount, instanceCount, firstIndex;
+    i32 vertexOffset;
+    u32 firstInstance;
+};
+static_assert(sizeof(DrawIndexedCommand) == 20);
+
+/// @brief Push constants of cull.comp.
+struct CullPush {
+    u64 items, commands, visible, planes, counters;
+    u32 count, pad;
 };
 
 /// @brief Push constants of the sky pass.

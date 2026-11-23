@@ -295,6 +295,8 @@ struct DeviceCaps {
     bool rayTracingPipeline = false;     ///< Dedicated ray tracing pipelines (raygen/miss/hit).
     bool wireframe = false;              ///< PolygonMode::Line supported.
     bool clipDistance = false;           ///< Vertex shaders can write gl_ClipDistance.
+    bool drawIndirectFirstInstance = false; ///< Indirect draws may start at an instance other than 0.
+    bool multiDrawIndirect = false;      ///< Indirect draws of more than one record per call.
     u32 framesInFlight = 2;              ///< Frames the CPU may record ahead of the GPU.
     u32 maxBindlessTextures = 0;         ///< Size of the bindless sampled-texture array.
     u32 maxPushConstantSize = 128;       ///< Push constant bytes available to every stage.

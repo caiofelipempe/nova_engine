@@ -13,6 +13,7 @@ layout(push_constant) uniform DrawPush {
     IndexBuffer indices;  // 0 = indexed draw; else the mesh's indices (the vertex shader wraps whole triangles)
     SkinBuffer skin;      // 0 = rigid; else the mesh's skin weights
     JointBuffer joints;   // the draw's joint matrices (mesh space)
+    IndexBuffer visible;  // 0 = one instance (instanceIndex); else GPU culled: the instance is visible[gl_InstanceIndex]
 } pc;
 
 #endif // NOVA_FORWARD_PUSH_GLSL

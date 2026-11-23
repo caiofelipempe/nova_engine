@@ -362,6 +362,15 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 });
 ```
 
+**Culling na GPU** (`RenderSettings::gpuCulling`, ligado por padrão). Os draws opacos comuns (sem esqueleto e sem corte por triângulo na emenda) não são mais desenhados um a um:
+- um compute shader (`cull.comp`, o passe "GPU culling") testa a esfera envolvente de cada instância contra o frustum;
+- as visíveis são agrupadas por pipeline e malha, e cada grupo vira um `drawIndexedIndirect` só, com uma lista das instâncias visíveis lida pelo vertex shader (`gl_InstanceIndex`). Cem caixas iguais são um draw;
+- os transparentes (ordenados por distância), as malhas com esqueleto e as cópias cortadas por triângulo continuam no caminho de um draw por instância;
+- materiais de jogo não mudam: `nova_instance()` lê a instância que o vertex shader passa (`vInstance`);
+- precisa de `DeviceCaps::drawIndirectFirstInstance`; sem isso, tudo é desenhado sem culling;
+- `RenderStats` traz os grupos e quantas instâncias a GPU testou e achou visíveis (lido de volta alguns frames depois, sem esperar);
+- `Sandbox --no-cull` desliga o culling para comparar.
+
 `RenderStats` traz os passes executados e descartados e as texturas transitórias, e `Renderer::lastGraph()` descreve o último frame, um passe por linha. O painel **Renderer** do editor e o sandbox mostram as duas coisas. A compilação do graph não precisa de GPU e tem testes próprios (`tests/RenderGraphTests.cpp`).
 
 ## Ray tracing
@@ -393,6 +402,6 @@ Próximos passos (a estrutura já está preparada):
 - **Renderização circular**: feita como opção de compilação (`NOVA_WRAP_RENDER_MODES`, `RenderSettings::wrapShift` / `wrapRepeat`). Falta conferir em GPU e fazer o picking ciente das cópias.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
-- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT e render graph (feitos). Próximos: culling em GPU, backend D3D12.
+- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT, render graph e culling por frustum na GPU (feitos). Próximos: occlusion culling (Hi-Z), backend D3D12.
 - Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*; modelos glTF instanciados com a árvore dos nós, sob uma raiz com o nome do arquivo).
 - Animação: dos nós, skinning (com sombras e picking na pose atual), troca e mistura de clipes, máscaras por osso, eventos e escolha do clipe pelo nome no inspetor (feitos).
