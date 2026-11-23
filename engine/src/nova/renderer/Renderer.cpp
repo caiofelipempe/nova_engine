@@ -248,6 +248,11 @@ MeshHandle Renderer::createMesh(const MeshData& data, const std::string& name) {
         {ibSize, BufferUsage::Index | BufferUsage::Storage | extra, MemoryUsage::GpuOnly, name.c_str()});
     m_device.uploadBuffer(mesh.vertexBuffer, data.vertices.data(), vbSize, 0);
     m_device.uploadBuffer(mesh.indexBuffer, data.indices.data(), ibSize, 0);
+    if (data.skin.size() == data.vertices.size()) { // skinned: the weights beside the vertices
+        const u64 skinSize = data.skin.size() * sizeof(SkinVertex);
+        mesh.skinBuffer = m_device.createBuffer({skinSize, BufferUsage::Storage, MemoryUsage::GpuOnly, name.c_str()});
+        m_device.uploadBuffer(mesh.skinBuffer, data.skin.data(), skinSize, 0);
+    }
 
     if (rt) {
         BLASDesc blas;
@@ -280,6 +285,7 @@ void Renderer::destroyMesh(MeshHandle h) {
     GpuMesh& m = m_meshes[h.id];
     m_device.destroyBuffer(m.vertexBuffer);
     m_device.destroyBuffer(m.indexBuffer);
+    if (m.skinBuffer) m_device.destroyBuffer(m.skinBuffer);
     if (m.blas) m_device.destroyAccelStruct(m.blas);
     m = {};
     m_freeMeshSlots.push_back(h.id);
@@ -515,7 +521,10 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
 
         // Split copies (moved off their lap's center) stay out of the TLAS: the rays see each
         // object whole, once per lap; a copy laid over its original would shadow itself.
-        if (tlasRecords && d.castShadows && m_meshes[d.mesh.id].blas && !di.splitCopy) {
+        // Skinned draws too, for now: their BLAS holds the bind pose (it would cast the undeformed
+        // shape and shade the deformed one); they receive shadows, they do not cast ray-traced ones.
+        const bool skinned = d.jointCount > 0;
+        if (tlasRecords && d.castShadows && m_meshes[d.mesh.id].blas && !di.splitCopy && !skinned) {
             AccelStructInstance& r = tlasRecords[tlasCount++];
             toInstanceTransform(model, r.transform);
             r.instanceCustomIndex = i;
@@ -566,6 +575,15 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     std::stable_sort(m_drawOrder.begin(), m_drawOrder.end(),
                      [](const auto& a, const auto& b) { return a.first < b.first; });
 
+    // Joint matrices of skinned draws, for this frame.
+    u64 jointsAddress = 0;
+    if (!scene.joints.empty()) {
+        const u64 bytes = scene.joints.size() * sizeof(glm::mat4);
+        FrameAllocation jointAlloc = allocate(bytes, 64);
+        std::memcpy(jointAlloc.cpu, scene.joints.data(), bytes);
+        jointsAddress = jointAlloc.gpu;
+    }
+
     gpu::DrawPush push{};
     push.frame = frameAlloc.gpu;
     push.instances = instAlloc.gpu;
@@ -588,6 +606,10 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
         push.instanceIndex = i;
         push.indices = di.triangles ? m_device.deviceAddress(mesh.indexBuffer) : 0; // per-triangle wrap: non-indexed
+        const bool skinned = d.jointCount > 0 && mesh.skinBuffer && jointsAddress &&
+                             d.jointOffset + d.jointCount <= scene.joints.size();
+        push.skin = skinned ? m_device.deviceAddress(mesh.skinBuffer) : 0;
+        push.joints = skinned ? jointsAddress + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
         cmd.pushConstants(push);
         if (di.triangles) cmd.draw(mesh.indexCount);
         else cmd.drawIndexed(mesh.indexCount);

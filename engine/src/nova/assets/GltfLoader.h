@@ -25,6 +25,7 @@ struct ModelNode {
     u32 mesh = ~0u;                  ///< Index into ModelData::meshes; ~0u: none (a transform only).
     Material material;               ///< Material (textures already resolved).
     u32 parent = ~0u;                ///< Index of the parent in ModelData::nodes (always earlier); ~0u: top level.
+    u32 skin = ~0u;                  ///< Index into ModelData::skins (a skinned mesh); ~0u: rigid.
 };
 
 /// @brief A loaded model: GPU meshes and textures plus the nodes that place them.
@@ -38,6 +39,8 @@ struct ModelData {
     std::vector<ModelNode> nodes;             ///< Nodes to create, parents first.
     /// @brief The file's animations; channel targets are paths of node names from the model's root.
     std::vector<std::shared_ptr<const AnimationClip>> animations;
+    /// @brief The file's skeletons; joints are paths of node names from the model's root.
+    std::vector<std::shared_ptr<const SkinData>> skins;
 };
 
 /// @brief Loads a glTF 2.0 file (`.gltf` or `.glb`) into GPU meshes and textures.
@@ -58,7 +61,7 @@ std::optional<ModelData> loadModel(Renderer* renderer, const std::filesystem::pa
 /// @brief Creates the model: a root entity at `position` (named after the model) and one entity per
 ///        node under it, children under their parents (ParentComponent): moving the root moves the
 ///        whole model, each part keeping its place in it. A model with animations gets an
-///        AnimatorComponent on its root, playing the first one.
+///        AnimatorComponent on its root, playing the first one; skinned meshes get a SkinComponent.
 /// @return The created entities: the root first, then the nodes in order.
 std::vector<Entity> instantiateModel(Scene& scene, const ModelData& model, const GlobalPosition& position = GlobalPosition());
 

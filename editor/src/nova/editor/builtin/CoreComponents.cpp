@@ -56,6 +56,7 @@ void CoreComponentsPlugin::onRegister(Registry& r) {
 
     r.component<RotatorComponent>();
     r.component<AnimatorComponent>();
+    r.component<SkinComponent>();
 
     // Scripts without reflection can't be edited or saved: show that they exist.
     ComponentEditor scripts;

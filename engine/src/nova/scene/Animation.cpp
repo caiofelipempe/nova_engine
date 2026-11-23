@@ -86,6 +86,73 @@ entt::entity Scene::findByPath(entt::entity from, const std::string& path) {
     return at.valid() ? at.handle() : entt::null;
 }
 
+namespace {
+Scene::SkinSource& defaultSkinSource() {
+    static Scene::SkinSource source;
+    return source;
+}
+
+// The pose as a matrix: rotation and scale, translated by `offset` (doubles).
+glm::dmat4 poseMatrix(const TransformComponent& t, const glm::dvec3& offset) {
+    glm::dmat4 m = glm::mat4_cast(t.rotation.toDouble());
+    const glm::dvec3 s = t.scale.toDouble();
+    m[0] *= s.x;
+    m[1] *= s.y;
+    m[2] *= s.z;
+    m[3] = glm::dvec4(offset, 1.0);
+    return m;
+}
+} // namespace
+
+void Scene::setDefaultSkinSource(SkinSource source) { defaultSkinSource() = std::move(source); }
+
+std::shared_ptr<const SkinData> Scene::findSkin(const std::string& skin) const {
+    if (skin.empty()) return nullptr;
+    if (m_skinSource) return m_skinSource(skin);
+    const SkinSource& fallback = defaultSkinSource();
+    return fallback ? fallback(skin) : nullptr;
+}
+
+// A skinned mesh's joint matrices for this frame, appended to out.joints: each maps the bind pose
+// to the pose, in the mesh's own space (the draw's model matrix places it). Worked out from poses
+// relative to the mesh, in doubles: exact however far out in the world.
+bool Scene::skinJoints(entt::entity e, const TransformComponent& pose, RenderScene& out, u32& offset, u32& count) {
+    auto& sc = m_registry.get<SkinComponent>(e);
+    if (!sc.skin.empty() && (sc.resolved != sc.skin || !sc.data)) {
+        sc.data = findSkin(sc.skin);
+        sc.resolved = sc.skin;
+    }
+    const SkinData* skin = sc.data.get();
+    if (!skin || skin->joints.empty()) return false;
+    const entt::entity root = lookup(sc.root.uuid);
+    if (root == entt::null) return false;
+    bool stale = sc.boundSkin != skin || sc.boundRoot != sc.root.uuid || sc.joints.size() != skin->joints.size();
+    for (entt::entity j : sc.joints) stale = stale || (j != entt::null && !m_registry.valid(j));
+    if (stale) {
+        sc.joints.clear();
+        for (const std::string& path : skin->joints) sc.joints.push_back(findByPath(root, path));
+        sc.boundSkin = skin;
+        sc.boundRoot = sc.root.uuid;
+    }
+    const glm::dmat4 meshInverse = glm::inverse(poseMatrix(pose, glm::dvec3(0.0))); // the mesh's frame, at its origin
+    offset = static_cast<u32>(out.joints.size());
+    count = static_cast<u32>(skin->joints.size());
+    TransformComponent drawn;
+    for (size_t i = 0; i < skin->joints.size(); ++i) {
+        const entt::entity j = sc.joints[i];
+        const glm::dmat4 bindInverse = i < skin->inverseBind.size() ? glm::dmat4(skin->inverseBind[i]) : glm::dmat4(1.0);
+        if (j == entt::null || !m_registry.valid(j)) {
+            out.joints.push_back(glm::mat4(1.0f)); // a missing joint: that part stays in the bind pose
+            continue;
+        }
+        const TransformComponent& jt = m_registry.get<TransformComponent>(j);
+        const TransformComponent& at = drawnPose(j, jt, drawn) ? drawn : jt; // between physics steps, like the mesh
+        const glm::dmat4 joint = poseMatrix(at, (at.position - pose.position).toMeters());
+        out.joints.push_back(glm::mat4(meshInverse * joint * bindInverse));
+    }
+    return true;
+}
+
 void Scene::updateAnimations(Duration frame) {
     std::vector<entt::entity> animated;
     for (auto e : m_registry.view<AnimatorComponent>()) animated.push_back(e);

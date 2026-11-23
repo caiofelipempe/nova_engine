@@ -59,6 +59,23 @@ bool buildMesh(const cgltf_primitive& prim, MeshData& out) {
         }
     }
 
+    // Skinned: up to four joints and weights per vertex (JOINTS_0, WEIGHTS_0).
+    const cgltf_accessor* joints = findAttribute(prim, cgltf_attribute_type_joints);
+    const cgltf_accessor* weights = findAttribute(prim, cgltf_attribute_type_weights);
+    if (joints && weights && joints->count == pos->count && weights->count == pos->count) {
+        out.skin.resize(pos->count);
+        for (cgltf_size i = 0; i < pos->count; ++i) {
+            cgltf_uint j[4] = {0, 0, 0, 0};
+            f32 w[4] = {0, 0, 0, 0};
+            cgltf_accessor_read_uint(joints, i, j, 4);
+            cgltf_accessor_read_float(weights, i, w, 4);
+            const f32 sum = w[0] + w[1] + w[2] + w[3];
+            SkinVertex& sv = out.skin[i];
+            sv.setJoints(j[0], j[1], j[2], j[3]);
+            sv.weights = sum > 0.0f ? glm::vec4(w[0], w[1], w[2], w[3]) / sum : glm::vec4(1, 0, 0, 0);
+        }
+    }
+
     if (prim.indices) {
         out.indices.resize(prim.indices->count);
         for (cgltf_size i = 0; i < prim.indices->count; ++i)
@@ -224,6 +241,7 @@ std::optional<ModelData> loadModel(Renderer* renderer, const std::filesystem::pa
         mn.rotation = rotation;
         mn.scale = scale;
         mn.parent = parent;
+        if (node.skin && node.mesh) mn.skin = static_cast<u32>(node.skin - data->skins);
         std::vector<std::pair<u32, cgltf_size>> primitives; // (mesh, primitive) usable
         if (node.mesh) {
             const std::vector<u32>& cache = meshesOf(node);
@@ -259,6 +277,20 @@ std::optional<ModelData> loadModel(Renderer* renderer, const std::filesystem::pa
         for (u32 at = node; at != ~0u; at = model.nodes[at].parent) path = path.empty() ? model.nodes[at].name : model.nodes[at].name + "/" + path;
         return path;
     };
+    // Skeletons: each joint by the path of names from the model's root, and its inverse bind matrix.
+    for (cgltf_size k = 0; k < data->skins_count; ++k) {
+        const cgltf_skin& sk = data->skins[k];
+        auto skin = std::make_shared<SkinData>();
+        skin->name = sk.name ? sk.name : ("skin" + std::to_string(k));
+        for (cgltf_size j = 0; j < sk.joints_count; ++j) {
+            const cgltf_size node = static_cast<cgltf_size>(sk.joints[j] - data->nodes);
+            skin->joints.push_back(node < nodeOf.size() && nodeOf[node] != ~0u ? pathOf(nodeOf[node]) : std::string());
+            glm::mat4 inverseBind(1.0f);
+            if (sk.inverse_bind_matrices) cgltf_accessor_read_float(sk.inverse_bind_matrices, j, &inverseBind[0][0], 16);
+            skin->inverseBind.push_back(inverseBind);
+        }
+        model.skins.push_back(std::move(skin));
+    }
     for (cgltf_size a = 0; a < data->animations_count; ++a) {
         const cgltf_animation& anim = data->animations[a];
         auto clip = std::make_shared<AnimationClip>();
@@ -296,8 +328,8 @@ std::optional<ModelData> loadModel(Renderer* renderer, const std::filesystem::pa
         model.animations.push_back(std::move(clip));
     }
 
-    NOVA_CORE_INFO("glTF: loaded '{}' ({} meshes, {} textures, {} nodes, {} animations)", path.string(), model.meshes.size(),
-                   model.textures.size(), model.nodes.size(), model.animations.size());
+    NOVA_CORE_INFO("glTF: loaded '{}' ({} meshes, {} textures, {} nodes, {} animations, {} skins)", path.string(),
+                   model.meshes.size(), model.textures.size(), model.nodes.size(), model.animations.size(), model.skins.size());
     return model;
 }
 
@@ -322,6 +354,12 @@ std::vector<Entity> instantiateModel(Scene& scene, const ModelData& model, const
         const u32 parent = model.nodes[i].parent;
         scene.setParent(made[i], parent < i ? made[parent] : root);
     }
+    for (size_t i = 0; i < model.nodes.size(); ++i) // skinned meshes follow their skeleton
+        if (model.nodes[i].skin < model.skins.size() && made[i].has<MeshComponent>()) {
+            auto& sc = made[i].add<SkinComponent>();
+            sc.root = Scene::refOf(root);
+            sc.data = model.skins[model.nodes[i].skin];
+        }
     if (!model.animations.empty()) root.add<AnimatorComponent>().data = model.animations.front();
     return out;
 }

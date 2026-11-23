@@ -150,6 +150,9 @@ public:
     ///        instantiate() puts in a model's AnimatorComponent::clip), loading the model if needed.
     ///        Give it to Scene::setAnimationSource (the editor does) so saved scenes play them again.
     Scene::AnimationSource animationSource();
+    /// @brief Finds the skeletons of model assets by reference ("asset:<guid>#<index>", what
+    ///        instantiate() puts in SkinComponent::skin). Give it to Scene::setSkinSource.
+    Scene::SkinSource skinSource();
     /// @}
 
     /// @name References

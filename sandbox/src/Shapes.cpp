@@ -103,4 +103,34 @@ nova::MeshData terrain(float size, unsigned cells, float height) {
     return m;
 }
 
+nova::MeshData bendableColumn(float radius, float height, float bendAt, unsigned rings, unsigned segments) {
+    nova::MeshData m;
+    for (unsigned r = 0; r <= rings; ++r) {
+        const float y = height * static_cast<float>(r) / static_cast<float>(rings);
+        // Weight of joint 1: none below the bend's blend zone, all above it.
+        const float t = glm::clamp((y - (bendAt - 0.4f)) / 0.8f, 0.0f, 1.0f);
+        const float w1 = t * t * (3.0f - 2.0f * t);
+        for (unsigned k = 0; k <= segments; ++k) {
+            const float a = 6.2831853f * static_cast<float>(k) / static_cast<float>(segments);
+            nova::Vertex v;
+            v.normal = {std::cos(a), 0.0f, std::sin(a)};
+            v.position = {radius * v.normal.x, y, radius * v.normal.z};
+            v.u = static_cast<float>(k) / static_cast<float>(segments);
+            v.v = y / height;
+            m.vertices.push_back(v);
+            nova::SkinVertex sv;
+            sv.setJoints(0, 1, 0, 0);
+            sv.weights = {1.0f - w1, w1, 0.0f, 0.0f};
+            m.skin.push_back(sv);
+        }
+    }
+    const unsigned row = segments + 1;
+    for (unsigned r = 0; r < rings; ++r)
+        for (unsigned k = 0; k < segments; ++k) {
+            const unsigned a = r * row + k, b = a + 1, c = a + row, d = c + 1;
+            m.indices.insert(m.indices.end(), {a, c, b, b, c, d});
+        }
+    return m;
+}
+
 } // namespace shapes

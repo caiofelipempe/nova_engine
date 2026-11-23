@@ -175,7 +175,10 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
     for (auto [e, t, m] : m_registry.view<TransformComponent, MeshComponent>().each()) {
         if (!m.mesh) continue;
         const TransformComponent& at = drawnPose(e, t, drawn) ? drawn : t;
-        out.draws.push_back({m.mesh, at.matrixRelativeTo(out.camera.origin), m.material, m.castShadows});
+        DrawItem item{m.mesh, at.matrixRelativeTo(out.camera.origin), m.material, m.castShadows};
+        if (m_registry.all_of<SkinComponent>(e)) // skinned: its joints' matrices
+            if (!skinJoints(e, at, out, item.jointOffset, item.jointCount)) item.jointCount = 0;
+        out.draws.push_back(item);
     }
     return hasCamera;
 }

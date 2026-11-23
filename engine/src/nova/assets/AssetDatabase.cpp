@@ -328,6 +328,14 @@ std::vector<Entity> AssetDatabase::instantiate(AssetGuid guid, Scene& scene, con
             anim->clip = makeRef(guid, 0);
             anim->resolved = anim->clip;
         }
+        if (const ModelData* model = data->as<ModelData>()) // the skeletons too
+            for (Entity e : entities)
+                if (auto* sc = e.tryGet<SkinComponent>())
+                    for (u32 k = 0; k < model->skins.size(); ++k)
+                        if (model->skins[k] == sc->data) {
+                            sc->skin = makeRef(guid, k);
+                            sc->resolved = sc->skin;
+                        }
     }
     return entities;
 }
@@ -342,6 +350,20 @@ Scene::AnimationSource AssetDatabase::animationSource() {
         const AssetRecord* r = find(guid);
         if (!model || !r || r->type != "Model" || index >= model->animations.size()) return nullptr;
         return model->animations[index];
+    };
+}
+
+Scene::SkinSource AssetDatabase::skinSource() {
+    return [this](const std::string& ref) -> std::shared_ptr<const SkinData> {
+        AssetGuid guid = 0;
+        u32 index = 0;
+        if (!parseRef(ref, guid, index)) return nullptr;
+        const AssetRecord* r = find(guid);
+        if (!r || r->type != "Model") return nullptr;
+        const AssetData* data = load(guid);
+        const ModelData* model = data ? data->as<ModelData>() : nullptr;
+        if (!model || index >= model->skins.size()) return nullptr;
+        return model->skins[index];
     };
 }
 

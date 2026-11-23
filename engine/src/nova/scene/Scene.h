@@ -115,6 +115,14 @@ public:
     static void setDefaultAnimationSource(AnimationSource source);
     /// @brief The clip a reference names (through the animation source), or null.
     std::shared_ptr<const AnimationClip> findAnimation(const std::string& clip) const;
+    /// @brief Finds a skeleton by the reference in SkinComponent::skin (e.g. AssetDatabase::skinSource()).
+    using SkinSource = std::function<std::shared_ptr<const SkinData>(const std::string&)>;
+    /// @brief Sets this scene's skin source (falls back to the default one when unset).
+    void setSkinSource(SkinSource source) { m_skinSource = std::move(source); }
+    /// @brief Default skin source of every scene.
+    static void setDefaultSkinSource(SkinSource source);
+    /// @brief The skeleton a reference names (through the skin source), or null.
+    std::shared_ptr<const SkinData> findSkin(const std::string& skin) const;
     /// @}
 
     /// @brief Runs scripts, built-in systems and (if simulating) physics.
@@ -328,6 +336,8 @@ private:
     Duration m_physicsAccumulator;
     std::unordered_map<u64, entt::entity> m_byUuid; // rebuilt by updateTransforms (checked before use)
     AnimationSource m_animationSource;
+    SkinSource m_skinSource;
+    bool skinJoints(entt::entity e, const TransformComponent& pose, RenderScene& out, u32& offset, u32& count);
     void updateAnimations(Duration frame);
     entt::entity findByPath(entt::entity from, const std::string& path);
     entt::entity lookup(u64 uuid) const;

@@ -13,10 +13,14 @@ EditorContext::EditorContext(Scene& scene) : m_scene(&scene) {
     m_undo.changed.connect([this] { m_trackValid = false; });
     // Model animations saved by reference play again after loading (and after Stop).
     m_scene->setAnimationSource(m_assets.animationSource());
+    m_scene->setSkinSource(m_assets.skinSource());
 }
 
 EditorContext::~EditorContext() {
-    if (m_scene) m_scene->setAnimationSource({}); // it pointed at this context's assets
+    if (m_scene) { // they pointed at this context's assets
+        m_scene->setAnimationSource({});
+        m_scene->setSkinSource({});
+    }
 }
 
 Application& EditorContext::app() { return Application::get(); }

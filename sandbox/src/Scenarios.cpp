@@ -583,6 +583,52 @@ View buildEdges(Scene& s, const BenchMeshes& m) {
     return {{0.0, 22.0, 40.0}, {0.0, 0.0, 0.0}};
 }
 
+// Skinning: columns that bend. Each is ONE skinned mesh (MeshData::skin) following a two-joint
+// skeleton (SkinComponent): its foot and its middle, entities under the column's root. An
+// AnimatorComponent swings the middle joint: below the bend the column stays, above it it leans,
+// blended around the bend. The roots turn slowly (RotatorComponent): the skin goes along.
+View buildSkinning(Scene& s, const BenchMeshes& m) {
+    sun(s);
+    tiledFloor(s, m, 4, 6.0f, true, {0.74f, 0.79f, 0.82f, 1});
+    auto skin = std::make_shared<SkinData>();
+    skin->name = "column";
+    skin->joints = {"Foot", "Foot/Bend"};
+    skin->inverseBind = {glm::mat4(1.0f), glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -1.5f, 0.0f))};
+    auto swing = std::make_shared<AnimationClip>();
+    swing->name = "swing";
+    swing->duration = 2.0f;
+    AnimationChannel lean;
+    lean.target = "Foot/Bend";
+    lean.path = AnimationPath::Rotation;
+    lean.times = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f};
+    for (float deg : {0.0f, 60.0f, 0.0f, -60.0f, 0.0f}) {
+        const glm::quat q = glm::angleAxis(glm::radians(deg), glm::vec3(0, 0, 1));
+        lean.values.push_back({q.x, q.y, q.z, q.w});
+    }
+    swing->channels = {lean};
+    for (int i = 0; i < 5; ++i) {
+        const double x = -6.0 + 3.0 * i;
+        Entity root = s.createEntity("Column " + std::to_string(i));
+        root.transform().position = {x, 0.0, 0.0};
+        root.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.15f * static_cast<float>(i));
+        Entity foot = s.createEntity("Foot");
+        foot.transform().position = {x, 0.0, 0.0};
+        foot.setParent(root);
+        Entity bend = s.createEntity("Bend");
+        bend.transform().position = {x, 1.5, 0.0};
+        bend.setParent(foot);
+        Entity body = visual(s, "Body", m.column, {x, 0.0, 0.0}, glm::vec3(1.0f), kPalette[i % 6]);
+        body.setParent(root);
+        auto& sc = body.add<SkinComponent>();
+        sc.root = Scene::refOf(root);
+        sc.data = skin;
+        auto& anim = root.add<AnimatorComponent>();
+        anim.data = swing;
+        anim.speed = 0.6f + 0.2f * static_cast<float>(i);
+    }
+    return {{0.0, 3.5, 11.0}, {0.0, 1.5, 0.0}};
+}
+
 // A tiny circular world, 48 m on every axis (Y too: what falls below comes in from above), to see
 // the circular world. The floor you see is ONE mesh of 48 × 48 m, placed across the X seam: drawn
 // per object it shows on one side only, per triangle or split (NOVA_WRAP_RENDER_MODES builds) it
@@ -709,6 +755,8 @@ const std::vector<Scenario>& scenarios() {
                      nullptr, nullptr, 0.0f, nullptr, false, true});
         v.push_back({"Edges: wrap", "60 x 60 m world that wraps around: balls flash cyan and come in the other side.",
                      buildEdges});
+        v.push_back({"Skinning", "Bending columns: one skinned mesh each, a two-joint skeleton swung by an animation clip.",
+                     buildSkinning});
         v.push_back({"Tiny circular world", "48 m on every axis: meshes cut at the seam (split, half a lap from the camera; fly to slide it), a crate stack on the Z seam.",
                      buildTiny, nullptr, nullptr, 0.0f, statusTiny, false, false, enterTiny});
 

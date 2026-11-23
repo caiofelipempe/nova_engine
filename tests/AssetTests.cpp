@@ -1,6 +1,8 @@
 // Headless tests of the asset database: GUID sidecars, importers, references, prefabs, import.
 #include <nova/Nova.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -492,6 +494,82 @@ void gltfAnimation() {
     fs::remove_all(dir);
 }
 
+void skinning() {
+    // A bone 1 m up turns 90° around Z: a vertex 1 m above it (bound to it) swings to its side.
+    // The joint matrices are worked out relative to the mesh: the same far out in the world.
+    for (const f64 far : {0.0, 1.0e6}) {
+        Scene scene;
+        Entity root = scene.createEntity("Rig");
+        root.transform().position = {far, 0, 0};
+        Entity bone = scene.createEntity("Bone");
+        bone.transform().position = {far, 1, 0};
+        bone.setParent(root);
+        Entity body = scene.createEntity("Body");
+        body.transform().position = {far, 0, 0};
+        body.add<MeshComponent>(MeshHandle{1});
+        body.setParent(root);
+        auto skin = std::make_shared<SkinData>();
+        skin->joints = {"Bone"};
+        skin->inverseBind = {glm::translate(glm::mat4(1.0f), glm::vec3(0, -1, 0))}; // the bone sat 1 m up
+        auto& sc = body.add<SkinComponent>();
+        sc.root = Scene::refOf(root);
+        sc.data = skin;
+
+        RenderScene rs;
+        const CameraData eye = CameraData::relativeLookAt(GlobalPosition(far, 1, 10), {0, 0, -1}, 1.0f, 1.0f, 0.1f, 100.0f);
+        scene.buildRenderScene(rs, 1.0f, &eye);
+        CHECK(rs.draws.size() == 1 && rs.draws[0].jointCount == 1 && rs.joints.size() == 1);
+        const glm::vec4 rest = rs.joints[0] * glm::vec4(0, 2, 0, 1);
+        CHECK(glm::length(glm::vec3(rest) - glm::vec3(0, 2, 0)) < 1e-5f); // the bind pose: unmoved
+
+        bone.transform().setRotation(glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1)));
+        scene.buildRenderScene(rs, 1.0f, &eye);
+        const glm::vec4 bent = rs.joints[0] * glm::vec4(0, 2, 0, 1);
+        CHECK(glm::length(glm::vec3(bent) - glm::vec3(-1, 1, 0)) < 1e-5f);
+        // The model moves and turns: the skin goes with it (mesh space matrices do not change).
+        root.transform().position = {far + 5, 0, 0};
+        root.transform().setRotation(glm::angleAxis(glm::radians(30.0f), glm::vec3(0, 1, 0)));
+        scene.buildRenderScene(rs, 1.0f, &eye);
+        CHECK(glm::length(glm::vec3(rs.joints[0] * glm::vec4(0, 2, 0, 1)) - glm::vec3(-1, 1, 0)) < 1e-4f);
+
+        // Without its skeleton: drawn rigid.
+        sc.data.reset();
+        scene.buildRenderScene(rs, 1.0f, &eye);
+        CHECK(rs.draws[0].jointCount == 0);
+    }
+}
+
+void gltfSkin() {
+    // A glTF skeleton: joints by their path of names, inverse bind matrices, the skinned node.
+    const fs::path dir = fs::temp_directory_path() / "nova_gltf_skin";
+    fs::create_directories(dir);
+    const fs::path file = dir / "arm.gltf";
+    {
+        std::ofstream out(file);
+        out << R"({
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0, 2]}],
+  "nodes": [{"name": "Shoulder", "children": [1]}, {"name": "Elbow", "translation": [0, 1, 0]},
+            {"name": "Sleeve", "mesh": 0, "skin": 0}],
+  "meshes": [{"primitives": [{"attributes": {"POSITION": 1}}]}],
+  "skins": [{"joints": [0, 1], "inverseBindMatrices": 0}],
+  "buffers": [{"byteLength": 128, "uri": "data:application/octet-stream;base64,AACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAgD8="}],
+  "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 128}],
+  "accessors": [{"bufferView": 0, "componentType": 5126, "count": 2, "type": "MAT4"},
+                {"bufferView": 0, "componentType": 5126, "count": 1, "type": "VEC3", "min": [1, 0, 0], "max": [1, 0, 0]}]
+})";
+    }
+    auto model = loadModel(nullptr, file); // no renderer: nodes, clips and skins only
+    CHECK(model.has_value());
+    if (!model) return;
+    CHECK(model->skins.size() == 1 && model->skins[0]->joints.size() == 2);
+    CHECK(model->skins[0]->joints[0] == "Shoulder" && model->skins[0]->joints[1] == "Shoulder/Elbow");
+    CHECK(model->skins[0]->inverseBind[1] == glm::translate(glm::mat4(1.0f), glm::vec3(0, -1, 0)));
+    CHECK(model->nodes.size() == 3 && model->nodes[2].name == "Sleeve" && model->nodes[2].skin == 0);
+    fs::remove_all(dir);
+}
+
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // keep output if a check crashes
     Log::init();
@@ -506,6 +584,8 @@ int main() {
         {"animation: sampling (linear, step, cubic, slerp)", animationSampling},
         {"animation: a model's clip plays on its nodes (loop, pause, speed, saved by reference)", nodeAnimation},
         {"animation: read from a glTF file", gltfAnimation},
+        {"skinning: joint matrices (bend, the model moving, far out, no skeleton)", skinning},
+        {"skinning: a glTF skeleton", gltfSkin},
         {"import", importFiles},
     };
     for (auto& [name, fn] : tests) {

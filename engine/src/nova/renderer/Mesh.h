@@ -42,10 +42,28 @@ struct Vertex {
 };
 static_assert(sizeof(Vertex) == 32);
 
+/// @brief How a vertex follows a skeleton (skinned meshes): up to four joints and their weights.
+struct SkinVertex {
+    u32 joints01 = 0;          ///< Joints 0 and 1 (16 bits each, low first): indices into the skin's joints.
+    u32 joints23 = 0;          ///< Joints 2 and 3.
+    u32 _pad[2] = {0, 0};
+    glm::vec4 weights{1.0f, 0.0f, 0.0f, 0.0f}; ///< Weights of the four joints (sum 1).
+
+    /// @brief Sets the four joints.
+    void setJoints(u32 a, u32 b, u32 c, u32 d) {
+        joints01 = (a & 0xFFFFu) | ((b & 0xFFFFu) << 16);
+        joints23 = (c & 0xFFFFu) | ((d & 0xFFFFu) << 16);
+    }
+};
+static_assert(sizeof(SkinVertex) == 32);
+
 /// @brief CPU-side indexed triangle mesh. Triangles are counter-clockwise when seen from the front.
 struct MeshData {
     std::vector<Vertex> vertices; ///< Vertex array.
     std::vector<u32> indices;     ///< Triangle list, 3 indices per triangle.
+    /// @brief Skinned meshes: one per vertex (empty: a rigid mesh). The vertices are in the bind
+    ///        pose; a DrawItem with joint matrices deforms them (SkinComponent).
+    std::vector<SkinVertex> skin;
 
     /// @brief Axis-aligned cube centered at the origin with flat face normals.
     /// @param size Edge length.

@@ -6,6 +6,7 @@
 
 #include "nova/core/Base.h"
 #include "nova/math/Fixed.h"
+#include "nova/scene/EntityRef.h"
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
@@ -74,6 +75,34 @@ struct AnimatorComponent {
     std::string resolved;                       ///< The `clip` reference `data` came from.
     const AnimationClip* boundClip = nullptr;   ///< The clip `targets` were found for.
     std::vector<entt::entity> targets;          ///< One per channel (entt::null: not found).
+};
+
+/// @brief A skeleton for skinned meshes: its joints and how each one sat in the bind pose.
+struct SkinData {
+    std::string name;
+    /// @brief Each joint, as the path of entity names from the model's root ("Hips/Spine/Head").
+    std::vector<std::string> joints;
+    /// @brief Per joint: mesh bind-pose space → the joint's space (glTF inverseBindMatrices).
+    std::vector<glm::mat4> inverseBind;
+};
+
+/// @brief Deforms this entity's skinned mesh (MeshData::skin) by a skeleton: the joints are
+///        entities under `root` (the model's root), moved by an AnimatorComponent, scripts or tools.
+///
+/// Added by instantiateModel / AssetDatabase::instantiate to the meshes of skinned glTF nodes.
+/// The skeleton is set directly (`data`) or named by `skin`, a reference the scene resolves through
+/// its skin source (Scene::setSkinSource; model assets: "asset:<guid>#<index>"). Only `root` and
+/// `skin` are saved. Ray-traced shadows and picking still see the bind pose.
+struct SkinComponent {
+    EntityRef root;    ///< The entity the joint paths start from (the model's root).
+    std::string skin;  ///< Reference to the skeleton (resolved through the scene's skin source).
+
+    // Kept by the scene (not saved):
+    std::shared_ptr<const SkinData> data;   ///< The skeleton (set it to use one directly).
+    std::string resolved;                   ///< The `skin` reference `data` came from.
+    const SkinData* boundSkin = nullptr;    ///< The skeleton `joints` were found for.
+    u64 boundRoot = 0;                      ///< ... from this root.
+    std::vector<entt::entity> joints;       ///< One per joint (entt::null: not found).
 };
 
 } // namespace nova

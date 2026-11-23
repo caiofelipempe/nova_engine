@@ -87,6 +87,9 @@ struct DrawItem {
     glm::mat4 transform{1.0f}; ///< Object → world, translation measured from CameraData::origin.
     Material material;         ///< Surface parameters.
     bool castShadows = true;   ///< Include in the ray tracing scene (ray-traced shadows).
+    /// @brief Skinned meshes: this draw's joint matrices in RenderScene::joints (count 0: drawn
+    ///        rigid, in the bind pose). Each maps the bind pose to the pose, in mesh space.
+    u32 jointOffset = 0, jointCount = 0;
 };
 
 /// @brief Everything needed to draw one frame of a scene.
@@ -99,6 +102,7 @@ struct RenderScene {
     DirectionalLightData sun;                ///< Directional light.
     std::vector<PointLightData> pointLights; ///< Point lights (the first 16 are used).
     std::vector<DrawItem> draws;             ///< Mesh instances.
+    std::vector<glm::mat4> joints;           ///< Joint matrices of skinned draws (DrawItem::jointOffset).
     f32 time = 0.0f;                         ///< Scene time in seconds within a 1-hour cycle (shaders: `nova_time()`).
     /// @brief Size of the circular world per axis (m), 0 = not circular. Scene::buildRenderScene sets
     ///        it; it matters to the NOVA_WRAP_RENDER_MODES options (RenderSettings::wrapShift).
@@ -110,6 +114,7 @@ struct RenderScene {
     void clear() {
         pointLights.clear();
         draws.clear();
+        joints.clear();
     }
 };
 
@@ -337,6 +342,7 @@ private:
         std::string name;
         rhi::BufferHandle vertexBuffer;
         rhi::BufferHandle indexBuffer;
+        rhi::BufferHandle skinBuffer; // skinned meshes only
         rhi::AccelStructHandle blas;
         u32 vertexCount = 0;
         u32 indexCount = 0;

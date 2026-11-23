@@ -59,8 +59,16 @@ struct Vertex {
     float v;
 };
 
+// A skinned vertex: joints.x = joint 0 | joint 1 << 16, joints.y = joint 2 | joint 3 << 16.
+struct SkinVertex {
+    uvec4 joints;
+    vec4 weights;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer FrameBuffer { FrameData data; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer InstanceBuffer { InstanceData items[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer SkinBuffer { SkinVertex items[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer JointBuffer { mat4 items[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer VertexBuffer { Vertex items[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer IndexBuffer { uint items[]; };
 

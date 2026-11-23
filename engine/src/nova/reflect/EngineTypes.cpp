@@ -188,6 +188,10 @@ void registerEngineTypes() {
         .field("loop", &AnimatorComponent::loop)
         .field("playing", &AnimatorComponent::playing)
         .component();
+    type<SkinComponent>("Skin")
+        .field("root", &SkinComponent::root, {.tooltip = "The model's root: the joints are found under it"})
+        .field("skin", &SkinComponent::skin, {.tooltip = "The skeleton, by reference (asset:<guid>#<index> for a model's skin)"})
+        .component();
     type<RotatorComponent>("Rotator")
         .field("axis", &RotatorComponent::axis, {.speed = 0.01f})
         .field("speed", &RotatorComponent::speed, {.speed = 0.01f, .tooltip = "Radians per second"})

@@ -26,6 +26,18 @@ vec3 lapShift(vec3 d, vec3 size) {
 }
 #endif
 
+// Skinned meshes: the vertex in the bind pose, moved by its joints (mesh space).
+Vertex nova_skinned(uint index, Vertex v) {
+    if (uint64_t(pc.skin) == 0ul) return v;
+    const SkinVertex s = pc.skin.items[index];
+    const uint j[4] = uint[4](s.joints.x & 0xFFFFu, s.joints.x >> 16, s.joints.y & 0xFFFFu, s.joints.y >> 16);
+    mat4 m = mat4(0.0);
+    for (int k = 0; k < 4; ++k) m += s.weights[k] * pc.joints.items[j[k]];
+    v.position = (m * vec4(v.position, 1.0)).xyz;
+    v.normal = mat3(m) * v.normal;
+    return v;
+}
+
 void main() {
     InstanceData inst = pc.instances.items[pc.instanceIndex];
 #if NOVA_WRAP_RENDER_MODES
@@ -40,14 +52,15 @@ void main() {
         const uint triangle = uint(gl_VertexIndex) / 3u, corner = uint(gl_VertexIndex) % 3u;
         vec3 p[3];
         for (uint k = 0u; k < 3u; ++k) {
-            Vertex vk = pc.vertices.items[pc.indices.items[triangle * 3u + k]];
+            const uint index = pc.indices.items[triangle * 3u + k];
+            Vertex vk = nova_skinned(index, pc.vertices.items[index]);
             p[k] = (inst.model * vec4(vk.position, 1.0)).xyz;
             if (k == corner) v = vk;
         }
         const vec3 middle = (p[0] + p[1] + p[2]) / 3.0; // the centroid
         world = vec4(p[corner] + lapShift(middle - cell, size), 1.0);
     } else {
-        v = pc.vertices.items[gl_VertexIndex];
+        v = nova_skinned(gl_VertexIndex, pc.vertices.items[gl_VertexIndex]);
         world = inst.model * vec4(v.position, 1.0);
     }
     // Split and crop: every copy is cut at the edges of its lap (the planes half a lap from its center).
@@ -55,7 +68,7 @@ void main() {
     for (int i = 0; i < 3; ++i)
         gl_ClipDistance[i] = (clipped && size[i] > 0.0) ? size[i] * 0.5 - abs(world[i] - cell[i]) : 1.0;
 #else
-    Vertex v = pc.vertices.items[gl_VertexIndex]; // vertex pulling through a buffer address
+    Vertex v = nova_skinned(gl_VertexIndex, pc.vertices.items[gl_VertexIndex]); // vertex pulling through a buffer address
     vec4 world = inst.model * vec4(v.position, 1.0);
 #endif
     vWorldPos = world.xyz;

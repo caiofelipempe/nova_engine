@@ -14,5 +14,8 @@ nova::MeshData cylinder(float radius = 0.5f, float halfHeight = 0.5f, unsigned s
 nova::MeshData gem();
 /// A `size` × `size` bumpy terrain patch on XZ (heights 0 .. `height`), for triangle mesh colliders.
 nova::MeshData terrain(float size = 24.0f, unsigned cells = 48, float height = 1.6f);
+/// A skinned column `height` tall standing on the origin: joint 0 at its foot, joint 1 at
+/// `bendAt`; below the bend the vertices follow joint 0, above it joint 1, blended around it.
+nova::MeshData bendableColumn(float radius = 0.3f, float height = 3.0f, float bendAt = 1.5f, unsigned rings = 24, unsigned segments = 20);
 
 } // namespace shapes

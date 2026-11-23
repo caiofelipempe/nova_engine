@@ -68,6 +68,8 @@ struct DrawPush {
     u32 instanceIndex; ///< Index into `instances`.
     u32 debugView;     ///< DebugView value.
     u64 indices;       ///< 0: an indexed draw. Otherwise the mesh's index buffer, pulled by the vertex shader (per-triangle wrap).
+    u64 skin;          ///< 0: rigid. Otherwise the mesh's SkinVertex array (skinned draw).
+    u64 joints;        ///< The draw's joint matrices (mat4 each, mesh space), when `skin` is set.
 };
 
 /// @brief Push constants of the sky pass.

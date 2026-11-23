@@ -68,7 +68,7 @@ public:
                     r.createMesh(shapes::capsule(), "Capsule"), r.createMesh(shapes::cylinder(), "Cylinder"),
                     r.createMesh(shapes::gem(), "Gem"), r.createMesh(shapes::terrain(), "Terrain"),
                     r.createMesh(shapes::capsule(0.3f, 0.6f, 0.9f), "Player capsule"),
-                    r.createMesh(nova::MeshData::plane(1.0f, 32), "Grid")};
+                    r.createMesh(nova::MeshData::plane(1.0f, 32), "Grid"), r.createMesh(shapes::bendableColumn(), "Bendable column")};
         int first = 0; // `--scenario <name>`: start there
         for (int i = 0; i < static_cast<int>(scenarios().size()); ++i)
             if (s_startScenario == scenarios()[i].name) first = i;
