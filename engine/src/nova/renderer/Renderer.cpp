@@ -409,6 +409,16 @@ void Renderer::renderToBackbuffer(CommandList& cmd, const RenderScene& scene) {
 }
 
 // ------------------------------------------------------------- instances --
+#if NOVA_WRAP_RENDER_MODES
+// The seam mode this GPU can draw: without clip distances, split falls back to per triangle and
+// crop to per object.
+WrapShift Renderer::wrapMode() const {
+    const WrapShift m = m_settings.wrapShift;
+    if (m_device.caps().clipDistance) return m;
+    return m == WrapShift::Split ? WrapShift::Triangle : m == WrapShift::Crop ? WrapShift::Object : m;
+}
+#endif
+
 // The draws as instances (WrapInstances.h). Builds with NOVA_WRAP_RENDER_MODES choose how objects
 // across a seam of the circular world are drawn and how many laps around; otherwise each object
 // is drawn once, at its copy nearest the camera.
@@ -417,10 +427,11 @@ void Renderer::expandDraws(const RenderScene& scene, const glm::mat4& viewProj) 
     options.size = scene.wrapSize;
     options.maxInstances = kMaxInstances;
 #if NOVA_WRAP_RENDER_MODES
-    options.mode = m_settings.wrapShift;
-    if (options.mode == WrapShift::Split && !m_device.caps().clipDistance) options.mode = WrapShift::Triangle;
+    options.mode = wrapMode();
     options.repeat = m_settings.wrapRepeat;
     options.repeatAxes = m_settings.wrapRepeatAxes;
+    options.crop = m_settings.wrapCrop;
+    options.worldCenter = scene.worldCenter;
 #endif
     auto bounds = [this](MeshHandle h) -> const Bounds* {
         return h.id < m_meshes.size() && m_meshes[h.id].alive ? &m_meshes[h.id].bounds : nullptr;
@@ -460,9 +471,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     fd.groundColor = glm::vec4(s.groundColor, 0.0f);
     fd.originTiled = glm::vec4(tiledOrigin(scene.camera.origin), gpu::kWorldTile);
 #if NOVA_WRAP_RENDER_MODES
-    const WrapShift wrapMode =
-        s.wrapShift == WrapShift::Split && !m_device.caps().clipDistance ? WrapShift::Triangle : s.wrapShift;
-    fd.wrapSize = glm::vec4(scene.wrapSize, static_cast<f32>(wrapMode));
+    fd.wrapSize = glm::vec4(scene.wrapSize, static_cast<f32>(wrapMode()));
 #else
     fd.wrapSize = glm::vec4(scene.wrapSize, 0.0f);
 #endif
@@ -506,8 +515,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
 
         // Split copies (moved off their lap's center) stay out of the TLAS: the rays see each
         // object whole, once per lap; a copy laid over its original would shadow itself.
-        const bool splitCopy = di.offset != di.cell;
-        if (tlasRecords && d.castShadows && m_meshes[d.mesh.id].blas && !splitCopy) {
+        if (tlasRecords && d.castShadows && m_meshes[d.mesh.id].blas && !di.splitCopy) {
             AccelStructInstance& r = tlasRecords[tlasCount++];
             toInstanceTransform(model, r.transform);
             r.instanceCustomIndex = i;

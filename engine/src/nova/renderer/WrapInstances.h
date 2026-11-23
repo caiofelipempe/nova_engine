@@ -18,6 +18,7 @@ struct WrapInstance {
     glm::vec3 offset{0.0f};    ///< Added to the draw's translation.
     glm::vec3 cell{0.0f};      ///< Center of the lap the copy belongs to (the shader wraps / clips around it).
     bool triangles = false;    ///< The per-triangle path (WrapShift::Triangle across a seam).
+    bool splitCopy = false;    ///< A split copy moved off its lap (left out of the ray-traced shadows: the original is there whole).
 };
 
 /// @brief How expandWrapInstances() copies the draws.
@@ -26,6 +27,8 @@ struct WrapOptions {
     WrapShift mode = WrapShift::Object; ///< Across a seam: per triangle, the whole object, or split.
     u32 repeat = 0;                     ///< Further laps on each side (circular axes), frustum culled.
     glm::bvec3 repeatAxes{true};        ///< The axes `repeat` applies to.
+    WrapCrop crop = WrapCrop::World;    ///< WrapShift::Crop: the world's lap or the camera's.
+    glm::vec3 worldCenter{0.0f};        ///< The world's center from the camera (RenderScene::worldCenter).
     u32 maxInstances = 16384;           ///< Stop there.
 };
 

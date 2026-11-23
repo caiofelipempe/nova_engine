@@ -140,6 +140,8 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
         hasCamera = true;
     }
 
+    out.worldCenter = (GlobalPosition() - out.camera.origin).toVec3();
+
     auto suns = m_registry.view<TransformComponent, DirectionalLightComponent>();
     if (auto it = suns.begin(); it != suns.end()) { // one sun
         auto [t, l] = suns.get<TransformComponent, DirectionalLightComponent>(*it);

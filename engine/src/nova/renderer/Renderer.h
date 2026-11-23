@@ -103,6 +103,8 @@ struct RenderScene {
     /// @brief Size of the circular world per axis (m), 0 = not circular. Scene::buildRenderScene sets
     ///        it; it matters to the NOVA_WRAP_RENDER_MODES options (RenderSettings::wrapShift).
     glm::vec3 wrapSize{0.0f};
+    /// @brief Where the world's center (0, 0, 0) is, from the camera, the shortest way (WrapCrop::World).
+    glm::vec3 worldCenter{0.0f};
 
     /// @brief Empties the lists, keeping their capacity.
     void clear() {
@@ -148,6 +150,13 @@ enum class WrapShift : u32 {
     Triangle = 0, ///< Each triangle goes to the lap its centroid is in: the object shows on both sides of the seam (the cut follows its edges).
     Object,       ///< The whole object stays at the copy nearest the camera (its origin decides).
     Split,        ///< Drawn twice (or more, at corners), each copy clipped exactly at the seam (needs DeviceCaps::clipDistance).
+    Crop,         ///< Drawn once, clipped at the edges of one lap; what is beyond is not drawn (RenderSettings::wrapCrop; needs DeviceCaps::clipDistance).
+};
+
+/// @brief Which lap WrapShift::Crop keeps.
+enum class WrapCrop : u32 {
+    World,  ///< The world's own lap, fixed (from −L/2 to +L/2 on each circular axis): a diorama, cut at the seams.
+    Camera, ///< The lap around the camera: the cut is half a lap from it and moves with it.
 };
 
 /// @brief Runtime-tweakable rendering options (Renderer::settings()).
@@ -174,6 +183,8 @@ struct RenderSettings {
     /// @brief The axes wrapRepeat repeats on (X and Z by default: a world circular on Y too is not
     ///        stacked floor over floor, which would also shade the floor with the one above).
     glm::bvec3 wrapRepeatAxes{true, false, true};
+    /// @brief WrapShift::Crop: the lap it keeps (no further laps are drawn when cropping).
+    WrapCrop wrapCrop = WrapCrop::World;
 #endif
 };
 
@@ -387,6 +398,9 @@ private:
     std::unordered_map<u32, VersionedPipeline> m_postPipelines;     // key: ShaderHandle::id
     std::unordered_map<u32, VersionedPipeline> m_computePipelines;  // key: ShaderHandle::id
     void expandDraws(const RenderScene& scene, const glm::mat4& viewProj);
+#if NOVA_WRAP_RENDER_MODES
+    WrapShift wrapMode() const;
+#endif
     std::vector<WrapInstance> m_instances;                          // this frame's instances (WrapInstances.h), reused
     std::vector<std::pair<u64, u32>> m_drawOrder;                   // (pipeline key, instance index), reused
     DebugDraw m_debugDraw;

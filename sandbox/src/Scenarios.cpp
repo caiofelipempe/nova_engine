@@ -633,8 +633,15 @@ void wrapControls() {
 #if NOVA_WRAP_RENDER_MODES
     RenderSettings& rs = Application::get().renderer().settings();
     int mode = static_cast<int>(rs.wrapShift);
-    const char* modes[] = {"Per triangle", "Per object", "Split at the seam"};
-    if (ImGui::Combo("Across a seam", &mode, modes, 3)) rs.wrapShift = static_cast<WrapShift>(mode);
+    const char* modes[] = {"Per triangle", "Per object", "Split at the seam", "Crop (one lap, the rest not drawn)"};
+    if (ImGui::Combo("Across a seam", &mode, modes, 4)) rs.wrapShift = static_cast<WrapShift>(mode);
+    if (rs.wrapShift == WrapShift::Crop) {
+        int crop = static_cast<int>(rs.wrapCrop);
+        ImGui::RadioButton("The world's lap (fixed: a diorama)", &crop, static_cast<int>(WrapCrop::World));
+        ImGui::SameLine();
+        ImGui::RadioButton("Around the camera", &crop, static_cast<int>(WrapCrop::Camera));
+        rs.wrapCrop = static_cast<WrapCrop>(crop);
+    }
     int laps = static_cast<int>(rs.wrapRepeat);
     if (ImGui::SliderInt("Laps around", &laps, 0, 6)) rs.wrapRepeat = static_cast<u32>(laps);
     ImGui::TextUnformatted("Laps on:");

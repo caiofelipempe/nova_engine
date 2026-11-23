@@ -37,6 +37,20 @@ void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLoo
             out.push_back({i, glm::vec3(0.0f), glm::vec3(0.0f), false});
             continue;
         }
+        if (options.mode == WrapShift::Crop) {
+            // Once, clipped at the edges of one lap by the vertex shader. Around the camera: as it
+            // is. The world's lap: each object at its copy whose origin is in that lap (where its
+            // transform says), cut where it sticks out past a seam.
+            glm::vec3 offset(0.0f), cell(0.0f);
+            if (options.crop == WrapCrop::World)
+                for (int a = 0; a < 3; ++a) {
+                    if (size[a] <= 0.0f) continue;
+                    cell[a] = options.worldCenter[a];
+                    offset[a] = -std::floor((d.transform[3][a] - cell[a]) / size[a] + 0.5f) * size[a];
+                }
+            out.push_back({i, offset, cell, false});
+            continue;
+        }
         const glm::vec3 center(d.transform * glm::vec4(b->center(), 1.0f));
         const f32 scale = std::max({glm::length(glm::vec3(d.transform[0])), glm::length(glm::vec3(d.transform[1])),
                                     glm::length(glm::vec3(d.transform[2]))});
@@ -73,7 +87,7 @@ void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLoo
                         }
                         if (!ok) continue;
                         if (out.size() >= options.maxInstances) return;
-                        out.push_back({i, offset, cell, false});
+                        out.push_back({i, offset, cell, false, true});
                     }
                 }
     }

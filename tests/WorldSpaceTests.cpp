@@ -270,7 +270,22 @@ void wrapInstances() {
     CHECK(out.size() == 1 + 2 + 4);
     CHECK(out[1].offset == glm::vec3(0.0f) && out[2].offset == glm::vec3(-48.0f, 0.0f, 0.0f) && out[2].cell == glm::vec3(0.0f));
     bool corner = out[6].offset == glm::vec3(-48.0f, 0.0f, 48.0f);
-    CHECK(corner);
+    CHECK(corner && out[2].splitCopy && !out[1].splitCopy);
+    // Crop around the camera: each object once, as it is (the shader clips it at the camera's lap).
+    o.mode = WrapShift::Crop;
+    o.crop = WrapCrop::Camera;
+    expandWrapInstances(draws, lookup, viewProj, o, out);
+    bool asIs = out.size() == 3;
+    for (const WrapInstance& w : out) asIs &= w.offset == glm::vec3(0.0f) && w.cell == glm::vec3(0.0f) && !w.splitCopy;
+    CHECK(asIs);
+    // Crop to the world's lap (a diorama): with the camera at x = +20 m the world's center is 20 m
+    // behind it. An object drawn 8 m ahead (world x = 28 m ≡ −20 m) goes to its copy in the
+    // world's lap, 40 m behind; one 10 m behind the camera is in it already.
+    o.crop = WrapCrop::World;
+    o.worldCenter = {-20.0f, 0.0f, 0.0f};
+    expandWrapInstances({at({8, 0, -5}), at({-10, 0, -5})}, lookup, viewProj, o, out);
+    CHECK(out.size() == 2 && out[0].offset == glm::vec3(-48.0f, 0.0f, 0.0f) && out[1].offset == glm::vec3(0.0f));
+    CHECK(out[0].cell == glm::vec3(-20.0f, 0.0f, 0.0f) && out[1].cell == out[0].cell);
     // Not circular: nothing changes, whatever the mode.
     WrapOptions flat = o;
     flat.size = glm::vec3(0.0f);

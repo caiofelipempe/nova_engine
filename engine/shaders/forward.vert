@@ -12,6 +12,7 @@ layout(location = 2) out vec2 vUV;
 #define NOVA_WRAP_TRIANGLE 0u
 #define NOVA_WRAP_OBJECT 1u
 #define NOVA_WRAP_SPLIT 2u
+#define NOVA_WRAP_CROP 3u
 
 out gl_PerVertex {
     vec4 gl_Position;
@@ -49,9 +50,10 @@ void main() {
         v = pc.vertices.items[gl_VertexIndex];
         world = inst.model * vec4(v.position, 1.0);
     }
-    // Split: every copy is cut at the edges of its lap (the planes half a lap from its center).
+    // Split and crop: every copy is cut at the edges of its lap (the planes half a lap from its center).
+    const bool clipped = mode == NOVA_WRAP_SPLIT || mode == NOVA_WRAP_CROP;
     for (int i = 0; i < 3; ++i)
-        gl_ClipDistance[i] = (mode == NOVA_WRAP_SPLIT && size[i] > 0.0) ? size[i] * 0.5 - abs(world[i] - cell[i]) : 1.0;
+        gl_ClipDistance[i] = (clipped && size[i] > 0.0) ? size[i] * 0.5 - abs(world[i] - cell[i]) : 1.0;
 #else
     Vertex v = pc.vertices.items[gl_VertexIndex]; // vertex pulling through a buffer address
     vec4 world = inst.model * vec4(v.position, 1.0);

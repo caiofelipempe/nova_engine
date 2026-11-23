@@ -535,7 +535,16 @@ Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Ba
   - **`Object`**: o comportamento sem a opção.
   - **`Split`**: o objeto é desenhado também na cópia a uma volta (quatro cópias num canto), e cada
     cópia é recortada exatamente na emenda com `gl_ClipDistance`. Sem o recurso `shaderClipDistance`,
-    o modo cai para `Triangle`. O TLAS recebe as cópias.
+    o modo cai para `Triangle`. O TLAS recebe só o objeto inteiro, uma vez (sem as cópias).
+  - **`Crop`**: o objeto é desenhado uma vez, recortado nas bordas de uma volta só; o que passa dela
+    não é desenhado. `RenderSettings::wrapCrop` escolhe a volta:
+    - **`World`** (padrão): a volta do próprio mundo, fixa (de −L/2 a +L/2 em cada eixo circular).
+      Cada objeto vai para a cópia cuja origem está nela (onde o transform diz), e o que sobra além
+      de uma emenda é cortado. O mundo aparece como uma maquete, parada no lugar.
+    - **`Camera`**: a volta em volta da câmera; o corte fica a meia volta dela e anda com ela.
+    No `Crop` não há voltas extras. Sem `shaderClipDistance`, o modo cai para `Object`. Limites: as
+    partes cortadas continuam fazendo sombra por ray tracing (o TLAS vê o objeto inteiro), e o corte
+    mostra o objeto oco (sem tampa).
 - `RenderSettings::wrapRepeat` desenha mais `n` voltas de cada lado, nos eixos circulares e com
   frustum culling por cópia. Um mundo pequeno se repete até o horizonte.
 - `RenderSettings::wrapRepeatAxes` escolhe, eixo por eixo, onde as voltas extras se repetem. O
@@ -562,6 +571,6 @@ Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Ba
   dela) cai na própria emenda: a parte próxima termina num corte limpo e a outra é desenhada uma
   volta adiante. Voando com a câmera, o corte desliza pelos objetos, e o painel mostra onde ele
   está. No painel (com a opção ligada) escolhem-se o modo e as voltas em volta. Pela linha de
-  comando: `Sandbox --scenario "Tiny circular world" --wrap split|object|triangle --laps N`.
+  comando: `Sandbox --scenario "Tiny circular world" --wrap split|object|triangle|crop|crop-camera --laps N`. O painel também tem o `Crop`, com a escolha entre a volta do mundo e a da câmera.
 - Editor (*Game/Scenarios*): Small World (Wrap-around), Torus Seam e Tiny World (48 m). Os três
   rodam sem tela nos `ScenarioTests` (o minúsculo duas vezes, comparando o hash).
