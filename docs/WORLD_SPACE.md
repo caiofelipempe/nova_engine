@@ -510,8 +510,13 @@ Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Ba
   através da emenda**.
 - **Corpos fantasma:** a janela `float` tem uma emenda própria, a meia volta da origem. Num mundo
   pequeno ela cai no meio da ação. Por isso, nos eixos de até 2048 m, os corpos estáticos ganham
-  cópias a ±L, para o chão e as paredes existirem dos dois lados dela. Elas acompanham recentrar,
-  teleporte e propriedades, e não contam em `physicsBodyCount()`.
+  cópias a ±L, para o chão e as paredes existirem dos dois lados dela. As cópias fazem parte da
+  forma do próprio corpo (uma forma composta), não são corpos à parte: algo que rola de uma cópia
+  para a próxima continua no mesmo corpo, onde o Jolt remove as quinas internas. Com corpos
+  separados, uma bola a 9 m/s era jogada para cima a 2,3 m/s na junta; agora sobe 0,06 m/s.
+  A forma é refeita quando o tamanho do mundo ou a rotação do corpo mudam.
+- **Chão nos cenários:** um único corpo de chão por cenário (os ladrilhos são só desenho). Um
+  colisor por ladrilho dá a mesma batida em cada junta.
 - **Limite:** dois corpos dinâmicos de lados opostos da emenda da janela não colidem entre si. Com
   o foco perto da ação, essa emenda fica a meio mundo dela. Um corpo maior que L/2 pode encostar na
   própria cópia.
