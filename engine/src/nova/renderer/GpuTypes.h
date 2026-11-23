@@ -38,13 +38,14 @@ struct FrameData {
     glm::vec4 skyHorizon;    ///< rgb = horizon color.
     glm::vec4 groundColor;   ///< rgb = ground color.
     glm::vec4 originTiled;   ///< xyz = frame origin (camera) modulo kWorldTile, w = kWorldTile.
+    glm::vec4 wrapSize;      ///< xyz = size of the circular world per axis (m), w = WrapShift (NOVA_WRAP_RENDER_MODES builds).
     u32 pointLightCount;     ///< Number of valid entries in pointLights.
     u32 flags;               ///< kFrameFlag* bits.
     f32 shadowBias;          ///< Shadow ray origin offset along the normal.
     f32 _pad0;               ///< Padding (std430).
     PointLight pointLights[kMaxPointLights]; ///< Point lights.
 };
-static_assert(sizeof(FrameData) == 256 + 7 * 16 + 16 + kMaxPointLights * 32);
+static_assert(sizeof(FrameData) == 256 + 8 * 16 + 16 + kMaxPointLights * 32);
 
 /// @brief Per-draw instance data, indexed by DrawPush::instanceIndex.
 struct InstanceData {
@@ -54,7 +55,7 @@ struct InstanceData {
     glm::vec4 emissive;     ///< rgb = emissive color, w = strength.
     glm::vec4 params;       ///< x = metallic, y = roughness, z = material flags (uint bits), w = base color texture index (-1 = none).
     glm::vec4 custom;       ///< Material::customParams.
-    glm::vec4 extra;        ///< x = Material::customTexture index (-1 = none); yzw reserved.
+    glm::vec4 extra;        ///< x = Material::customTexture index (-1 = none); yzw = center of the lap this copy is drawn in (camera-relative m).
 };
 static_assert(sizeof(InstanceData) == 208);
 
@@ -66,6 +67,7 @@ struct DrawPush {
     u64 tlas;          ///< TLAS address for ray queries (0 = no ray tracing).
     u32 instanceIndex; ///< Index into `instances`.
     u32 debugView;     ///< DebugView value.
+    u64 indices;       ///< 0: an indexed draw. Otherwise the mesh's index buffer, pulled by the vertex shader (per-triangle wrap).
 };
 
 /// @brief Push constants of the sky pass.

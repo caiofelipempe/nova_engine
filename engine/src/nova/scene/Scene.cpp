@@ -126,6 +126,7 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
     activateWorld();
     out.clear();
     out.time = static_cast<f32>(m_time.secondsInCycle(kShaderTimeCycle));
+    out.wrapSize = glm::vec3(m_worldSize.sizes());
 
     bool hasCamera = false;
     if (cameraOverride) {

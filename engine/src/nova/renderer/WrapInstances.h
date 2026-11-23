@@ -1,0 +1,44 @@
+#pragma once
+
+/// @file
+/// @brief The mesh instances a frame draws in the circular world: copies across a seam and in
+///        further laps (see WrapShift, RenderSettings::wrapRepeat).
+
+#include "nova/renderer/Renderer.h"
+
+#include <functional>
+#include <vector>
+
+namespace nova {
+
+/// @brief One mesh instance as drawn: DrawItem `draw` moved by `offset` (whole laps of the world),
+///        in the lap centered at `cell` (camera-relative meters; zero for the camera's own lap).
+struct WrapInstance {
+    u32 draw = 0;              ///< Index into RenderScene::draws.
+    glm::vec3 offset{0.0f};    ///< Added to the draw's translation.
+    glm::vec3 cell{0.0f};      ///< Center of the lap the copy belongs to (the shader wraps / clips around it).
+    bool triangles = false;    ///< The per-triangle path (WrapShift::Triangle across a seam).
+};
+
+/// @brief How expandWrapInstances() copies the draws.
+struct WrapOptions {
+    glm::vec3 size{0.0f};               ///< World size per axis (m); 0 = not circular.
+    WrapShift mode = WrapShift::Object; ///< Across a seam: per triangle, the whole object, or split.
+    u32 repeat = 0;                     ///< Further laps on each side (circular axes), frustum culled.
+    u32 maxInstances = 16384;           ///< Stop there.
+};
+
+/// @brief Bounds of a mesh (nullptr: not drawable, skipped).
+using MeshBoundsLookup = std::function<const Bounds*(MeshHandle)>;
+
+/// @brief The instances to draw for `draws` (each already at its copy nearest the camera, by its
+///        origin). With WrapShift::Object and no repeat, exactly one instance per drawable draw.
+///        Otherwise, for objects whose bounding sphere crosses an edge of the camera's lap:
+///        Triangle marks the instance for the per-triangle path, Split adds the copies one lap over
+///        on the crossed axes (each clipped at the seam by the shader); `repeat` adds every object
+///        again in the laps around, the ones outside the view frustum culled.
+/// @param viewProj Camera-relative view-projection (depth 0..1), for culling the further laps.
+void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLookup& bounds,
+                         const glm::mat4& viewProj, const WrapOptions& options, std::vector<WrapInstance>& out);
+
+} // namespace nova

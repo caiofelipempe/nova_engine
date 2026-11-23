@@ -31,6 +31,11 @@ option(NOVA_SHARED           "Build Nova::Engine and Nova::Editor as shared libr
 # Runtime GLSL -> SPIR-V compilation (shaderc from the Vulkan SDK). Turn off for final builds that
 # ship only precompiled shaders (nova_add_game_shaders): no compiler inside the game.
 option(NOVA_SHADER_COMPILER  "Compile game shaders at runtime (shaderc), with hot reload" ON)
+# Objects across a seam of the circular world. ON: RenderSettings::wrapShift chooses how geometry is
+# placed around the camera (per triangle by default, per object, or split exactly at the seam) and
+# RenderSettings::wrapRepeat draws further laps of the world. OFF: each object at its copy nearest the
+# camera, with no extra shader code.
+option(NOVA_WRAP_RENDER_MODES "Choose how objects across the world seam are drawn (triangle / object / split)" OFF)
 
 if(NOT NOVA_RHI_VULKAN)
     message(FATAL_ERROR "At least one RHI backend is required (only Vulkan is implemented).")

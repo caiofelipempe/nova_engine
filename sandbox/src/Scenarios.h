@@ -14,6 +14,7 @@ struct BenchMeshes {
     nova::MeshHandle cube, sphere, plane;
     nova::MeshHandle capsule, cylinder, gem, terrain;
     nova::MeshHandle player; ///< The character's capsule, feet at the origin (radius 0.3, 1.8 m tall).
+    nova::MeshHandle grid;   ///< A 1 m plane of 32 × 32 quads (small triangles: per-triangle wrap).
 };
 
 /// Where the camera starts in a scenario.

@@ -65,7 +65,8 @@ public:
         m_meshes = {r.cube(), r.sphere(), r.plane(),
                     r.createMesh(shapes::capsule(), "Capsule"), r.createMesh(shapes::cylinder(), "Cylinder"),
                     r.createMesh(shapes::gem(), "Gem"), r.createMesh(shapes::terrain(), "Terrain"),
-                    r.createMesh(shapes::capsule(0.3f, 0.6f, 0.9f), "Player capsule")};
+                    r.createMesh(shapes::capsule(0.3f, 0.6f, 0.9f), "Player capsule"),
+                    r.createMesh(nova::MeshData::plane(1.0f, 32), "Grid")};
         load(0, false); // GameLayer starts the simulation after onStart()
         if (s_selfCheck) {
             // `Sandbox --check`: every scenario, two hidden runs each; then quit (exit code 1 on divergence).

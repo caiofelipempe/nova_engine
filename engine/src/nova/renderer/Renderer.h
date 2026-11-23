@@ -100,6 +100,9 @@ struct RenderScene {
     std::vector<PointLightData> pointLights; ///< Point lights (the first 16 are used).
     std::vector<DrawItem> draws;             ///< Mesh instances.
     f32 time = 0.0f;                         ///< Scene time in seconds within a 1-hour cycle (shaders: `nova_time()`).
+    /// @brief Size of the circular world per axis (m), 0 = not circular. Scene::buildRenderScene sets
+    ///        it; it matters to the NOVA_WRAP_RENDER_MODES options (RenderSettings::wrapShift).
+    glm::vec3 wrapSize{0.0f};
 
     /// @brief Empties the lists, keeping their capacity.
     void clear() {
@@ -138,6 +141,15 @@ struct PostProcessDesc {
     bool enabled = true;     ///< Skip the pass when false.
 };
 
+/// @brief How an object across a seam of the circular world is drawn (RenderSettings::wrapShift,
+///        only in builds with the CMake option NOVA_WRAP_RENDER_MODES). Every object is first placed
+///        at its copy nearest the camera, by its origin.
+enum class WrapShift : u32 {
+    Triangle = 0, ///< Each triangle goes to the lap its centroid is in: the object shows on both sides of the seam (the cut follows its edges).
+    Object,       ///< The whole object stays at the copy nearest the camera (its origin decides).
+    Split,        ///< Drawn twice (or more, at corners), each copy clipped exactly at the seam (needs DeviceCaps::clipDistance).
+};
+
 /// @brief Runtime-tweakable rendering options (Renderer::settings()).
 struct RenderSettings {
     bool rayTracedShadows = true;                ///< Ray-query shadows; ignored when the GPU lacks ray queries.
@@ -152,7 +164,17 @@ struct RenderSettings {
     glm::vec3 groundColor{0.28f, 0.25f, 0.22f};  ///< Color below the horizon (also the ambient's lower color).
     /// @brief Post-process passes, run in order on the HDR image before exposure and tonemapping.
     std::vector<PostProcessDesc> postProcess;
+#if NOVA_WRAP_RENDER_MODES
+    /// @brief How objects across a seam of the circular world are drawn.
+    WrapShift wrapShift = WrapShift::Triangle;
+    /// @brief Laps of the world drawn on each side of the camera's, on the circular axes smaller
+    ///        than the view (0 = only the camera's lap). Each lap is a copy of every object (frustum
+    ///        culled): small worlds repeat up to the horizon.
+    u32 wrapRepeat = 0;
+#endif
 };
+
+struct WrapInstance; // WrapInstances.h
 
 /// @brief Counters of the last completed frame.
 struct RenderStats {
@@ -160,6 +182,7 @@ struct RenderStats {
     u32 instances = 0;     ///< Mesh instances submitted.
     u64 triangles = 0;     ///< Triangles drawn.
     u32 tlasInstances = 0; ///< Instances in the ray tracing scene.
+    u32 wrapCopies = 0;    ///< Extra instances drawn for the circular world (seams, further laps).
     u32 postProcessPasses = 0; ///< Post-process passes run.
 };
 
@@ -360,7 +383,9 @@ private:
     std::unordered_map<u32, MaterialPipelines> m_materialPipelines; // key: ShaderHandle::id
     std::unordered_map<u32, VersionedPipeline> m_postPipelines;     // key: ShaderHandle::id
     std::unordered_map<u32, VersionedPipeline> m_computePipelines;  // key: ShaderHandle::id
-    std::vector<std::pair<u64, u32>> m_drawOrder;                   // (pipeline key, draw index), reused
+    void expandDraws(const RenderScene& scene, const glm::mat4& viewProj);
+    std::vector<WrapInstance> m_instances;                          // this frame's instances (WrapInstances.h), reused
+    std::vector<std::pair<u64, u32>> m_drawOrder;                   // (pipeline key, instance index), reused
     DebugDraw m_debugDraw;
 
     static constexpr u64 kFrameBufferSize = 16ull << 20;

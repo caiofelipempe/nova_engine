@@ -291,6 +291,7 @@ struct DeviceCaps {
     bool rayQuery = false;               ///< Inline ray tracing from any shader stage (hybrid rendering).
     bool rayTracingPipeline = false;     ///< Dedicated ray tracing pipelines (raygen/miss/hit).
     bool wireframe = false;              ///< PolygonMode::Line supported.
+    bool clipDistance = false;           ///< Vertex shaders can write gl_ClipDistance.
     u32 framesInFlight = 2;              ///< Frames the CPU may record ahead of the GPU.
     u32 maxBindlessTextures = 0;         ///< Size of the bindless sampled-texture array.
     u32 maxPushConstantSize = 128;       ///< Push constant bytes available to every stage.

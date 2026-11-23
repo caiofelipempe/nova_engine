@@ -34,6 +34,7 @@ struct FrameData {
     vec4 skyHorizon;
     vec4 groundColor;
     vec4 originTiled;   // xyz = frame origin modulo NOVA_WORLD_TILE, w = NOVA_WORLD_TILE
+    vec4 wrapSize;      // xyz = size of the circular world per axis (m), w = wrap mode (NOVA_WRAP_RENDER_MODES)
     uint pointLightCount;
     uint flags;
     float shadowBias;
@@ -48,7 +49,7 @@ struct InstanceData {
     vec4 emissive;  // rgb, w = strength
     vec4 params;    // x metallic, y roughness, z flags (as float bits), w baseColor texture (bindless, < 0 = none)
     vec4 custom;    // Material::customParams (free for game material shaders)
-    vec4 extra;     // x = Material::customTexture (bindless, < 0 = none), yzw reserved
+    vec4 extra;     // x = Material::customTexture (bindless, < 0 = none), yzw = center of the lap of this copy
 };
 
 struct Vertex {
@@ -61,6 +62,7 @@ struct Vertex {
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer FrameBuffer { FrameData data; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer InstanceBuffer { InstanceData items[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer VertexBuffer { Vertex items[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer IndexBuffer { uint items[]; };
 
 // Bindless resources (set 0). See rhi/vulkan/VulkanCommon.h.
 layout(set = 0, binding = 0) uniform sampler2D g_textures[];

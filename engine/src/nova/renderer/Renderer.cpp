@@ -3,6 +3,7 @@
 #include "nova/core/Log.h"
 #include "nova/platform/FileSystem.h"
 #include "nova/renderer/GpuTypes.h"
+#include "nova/renderer/WrapInstances.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -407,6 +408,25 @@ void Renderer::renderToBackbuffer(CommandList& cmd, const RenderScene& scene) {
     renderInternal(cmd, scene, *m_backbufferView, m_device.backbuffer());
 }
 
+// ------------------------------------------------------------- instances --
+// The draws as instances (WrapInstances.h). Builds with NOVA_WRAP_RENDER_MODES choose how objects
+// across a seam of the circular world are drawn and how many laps around; otherwise each object
+// is drawn once, at its copy nearest the camera.
+void Renderer::expandDraws(const RenderScene& scene, const glm::mat4& viewProj) {
+    WrapOptions options;
+    options.size = scene.wrapSize;
+    options.maxInstances = kMaxInstances;
+#if NOVA_WRAP_RENDER_MODES
+    options.mode = m_settings.wrapShift;
+    if (options.mode == WrapShift::Split && !m_device.caps().clipDistance) options.mode = WrapShift::Triangle;
+    options.repeat = m_settings.wrapRepeat;
+#endif
+    auto bounds = [this](MeshHandle h) -> const Bounds* {
+        return h.id < m_meshes.size() && m_meshes[h.id].alive ? &m_meshes[h.id].bounds : nullptr;
+    };
+    expandWrapInstances(scene.draws, bounds, viewProj, options, m_instances);
+}
+
 void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, RenderView& view, TextureHandle output) {
     const TextureHandle hdr = view.m_hdr;
     const TextureHandle depth = view.m_depth;
@@ -414,8 +434,10 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     const RenderSettings& s = m_settings;
 
     // ---- per-frame constants
+    const glm::mat4 viewProj = scene.camera.projection * scene.camera.view;
+    expandDraws(scene, viewProj);
+    const u32 drawCount = static_cast<u32>(m_instances.size());
     auto frameAlloc = allocate(sizeof(gpu::FrameData));
-    const u32 drawCount = std::min<u32>(static_cast<u32>(scene.draws.size()), kMaxInstances);
     auto instAlloc = allocate(std::max<u64>(1, drawCount) * sizeof(gpu::InstanceData));
     if (!frameAlloc.cpu || !instAlloc.cpu) {
         NOVA_CORE_ERROR("Renderer: per-frame upload buffer exhausted");
@@ -427,7 +449,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     auto& fd = *static_cast<gpu::FrameData*>(frameAlloc.cpu);
     fd.view = scene.camera.view;
     fd.proj = scene.camera.projection;
-    fd.viewProj = fd.proj * fd.view;
+    fd.viewProj = viewProj;
     fd.invViewProj = glm::inverse(fd.viewProj);
     fd.cameraPos = glm::vec4(scene.camera.position, scene.time);
     fd.sunDirection = glm::vec4(glm::normalize(scene.sun.direction), scene.sun.intensity);
@@ -436,6 +458,13 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     fd.skyHorizon = glm::vec4(s.skyHorizon, 0.0f);
     fd.groundColor = glm::vec4(s.groundColor, 0.0f);
     fd.originTiled = glm::vec4(tiledOrigin(scene.camera.origin), gpu::kWorldTile);
+#if NOVA_WRAP_RENDER_MODES
+    const WrapShift wrapMode =
+        s.wrapShift == WrapShift::Split && !m_device.caps().clipDistance ? WrapShift::Triangle : s.wrapShift;
+    fd.wrapSize = glm::vec4(scene.wrapSize, static_cast<f32>(wrapMode));
+#else
+    fd.wrapSize = glm::vec4(scene.wrapSize, 0.0f);
+#endif
     m_lastOrigin = scene.camera.origin;
     fd.pointLightCount = std::min<u32>(static_cast<u32>(scene.pointLights.size()), gpu::kMaxPointLights);
     fd.flags = useRt ? gpu::kFrameFlagRtShadows : 0u;
@@ -455,9 +484,12 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     }
     u32 tlasCount = 0;
     for (u32 i = 0; i < drawCount; ++i) {
-        const DrawItem& d = scene.draws[i];
+        const WrapInstance& di = m_instances[i];
+        const DrawItem& d = scene.draws[di.draw];
         gpu::InstanceData& inst = instances[i];
-        inst.model = d.transform;
+        glm::mat4 model = d.transform;
+        model[3] += glm::vec4(di.offset, 0.0f); // a copy in another lap: whole laps over
+        inst.model = model;
         inst.normalMatrix = glm::transpose(glm::inverse(d.transform));
         inst.baseColor = d.material.baseColor;
         inst.emissive = glm::vec4(d.material.emissive, d.material.emissiveStrength);
@@ -469,12 +501,11 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
                                 tex == ~0u ? -1.0f : static_cast<f32>(tex));
         inst.custom = d.material.customParams;
         const u32 customTex = d.material.customTexture ? m_device.bindlessIndex(d.material.customTexture) : ~0u;
-        inst.extra = glm::vec4(customTex == ~0u ? -1.0f : static_cast<f32>(customTex), 0.0f, 0.0f, 0.0f);
+        inst.extra = glm::vec4(customTex == ~0u ? -1.0f : static_cast<f32>(customTex), di.cell);
 
-        if (tlasRecords && d.castShadows && d.mesh.id < m_meshes.size() && m_meshes[d.mesh.id].alive &&
-            m_meshes[d.mesh.id].blas) {
+        if (tlasRecords && d.castShadows && m_meshes[d.mesh.id].blas) {
             AccelStructInstance& r = tlasRecords[tlasCount++];
-            toInstanceTransform(d.transform, r.transform);
+            toInstanceTransform(model, r.transform);
             r.instanceCustomIndex = i;
             r.mask = 0xFF;
             r.sbtRecordOffset = 0;
@@ -514,8 +545,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     // A material whose shader is not ready (first compile failed) falls back to the default.
     m_drawOrder.clear();
     for (u32 i = 0; i < drawCount; ++i) {
-        const DrawItem& d = scene.draws[i];
-        if (d.mesh.id >= m_meshes.size() || !m_meshes[d.mesh.id].alive) continue;
+        const DrawItem& d = scene.draws[m_instances[i].draw]; // meshes checked by expandDraws
         u64 key = 0;
         if (d.material.shader && !wireframe)
             if (PipelineHandle custom = materialPipeline(d.material.shader, useRt)) key = custom.key();
@@ -532,7 +562,8 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     BufferHandle boundIndex{};
     u64 boundPipeline = ~0ull;
     for (const auto& [pipelineKey, i] : m_drawOrder) {
-        const DrawItem& d = scene.draws[i];
+        const WrapInstance& di = m_instances[i];
+        const DrawItem& d = scene.draws[di.draw];
         if (pipelineKey != boundPipeline) {
             cmd.bindPipeline(pipelineKey == 0 ? defaultPipeline : materialPipeline(d.material.shader, useRt));
             boundPipeline = pipelineKey;
@@ -544,12 +575,19 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         }
         push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
         push.instanceIndex = i;
+        push.indices = di.triangles ? m_device.deviceAddress(mesh.indexBuffer) : 0; // per-triangle wrap: non-indexed
         cmd.pushConstants(push);
-        cmd.drawIndexed(mesh.indexCount);
+        if (di.triangles) cmd.draw(mesh.indexCount);
+        else cmd.drawIndexed(mesh.indexCount);
         ++m_stats.drawCalls;
         m_stats.triangles += mesh.indexCount / 3;
     }
     m_stats.instances += drawCount;
+    {
+        u32 sources = 0, last = ~0u;
+        for (const WrapInstance& di : m_instances) sources += di.draw != last, last = di.draw;
+        m_stats.wrapCopies += drawCount - sources;
+    }
     cmd.endRendering();
     cmd.endDebugLabel();
 

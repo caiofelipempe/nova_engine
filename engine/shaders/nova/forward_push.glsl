@@ -10,6 +10,7 @@ layout(push_constant) uniform DrawPush {
     uint64_t tlas;        // top-level acceleration structure address (0 = none)
     uint instanceIndex;
     uint debugView;       // 0 lit, 1 normals, 2 shadows only, 3 albedo
+    IndexBuffer indices;  // 0 = indexed draw; else the mesh's indices (the vertex shader wraps whole triangles)
 } pc;
 
 #endif // NOVA_FORWARD_PUSH_GLSL

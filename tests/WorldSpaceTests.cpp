@@ -2,6 +2,9 @@
 // lap is the integer overflow, shortest differences, 64-bit squared lengths), conversions, metric
 // units, helpers, scenes, files and camera-relative rendering.
 #include <nova/Nova.h>
+#include <nova/renderer/WrapInstances.h>
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <cmath>
 #include <cstdio>
@@ -235,6 +238,62 @@ void worldOrigin() {
     CHECK(t.toLocal(GlobalPosition(-23.0, 0.0, 0.0)) == glm::vec3(1.0f, 0.0f, 0.0f));
 }
 
+void wrapInstances() {
+    // The instances a frame draws in a 48 m circular world (X and Z), camera at the origin looking −Z.
+    const Bounds unit{glm::vec3(-0.5f), glm::vec3(0.5f)}; // a 1 m cube
+    MeshBoundsLookup lookup = [&](MeshHandle h) { return h.id == 1 ? &unit : nullptr; };
+    auto at = [](glm::vec3 p) {
+        DrawItem d;
+        d.mesh = MeshHandle{1};
+        d.transform = glm::translate(glm::mat4(1.0f), p);
+        return d;
+    };
+    std::vector<DrawItem> draws = {at({0, 0, -5}), at({23.8f, 0, -5}), at({23.8f, 0, -23.8f}), at({0, 0, -5})};
+    draws[3].mesh = MeshHandle{7}; // not drawable
+    const CameraData cam = CameraData::relativeLookAt(GlobalPosition(), {0, 0, -1}, 1.2f, 1.0f, 0.1f, 300.0f);
+    const glm::mat4 viewProj = cam.projection * cam.view;
+    WrapOptions o;
+    o.size = {48.0f, 0.0f, 48.0f};
+    std::vector<WrapInstance> out;
+
+    // Per object (the default): one instance per drawable draw, as it is.
+    o.mode = WrapShift::Object;
+    expandWrapInstances(draws, lookup, viewProj, o, out);
+    CHECK(out.size() == 3 && out[0].draw == 0 && out[2].draw == 2 && !out[1].triangles);
+    // Per triangle: the objects across a seam take the per-triangle path; the others do not.
+    o.mode = WrapShift::Triangle;
+    expandWrapInstances(draws, lookup, viewProj, o, out);
+    CHECK(out.size() == 3 && !out[0].triangles && out[1].triangles && out[2].triangles);
+    // Split: across the X seam, a second copy one lap over (−48 m); at the corner, four copies.
+    o.mode = WrapShift::Split;
+    expandWrapInstances(draws, lookup, viewProj, o, out);
+    CHECK(out.size() == 1 + 2 + 4);
+    CHECK(out[1].offset == glm::vec3(0.0f) && out[2].offset == glm::vec3(-48.0f, 0.0f, 0.0f) && out[2].cell == glm::vec3(0.0f));
+    bool corner = out[6].offset == glm::vec3(-48.0f, 0.0f, 48.0f);
+    CHECK(corner);
+    // Not circular: nothing changes, whatever the mode.
+    WrapOptions flat = o;
+    flat.size = glm::vec3(0.0f);
+    flat.repeat = 3;
+    expandWrapInstances(draws, lookup, viewProj, flat, out);
+    CHECK(out.size() == 3);
+
+    // Further laps: every object again in the laps around, only those the camera can see.
+    o.mode = WrapShift::Object;
+    o.repeat = 2;
+    expandWrapInstances({at({0, 0, 0})}, lookup, viewProj, o, out);
+    bool inFront = true, central = false;
+    for (const WrapInstance& w : out) {
+        inFront &= w.offset == w.cell && w.cell.y == 0.0f && (w.cell.z <= 0.0f || (w.cell == glm::vec3(0.0f)));
+        central |= w.cell == glm::vec3(0.0f);
+    }
+    std::printf("  2 laps around: %zu of 25 copies of a cube at the camera are in view\n", out.size());
+    CHECK(central && inFront && out.size() > 3 && out.size() < 25); // the ones behind the camera are culled
+    o.maxInstances = 4;
+    expandWrapInstances({at({0, 0, 0})}, lookup, viewProj, o, out);
+    CHECK(out.size() == 4);
+}
+
 void sceneIntegration() {
     // The transform stores a GlobalPosition; meters assign naturally.
     Scene a("Far");
@@ -460,6 +519,7 @@ int main() {
         {"offsets: 64-bit squared lengths, looping sums", offsets},
         {"world sizes: tiny, default, 1000 km, the largest", worldSizes},
         {"WorldOrigin: grid, hysteresis, exact moves", worldOrigin},
+        {"render instances in a circular world: seams, split, further laps", wrapInstances},
         {"metric units", units},
         {"helpers (lerp, moveTowards, rotateAround)", helpers},
         {"scenes: files, older files, prefabs, relative matrices", sceneIntegration},

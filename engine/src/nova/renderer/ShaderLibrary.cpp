@@ -21,8 +21,9 @@ namespace fsys = std::filesystem;
 
 namespace {
 
-// Bump when the compile options change: invalidates every cached .spv.
-constexpr const char* kCacheVersion = "nova-shader-cache-1";
+// Bump when the compile options or the engine's GLSL layouts (nova/common.glsl) change: invalidates
+// every cached .spv.
+constexpr const char* kCacheVersion = "nova-shader-cache-2"; // 2: FrameData::wrapSize, DrawPush::indices
 
 u64 fnv1a(std::string_view data, u64 h = 1469598103934665603ull) {
     for (unsigned char c : data) {

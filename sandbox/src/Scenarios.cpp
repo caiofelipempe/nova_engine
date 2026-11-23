@@ -579,6 +579,64 @@ View buildEdges(Scene& s, const BenchMeshes& m) {
     return {{0.0, 22.0, 40.0}, {0.0, 0.0, 0.0}};
 }
 
+// A tiny circular world, 48 m on every axis (Y too: what falls below comes in from above), to see
+// the circular world. The floor you see is ONE mesh of 48 × 48 m, placed across the X seam: drawn
+// per object it shows on one side only, per triangle or split (NOVA_WRAP_RENDER_MODES builds) it
+// covers the world; with further laps the world repeats up to the horizon. The floor the bodies
+// stand on are invisible tiles (each one goes to the copy nearest the physics origin).
+constexpr double kTinySize = 48.0;
+
+View buildTiny(Scene& s, const BenchMeshes& m) {
+    s.setWorldSize(WorldSize::cube(kTinySize));
+    sun(s);
+    Entity floor = visual(s, "Floor (one mesh)", m.grid, {12.0, 0.0, 0.0},
+                          {static_cast<float>(kTinySize), 1.0f, static_cast<float>(kTinySize)}, {0.78f, 0.8f, 0.84f, 1});
+    floor.get<MeshComponent>().material.checker = true;
+    tiledFloor(s, m, 6, 8.0f, false, {});
+    // Pillars on both sides of the seams: red just before +X, blue just after it (at −X), yellow
+    // and green on the Z seam. With the world repeating they line up lap after lap.
+    const double e = kTinySize / 2 - 1.0;
+    visual(s, "Pillar +X", m.cube, {e, 2.0, -6.0}, {0.8f, 4.0f, 0.8f}, {0.9f, 0.2f, 0.2f, 1});
+    visual(s, "Pillar -X", m.cube, {-e, 2.0, -6.0}, {0.8f, 4.0f, 0.8f}, {0.2f, 0.4f, 0.95f, 1});
+    visual(s, "Pillar +Z", m.cube, {6.0, 2.0, e}, {0.8f, 4.0f, 0.8f}, {0.95f, 0.85f, 0.2f, 1});
+    visual(s, "Pillar -Z", m.cube, {6.0, 2.0, -e}, {0.8f, 4.0f, 0.8f}, {0.3f, 0.85f, 0.4f, 1});
+    // A long bar across the X seam (one cube, 10 m): per object it jumps from side to side as the
+    // camera moves; per triangle its big faces go whole to one side or the other (the cut follows
+    // its 12 triangles); split cuts it exactly at the seam.
+    visual(s, "Bar across the seam", m.cube, {kTinySize / 2, 0.4, 8.0}, {10.0f, 0.8f, 0.8f}, {0.95f, 0.5f, 0.15f, 1});
+    // A stack of crates right on the Z seam: it stands on tiles of both sides, and its crates
+    // touch across the seam.
+    for (int i = 0; i < 4; ++i) {
+        Entity c = body(s, "Seam crate", m.cube, {-8.0 + (i % 2) * 0.4, 0.5 + i * 1.0, kTinySize / 2}, glm::vec3(1.0f), kWood);
+        c.addScript<EdgeFlash>();
+    }
+    wanderers(s, m, 8, 14.0);
+    return {{0.0, 16.0, 26.0}, {12.0, 0.0, 0.0}};
+}
+
+void statusTiny(Scene& s) {
+    const glm::dvec3 o = s.worldOrigin().toMeters();
+    ImGui::Text("World %.0f m per axis, circular | origin %.1f, %.1f, %.1f", kTinySize, o.x, o.y, o.z);
+    int wraps = 0;
+    for (auto [e, sc] : s.registry().view<ScriptComponent>().each())
+        for (auto& script : sc.scripts)
+            if (auto* f = dynamic_cast<EdgeFlash*>(script.get())) wraps += f->wraps;
+    ImGui::Text("Seams crossed: %d", wraps);
+#if NOVA_WRAP_RENDER_MODES
+    RenderSettings& rs = Application::get().renderer().settings();
+    int mode = static_cast<int>(rs.wrapShift);
+    const char* modes[] = {"Per triangle", "Per object", "Split at the seam"};
+    if (ImGui::Combo("Across a seam", &mode, modes, 3)) rs.wrapShift = static_cast<WrapShift>(mode);
+    int laps = static_cast<int>(rs.wrapRepeat);
+    if (ImGui::SliderInt("Laps around", &laps, 0, 6)) rs.wrapRepeat = static_cast<u32>(laps);
+    const RenderStats& st = Application::get().renderer().stats();
+    ImGui::Text("%u instances, %u of them extra copies", st.instances, st.wrapCopies);
+#else
+    ImGui::TextDisabled("Build with -DNOVA_WRAP_RENDER_MODES=ON (preset windows-vs2022-wrap)");
+    ImGui::TextDisabled("to draw across the seams and repeat the world.");
+#endif
+}
+
 } // namespace
 
 const std::vector<Scenario>& scenarios() {
@@ -602,6 +660,8 @@ const std::vector<Scenario>& scenarios() {
                      nullptr, nullptr, 0.0f, nullptr, false, true});
         v.push_back({"Edges: wrap", "60 x 60 m world that wraps around: balls flash cyan and come in the other side.",
                      buildEdges});
+        v.push_back({"Tiny circular world", "48 m on every axis: one floor mesh across the seam, pillars on both sides, a crate stack on the Z seam.",
+                     buildTiny, nullptr, nullptr, 0.0f, statusTiny});
         return v;
     }();
     return list;
