@@ -353,6 +353,16 @@ Scene::AnimationSource AssetDatabase::animationSource() {
     };
 }
 
+std::vector<std::string> AssetDatabase::animationNames(AssetGuid guid) {
+    std::vector<std::string> names;
+    const AssetRecord* r = find(guid);
+    if (!r || r->type != "Model") return names;
+    const AssetData* data = load(guid);
+    if (const ModelData* model = data ? data->as<ModelData>() : nullptr)
+        for (const auto& clip : model->animations) names.push_back(clip ? clip->name : std::string());
+    return names;
+}
+
 Scene::SkinSource AssetDatabase::skinSource() {
     return [this](const std::string& ref) -> std::shared_ptr<const SkinData> {
         AssetGuid guid = 0;

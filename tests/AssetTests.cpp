@@ -241,6 +241,7 @@ void prefabs() {
     const fs::path root = tempRoot("prefabs");
     AssetDatabase db;
     db.setRoot(root);
+    CHECK(db.animationNames(12345).empty()); // unknown: no clips (the inspector lists none)
 
     Scene scene;
     Entity a = scene.createEntity("Base");
@@ -272,6 +273,7 @@ void prefabs() {
         CHECK(second[1].transform().position == glm::vec3(-4, 2, 0));
         CHECK(first[1].transform().scale == glm::vec3(0.5f));
         CHECK(first[0].has<RotatorComponent>() && first[0].get<RotatorComponent>().speed == 2.5f);
+    CHECK(db.animationNames(*guid).empty()); // a prefab has no clips
         CHECK(first[0].uuid() != second[0].uuid() && first[0].uuid() != a.uuid()); // fresh UUIDs
         CHECK(first[0].get<PrefabInstanceComponent>().asset == *guid);
     }
