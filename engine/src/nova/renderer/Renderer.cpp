@@ -420,6 +420,7 @@ void Renderer::expandDraws(const RenderScene& scene, const glm::mat4& viewProj) 
     options.mode = m_settings.wrapShift;
     if (options.mode == WrapShift::Split && !m_device.caps().clipDistance) options.mode = WrapShift::Triangle;
     options.repeat = m_settings.wrapRepeat;
+    options.repeatAxes = m_settings.wrapRepeatAxes;
 #endif
     auto bounds = [this](MeshHandle h) -> const Bounds* {
         return h.id < m_meshes.size() && m_meshes[h.id].alive ? &m_meshes[h.id].bounds : nullptr;

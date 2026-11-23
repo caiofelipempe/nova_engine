@@ -47,7 +47,7 @@ void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLoo
         for (int a = 0; a < 3; ++a) {
             if (size[a] <= 0.0f) continue;
             across[a] = std::abs(center[a]) + radius > size[a] * 0.5f;
-            laps[a] = repeat;
+            laps[a] = options.repeatAxes[a] ? repeat : 0;
         }
         const bool crosses = glm::any(across);
         // A sphere around a copy and its split parts, for culling the further laps.

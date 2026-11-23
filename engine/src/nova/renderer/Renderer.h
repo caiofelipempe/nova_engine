@@ -171,6 +171,9 @@ struct RenderSettings {
     ///        than the view (0 = only the camera's lap). Each lap is a copy of every object (frustum
     ///        culled): small worlds repeat up to the horizon.
     u32 wrapRepeat = 0;
+    /// @brief The axes wrapRepeat repeats on (X and Z by default: a world circular on Y too is not
+    ///        stacked floor over floor, which would also shade the floor with the one above).
+    glm::bvec3 wrapRepeatAxes{true, false, true};
 #endif
 };
 

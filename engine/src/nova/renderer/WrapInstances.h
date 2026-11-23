@@ -25,6 +25,7 @@ struct WrapOptions {
     glm::vec3 size{0.0f};               ///< World size per axis (m); 0 = not circular.
     WrapShift mode = WrapShift::Object; ///< Across a seam: per triangle, the whole object, or split.
     u32 repeat = 0;                     ///< Further laps on each side (circular axes), frustum culled.
+    glm::bvec3 repeatAxes{true};        ///< The axes `repeat` applies to.
     u32 maxInstances = 16384;           ///< Stop there.
 };
 

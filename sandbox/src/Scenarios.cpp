@@ -637,6 +637,13 @@ void wrapControls() {
     if (ImGui::Combo("Across a seam", &mode, modes, 3)) rs.wrapShift = static_cast<WrapShift>(mode);
     int laps = static_cast<int>(rs.wrapRepeat);
     if (ImGui::SliderInt("Laps around", &laps, 0, 6)) rs.wrapRepeat = static_cast<u32>(laps);
+    ImGui::TextUnformatted("Laps on:");
+    ImGui::SameLine();
+    ImGui::Checkbox("X", &rs.wrapRepeatAxes.x);
+    ImGui::SameLine();
+    ImGui::Checkbox("Y (above and below)", &rs.wrapRepeatAxes.y);
+    ImGui::SameLine();
+    ImGui::Checkbox("Z", &rs.wrapRepeatAxes.z);
     const RenderStats& st = Application::get().renderer().stats();
     ImGui::Text("%u instances, %u of them extra copies", st.instances, st.wrapCopies);
 #else

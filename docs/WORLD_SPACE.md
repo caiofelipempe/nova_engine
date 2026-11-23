@@ -538,6 +538,9 @@ Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Ba
     o modo cai para `Triangle`. O TLAS recebe as cópias.
 - `RenderSettings::wrapRepeat` desenha mais `n` voltas de cada lado, nos eixos circulares e com
   frustum culling por cópia. Um mundo pequeno se repete até o horizonte.
+- `RenderSettings::wrapRepeatAxes` escolhe, eixo por eixo, onde as voltas extras se repetem. O
+  padrão é X e Z: num mundo circular também em Y, repetir Y empilha chão sobre chão, e a cópia de
+  cima faz sombra no de baixo. No Tiny world, o painel tem uma caixa por eixo.
 - A lógica das instâncias fica em `renderer/WrapInstances.h` (`expandWrapInstances`). É o mesmo
   código nos dois builds e tem teste sem GPU.
 - Layouts, nos dois builds: `FrameData::wrapSize`, `DrawPush::indices` e

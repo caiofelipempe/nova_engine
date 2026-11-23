@@ -292,6 +292,23 @@ void wrapInstances() {
     o.maxInstances = 4;
     expandWrapInstances({at({0, 0, 0})}, lookup, viewProj, o, out);
     CHECK(out.size() == 4);
+
+    // A world circular on Y too: the further laps go only on the chosen axes (no floor over floor).
+    o.maxInstances = 16384;
+    o.size = glm::vec3(48.0f);
+    o.repeat = 1;
+    const CameraData up = CameraData::relativeLookAt(GlobalPosition(), {0, 0, -1}, 2.8f, 1.0f, 0.1f, 300.0f); // wide
+    const glm::mat4 upViewProj = up.projection * up.view;
+    o.repeatAxes = {true, false, true};
+    expandWrapInstances({at({0, 0, -5})}, lookup, upViewProj, o, out);
+    bool level = true;
+    for (const WrapInstance& w : out) level &= w.cell.y == 0.0f;
+    CHECK(level && out.size() > 1);
+    o.repeatAxes = glm::bvec3(true);
+    expandWrapInstances({at({0, 0, -5})}, lookup, upViewProj, o, out);
+    bool stacked = false;
+    for (const WrapInstance& w : out) stacked |= w.cell.y != 0.0f;
+    CHECK(stacked);
 }
 
 void sceneIntegration() {
