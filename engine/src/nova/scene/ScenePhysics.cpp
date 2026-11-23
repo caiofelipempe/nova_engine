@@ -19,18 +19,6 @@ namespace {
 u64 toUserData(entt::entity e) { return static_cast<u64>(entt::to_integral(e)); }
 entt::entity fromUserData(u64 v) { return static_cast<entt::entity>(static_cast<entt::id_type>(v)); }
 
-// Barrier walls: the low half is entt::null (no entity), the high half says which edge.
-constexpr u64 kWallTag = 0x4E57ull; // "NW"
-u64 wallUserData(int axis, int side) {
-    return (kWallTag << 48) | (static_cast<u64>(axis * 2 + (side > 0)) << 32) | static_cast<u64>(entt::to_integral(entt::entity{entt::null}));
-}
-bool isWall(u64 userData, WorldEdgeHit& hit) {
-    if ((userData >> 48) != kWallTag) return false;
-    const int code = static_cast<int>((userData >> 32) & 0xFFFF);
-    hit = {code / 2, (code & 1) ? 1 : -1, WorldEdge::Barrier};
-    return true;
-}
-
 // Fixed point → the physics engine's floats.
 template <unsigned F>
 f32 fl(Fixed<F> v) { return toFloat(v); }
@@ -58,6 +46,7 @@ void Scene::setPhysicsSettings(const PhysicsSettings& settings) {
 
 void Scene::startSimulation(Scope<physics::PhysicsWorld> world) {
     if (m_physics || !world) return;
+    activateWorld();
     m_physics = std::move(world);
     m_physics->setGravity(fl(m_physicsSettings.gravity)); // a world made elsewhere follows the scene too
     m_physics->setCollisionLayers(m_physicsSettings.layers);
@@ -66,7 +55,6 @@ void Scene::startSimulation(Scope<physics::PhysicsWorld> world) {
     for (auto e : m_registry.view<RigidBodyComponent>()) createBody(e);
     for (auto e : m_registry.view<JointComponent>()) createJoint(e);
     for (auto e : m_registry.view<CharacterControllerComponent>()) createCharacter(e);
-    buildEdgeWalls();
 }
 
 void Scene::stopSimulation() {
@@ -78,7 +66,6 @@ void Scene::stopSimulation() {
         jc.broken = false; // a new run starts whole
     }
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) rb.body = {};
-    m_edgeWalls.clear();
     m_physics.reset();
     m_geometry.clear();
     m_warnedMeshOnDynamic.clear();
@@ -120,6 +107,7 @@ std::shared_ptr<const physics::ShapeGeometry> Scene::meshGeometry(MeshHandle mes
 }
 
 GlobalPosition Scene::currentFocus() {
+    if (m_fixedOrigin) return WorldOrigin::snapped(*m_fixedOrigin); // the origin stays there
     if (m_hasPhysicsFocus) return m_physicsFocus;
     if (Entity cam = primaryCamera()) return cam.transform().position;
     return {};
@@ -422,7 +410,9 @@ void Scene::readCharacters() {
     for (auto [e, cc, t] : m_registry.view<CharacterControllerComponent, TransformComponent>().each()) {
         if (!cc.character) continue;
         const physics::CharacterState s = m_physics->characterState(cc.character);
+        const GlobalPosition before = t.position;
         t.position = s.position - steps(cc.offset);
+        noteWrap(e, before, t.position);
         cc.appliedPose = positionKey(t.position);
         cc.velocity = s.velocity;
         cc.groundState = s.ground;
@@ -556,6 +546,7 @@ void Scene::syncJoints() {
 }
 
 void Scene::stepPhysics(Duration dt) {
+    activateWorld();
     pushPhysicsFocus(); // the float window follows the focus (the seam of the torus stays away from it)
     syncBodies(); // edits since last frame
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) // gained a rigid body since last frame
@@ -571,7 +562,6 @@ void Scene::stepPhysics(Duration dt) {
             if (rb.type == physics::BodyType::Kinematic && rb.body)
                 m_physics->moveKinematic(rb.body, t.position, fl(t.rotation), fixedTimeStep);
         m_physics->step(fixedTimeStep);
-        if (!m_worldBounds.isNative()) constrainSimulated(); // the world's edges, outside the engine
         m_physicsAccumulator -= fixedTimeStep;
         ++steps;
     }
@@ -582,120 +572,55 @@ void Scene::stepPhysics(Duration dt) {
     for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each()) {
         if (rb.type != physics::BodyType::Dynamic || !rb.body || !m_physics->isActive(rb.body)) continue;
         glm::quat q;
+        const GlobalPosition before = t.position;
         m_physics->getTransform(rb.body, t.position, q);
         t.setRotation(q);
+        noteWrap(e, before, t.position);
     }
 
     readCharacters();
     dispatchContacts();
 }
 
-// ------------------------------------------------------------- world edges --
-// Outside the physics engine: a center past a barrier goes back to it and loses its velocity along
-// that axis; past a wrapped edge (a world smaller than the torus) it moves to the other side.
+// ------------------------------------------------------------------- world --
+// The world is circular on every axis: positions go around it by themselves (GlobalPosition
+// arithmetic on the active WorldSize) and the physics backend sees both sides of a seam as
+// neighbours. What is left here: changing the size, and telling scripts about seams crossed.
 
-void Scene::setWorldBounds(const WorldBounds& bounds) {
-    const WorldBounds b = bounds.valid();
-    if (b == m_worldBounds) return;
-    m_worldBounds = b;
-    if (m_physics) buildEdgeWalls();
+void Scene::setWorldSize(const WorldSize& size) {
+    const bool changed = !(size == m_worldSize);
+    m_worldSize = size;
+    activateWorld();
+    if (!changed) return;
+    for (auto [e, t] : m_registry.view<TransformComponent>().each()) t.position = t.position.rewrapped();
+    if (m_hasPhysicsFocus) m_physicsFocus = m_physicsFocus.rewrapped();
+    if (m_fixedOrigin) m_fixedOrigin = m_fixedOrigin->rewrapped();
+    if (!m_physics) return;
+    pushPhysicsFocus();
+    for (auto [e, rb, t] : m_registry.view<RigidBodyComponent, TransformComponent>().each())
+        if (rb.body) m_physics->setTransform(rb.body, t.position, fl(t.rotation));
+    for (auto [e, cc, t] : m_registry.view<CharacterControllerComponent, TransformComponent>().each())
+        if (cc.character) m_physics->setCharacterTransform(cc.character, t.position + steps(cc.offset), fl(t.rotation));
 }
 
-// Static boxes just outside every barrier edge: thick, spanning the world on the other axes (and
-// kWallReach along axes that are the whole torus).
-void Scene::buildEdgeWalls() {
-    for (physics::BodyId w : m_edgeWalls) m_physics->destroyBody(w);
-    m_edgeWalls.clear();
-    constexpr f64 t = WorldBounds::kWallThickness;
-    for (int axis = 0; axis < 3; ++axis) {
-        if (!m_worldBounds.hasWalls(axis)) continue;
-        glm::vec3 half;
-        for (int i = 0; i < 3; ++i)
-            half[i] = static_cast<f32>(i == axis ? t * 0.5
-                                       : m_worldBounds.isNative(i)
-                                           ? WorldBounds::kWallReach
-                                           : m_worldBounds.axes[static_cast<size_t>(i)].size * 0.5 + t);
-        for (int side : {-1, 1}) {
-            physics::BodyDesc d;
-            d.type = physics::BodyType::Static;
-            d.shape.type = physics::ShapeType::Box;
-            d.shape.halfExtents = half;
-            glm::dvec3 at(0.0);
-            at[axis] = side * (m_worldBounds.axes[static_cast<size_t>(axis)].size * 0.5 + t * 0.5);
-            d.position = GlobalPosition(at.x, at.y, at.z);
-            d.friction = 0.5f;
-            d.restitution = 0.0f; // bodies bounce with their own restitution
-            d.userData = wallUserData(axis, side);
-            if (const physics::BodyId w = m_physics->createBody(d)) m_edgeWalls.push_back(w);
-        }
+// A move that jumped more than half the world on an axis went across its seam.
+void Scene::noteWrap(entt::entity e, const GlobalPosition& before, const GlobalPosition& after) {
+    for (int i = 0; i < 3; ++i) {
+        const i64 jump = after.raw(i) - before.raw(i); // plain, not the shortest way
+        if (jump > m_worldSize.halfSteps(i) || jump < -m_worldSize.halfSteps(i))
+            m_wrapHits.emplace_back(e, WorldWrapHit{i, jump < 0 ? 1 : -1});
     }
 }
 
-void Scene::recordEdgeHits(entt::entity e, u32 changed, const std::array<WorldEdgeHit, 3>& hits) {
-    for (int i = 0; i < 3; ++i)
-        if (changed & (1u << i)) m_edgeHits.emplace_back(e, hits[static_cast<size_t>(i)]);
-}
-
-// Entities whose position is not the physics engine's: no body, static and kinematic bodies, and
-// everything while not simulating.
-void Scene::constrainEntities() {
-    for (auto [e, t] : m_registry.view<TransformComponent>().each()) {
-        const auto* rb = m_registry.try_get<RigidBodyComponent>(e);
-        const auto* cc = m_registry.try_get<CharacterControllerComponent>(e);
-        if (m_physics && ((rb && rb->body && rb->type == physics::BodyType::Dynamic) || (cc && cc->character)))
-            continue; // simulated: constrainSimulated() handles it after each step
-        std::array<WorldEdgeHit, 3> hits;
-        const u32 changed = m_worldBounds.constrain(t.position, &hits);
-        if (!changed) continue;
-        recordEdgeHits(e, changed, hits);
-        // A kinematic body teleports (moving it there would sweep it across the world at once).
-        if (m_physics && rb && rb->body && rb->type == physics::BodyType::Kinematic)
-            m_physics->setTransform(rb->body, t.position, fl(t.rotation));
-    }
-}
-
-// Dynamic bodies and characters, after each physics step.
-void Scene::constrainSimulated() {
-    auto zeroBarrierAxes = [&](glm::vec3 v, u32 changed) {
-        for (int i = 0; i < 3; ++i)
-            if ((changed & (1u << i)) && m_worldBounds.axes[static_cast<size_t>(i)].edge == WorldEdge::Barrier) v[i] = 0.0f;
-        return v;
-    };
-    std::array<WorldEdgeHit, 3> hits;
-    for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) {
-        if (rb.type != physics::BodyType::Dynamic || !rb.body) continue;
-        GlobalPosition p;
-        glm::quat q;
-        m_physics->getTransform(rb.body, p, q);
-        const u32 changed = m_worldBounds.constrain(p, &hits);
-        if (!changed) continue;
-        m_physics->setTransform(rb.body, p, q);
-        m_physics->setLinearVelocity(rb.body, zeroBarrierAxes(m_physics->linearVelocity(rb.body), changed));
-        recordEdgeHits(e, changed, hits);
-    }
-    for (auto [e, cc, t] : m_registry.view<CharacterControllerComponent, TransformComponent>().each()) {
-        if (!cc.character) continue;
-        const physics::CharacterState s = m_physics->characterState(cc.character);
-        GlobalPosition p = s.position; // the capsule center
-        const u32 changed = m_worldBounds.constrain(p, &hits);
-        if (!changed) continue;
-        m_physics->setCharacterTransform(cc.character, p, fl(t.rotation));
-        const glm::vec3 v = zeroBarrierAxes(s.velocity, changed);
-        m_physics->setCharacterVelocity(cc.character, v);
-        cc.velocity = zeroBarrierAxes(fl(cc.velocity), changed);
-        recordEdgeHits(e, changed, hits);
-    }
-}
-
-void Scene::dispatchEdgeHits() {
-    if (m_edgeHits.empty()) return;
-    const auto hits = std::move(m_edgeHits); // scripts may move things again
-    m_edgeHits.clear();
+void Scene::dispatchWrapHits() {
+    if (m_wrapHits.empty()) return;
+    const auto hits = std::move(m_wrapHits); // scripts may move things again
+    m_wrapHits.clear();
     for (const auto& [e, hit] : hits) {
         if (!m_registry.valid(e)) continue;
         if (auto* sc = m_registry.try_get<ScriptComponent>(e))
             for (size_t i = 0; i < sc->scripts.size(); ++i)
-                if (sc->scripts[i]->m_created) sc->scripts[i]->onWorldEdge(hit);
+                if (sc->scripts[i]->m_created) sc->scripts[i]->onWorldWrap(hit);
     }
 }
 
@@ -719,13 +644,6 @@ void Scene::dispatchContacts() {
     }
     for (const physics::ContactEvent& c : m_physics->drainContactEvents()) {
         const bool began = c.type == physics::ContactEventType::Began;
-        // A barrier wall: onWorldEdge for the body that touched it (no collision events: no entity).
-        WorldEdgeHit wall;
-        const bool wallA = isWall(c.userDataA, wall), wallB = !wallA && isWall(c.userDataB, wall);
-        if (wallA || wallB) {
-            if (began && !c.sensor) m_edgeHits.emplace_back(fromUserData(wallA ? c.userDataB : c.userDataA), wall);
-            continue;
-        }
         Entity a{fromUserData(c.userDataA), this};
         Entity b{fromUserData(c.userDataB), this};
         // Ended events may name a destroyed entity: hand it over invalid.

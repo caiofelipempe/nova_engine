@@ -192,13 +192,14 @@ public:
     /// @brief Advances the simulation by exactly `dt` (callers should use a fixed timestep).
     virtual void step(Duration dt) = 0;
 
-    /// @name Torus window
+    /// @name World origin
     /// @{
-    /// @brief Where the action is (the player or the camera): float backends keep their window of
-    ///        one lap around it, so the seam of the torus is never near it. Called every update.
+    /// @brief Where the action is (the player or the camera): float backends keep their origin
+    ///        (WorldOrigin) near it, so they are precise there and the seam of the circular world
+    ///        is never near it. Called every update.
     virtual void setFocus(const GlobalPosition& focus) = 0;
-    /// @brief What the backend's float (0, 0, 0) is on the torus (the world origin for backends
-    ///        without a window).
+    /// @brief What the backend's float (0, 0, 0) is in the world (the WorldOrigin; the world origin
+    ///        for backends that work in global positions).
     virtual GlobalPosition origin() const { return {}; }
     /// @}
 

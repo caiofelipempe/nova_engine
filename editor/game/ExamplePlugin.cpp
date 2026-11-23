@@ -134,9 +134,9 @@ void ExamplePlugin::onRegister(Registry& r) {
         });
     }, "Ctrl+T");
 
-    // Scenarios: a small world with barriers, the same one wrapping around, and the seam of the
-    // whole 16 km torus. Fly with RMB + WASD, press Play to run them; the World panel shows and
-    // edits the edges (View/Show World Bounds draws them).
+    // Scenarios: a small world wrapping around, and the seam of the default 16 km world. Fly with
+    // RMB + WASD, press Play to run them; the World panel shows and edits the size (View/Show World
+    // Seams draws the seams).
     auto openScenario = [](EditorContext& ctx, SmallWorld kind) {
         ctx.newScene();
         Renderer& renderer = ctx.renderer();
@@ -148,9 +148,6 @@ void ExamplePlugin::onRegister(Registry& r) {
         view.yaw = std::atan2(-f.x, -f.z);
         view.pitch = std::asin(glm::clamp(f.y, -1.0f, 1.0f));
     };
-    r.command("Game/Scenarios/Small World (Barriers)", [openScenario](EditorContext& ctx) {
-        openScenario(ctx, SmallWorld::Barrier);
-    });
     r.command("Game/Scenarios/Small World (Wrap-around)", [openScenario](EditorContext& ctx) {
         openScenario(ctx, SmallWorld::Wrap);
     });

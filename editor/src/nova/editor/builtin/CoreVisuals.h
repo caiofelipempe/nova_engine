@@ -13,7 +13,7 @@ struct VisualSettings {
     bool allColliders = false;   ///< Colliders of every rigid body (selected ones are always shown).
     bool lights = true;          ///< Sun direction, point light radius, camera frustum of selected entities.
     bool grid = false;           ///< Ground grid at y = 0.
-    bool worldBounds = true;     ///< World edges near the camera: barriers (red), wrapped edges and torus seams (cyan).
+    bool worldBounds = true;     ///< Seams of the circular world near the camera (cyan).
 };
 
 /// @brief Registers the *View/Show ...* toggles and draws the visualizations every frame.

@@ -40,17 +40,19 @@ Json writeFloat(f32 v) {
     return std::strtod(std::string(buf, end).c_str(), nullptr);
 }
 
-// Positions and offsets in meters: a Q13.18 step count times 2^-18 is exact in a double, so
-// meters convert back to the same bits.
-Json writePosition(const GlobalPosition& g) {
-    const glm::dvec3 m = g.toMeters();
-    return Json::array({m.x, m.y, m.z});
+// Positions and offsets in meters: a step count times 2^-18 is exact in a double below 2^53 steps
+// (3.4×10¹⁰ m), so meters convert back to the same bits. Beyond that (only in huge worlds) the
+// exact steps go along: {"steps": [...], "meters": [...]}.
+constexpr i64 kExactMeterSteps = i64(1) << 53;
+Json writeSteps(const glm::i64vec3& s, const glm::dvec3& m) {
+    auto exact = [](i64 v) { return v > -kExactMeterSteps && v < kExactMeterSteps; };
+    if (exact(s.x) && exact(s.y) && exact(s.z)) return Json::array({m.x, m.y, m.z});
+    return Json{{"steps", Json::array({s.x, s.y, s.z})}, {"meters", Json::array({m.x, m.y, m.z})}};
 }
 
-Json writeOffset(const GlobalOffset& o) {
-    const glm::dvec3 m = o.toMeters();
-    return Json::array({m.x, m.y, m.z});
-}
+Json writePosition(const GlobalPosition& g) { return writeSteps(g.raw(), g.toMeters()); }
+
+Json writeOffset(const GlobalOffset& o) { return writeSteps(o.raw(), o.toMeters()); }
 
 // A fixed-point value as the shortest decimal that reads back to the same raw integer ("0.05",
 // not "0.0500030517578125"): files stay readable and round trips are exact.
@@ -83,12 +85,11 @@ Json writeSpeedVec(const SpeedVec& v) {
                         writeFixed(v.z.raw_value(), kBits)});
 }
 
-// The world block: the step and the torus lap (informative), and the size and edge of each axis.
-Json writeWorld(const WorldBounds& b) {
+// The world block: the step (informative) and the size of each axis (all circular).
+Json writeWorld(const WorldSize& w) {
     Json axes = Json::array();
-    for (const WorldAxis& a : b.axes)
-        axes.push_back(Json{{"size", a.size}, {"edge", a.edge == WorldEdge::Barrier ? "Barrier" : "Wrap"}});
-    return Json{{"step", WorldSpace::kUnit}, {"lap", WorldSpace::kLap}, {"axes", std::move(axes)}};
+    for (int i = 0; i < 3; ++i) axes.push_back(Json{{"size", w.size(i)}});
+    return Json{{"step", WorldSpace::kUnit}, {"axes", std::move(axes)}};
 }
 
 Json writeVec(const f32* v, int n) {
@@ -224,8 +225,24 @@ bool readMeters(const Json& j, glm::dvec3& out) {
     return true;
 }
 
+// Exact steps, when the file has them ({"steps": [...]}, huge worlds).
+bool readSteps(const Json& j, glm::i64vec3& out) {
+    if (!j.is_object() || !j.contains("steps")) return false;
+    const Json& a = j["steps"];
+    if (!a.is_array() || a.size() != 3) return false;
+    for (int i = 0; i < 3; ++i) {
+        if (!a[i].is_number_integer()) return false;
+        out[i] = a[i].get<i64>();
+    }
+    return true;
+}
+
 // Meters (older files may also carry "raw" steps of another unit: the meters next to them win).
 bool readPosition(const Json& j, GlobalPosition& out) {
+    if (glm::i64vec3 s; readSteps(j, s)) {
+        out = GlobalPosition::fromRaw(s);
+        return true;
+    }
     glm::dvec3 m;
     if (!readMeters(j, m)) return false;
     out = GlobalPosition::fromMeters(m);
@@ -233,6 +250,10 @@ bool readPosition(const Json& j, GlobalPosition& out) {
 }
 
 bool readOffset(const Json& j, GlobalOffset& out) {
+    if (glm::i64vec3 s; readSteps(j, s)) {
+        out = GlobalOffset() + GlobalOffset(s); // into the world
+        return true;
+    }
     glm::dvec3 m;
     if (!readMeters(j, m)) return false;
     out = GlobalOffset::fromMeters(m);
@@ -281,17 +302,21 @@ void readFixedQuat(FixedQuat& q, const Json& j) {
     }
 }
 
-// Axes of the world block (older files: no "edge" key, so the whole torus).
-WorldBounds readWorld(const Json& j) {
-    WorldBounds b;
-    if (!j.is_object() || !j.contains("axes") || !j["axes"].is_array()) return b;
+// Axes of the world block. Every axis is circular: older files with barrier edges load as
+// circular worlds of the same size (with a warning); files of the int64 format (unit, boundary)
+// load the default world.
+WorldSize readWorld(const Json& j) {
+    WorldSize w;
+    if (!j.is_object() || !j.contains("axes") || !j["axes"].is_array()) return w;
     for (size_t i = 0; i < 3 && i < j["axes"].size(); ++i) {
         const Json& a = j["axes"][i];
-        if (!a.is_object() || !a.contains("edge") || !a["size"].is_number()) continue;
-        b.axes[i].size = a["size"].get<f64>();
-        b.axes[i].edge = a.value("edge", "Wrap") == "Barrier" ? WorldEdge::Barrier : WorldEdge::Wrap;
+        if (!a.is_object() || !a.contains("size") || !a["size"].is_number()) continue;
+        if (a.contains("boundary") || j.contains("unit")) continue; // the int64 format: the default world
+        if (a.value("edge", "Wrap") == "Barrier")
+            NOVA_CORE_WARN("Scene: axis {} had barrier edges; the world is always circular now", i);
+        w.steps[static_cast<int>(i)] = WorldSize::toSteps(a["size"].get<f64>());
     }
-    return b;
+    return w;
 }
 
 PhysicsSettings readPhysics(const Json& j) {
@@ -481,7 +506,7 @@ std::string serializeScene(Scene& scene, const SerializeOptions& options) {
     root["format"] = kFormat;
     root["version"] = kVersion;
     root["name"] = scene.name();
-    root["world"] = writeWorld(scene.worldBounds());
+    root["world"] = writeWorld(scene.worldSize());
     root["physics"] = writePhysics(scene.physicsSettings());
     Json entities = Json::array();
     for (entt::entity e : entitiesInOrder(scene)) entities.push_back(writeEntity({e, &scene}, options, warned));
@@ -501,9 +526,9 @@ bool deserializeScene(Scene& scene, std::string_view text, const SerializeOption
 
     scene.clear();
     if (root.contains("name") && root["name"].is_string()) scene.setName(root["name"].get<std::string>());
-    // Positions are read in meters: they land on the 16 km torus whatever world wrote them.
     scene.setPhysicsSettings(root.contains("physics") ? readPhysics(root["physics"]) : PhysicsSettings{});
-    scene.setWorldBounds(root.contains("world") ? readWorld(root["world"]) : WorldBounds{});
+    // The world first: positions land in it.
+    scene.setWorldSize(root.contains("world") ? readWorld(root["world"]) : WorldSize{});
     std::set<std::string> warned;
     try {
         if (root.contains("entities") && root["entities"].is_array())

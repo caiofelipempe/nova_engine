@@ -4,43 +4,64 @@
 
 namespace nova {
 
+WorldSize WorldSize::s_active;
+
 namespace {
 
-constexpr f64 kTwoPow31 = 2147483648.0;
-constexpr f64 kTwoPow32 = 4294967296.0;
-
-// Nearest step to `steps` (any finite value), around the torus: whole laps drop out.
-i32 toWrappedSteps(f64 steps) {
+// Nearest step to `steps` (any finite value) on axis `axis` of the active world: whole laps drop out.
+i64 toWrappedSteps(f64 steps, int axis) {
     if (!std::isfinite(steps)) return 0;
-    f64 r = std::fmod(steps, kTwoPow32); // (−2³², 2³²), exact
-    if (r >= kTwoPow31) r -= kTwoPow32;
-    else if (r < -kTwoPow31) r += kTwoPow32;
-    // |r| ≤ 2³¹, so it rounds to a value whose low 32 bits are the step (2³¹ ≡ −2³¹).
-    return static_cast<i32>(static_cast<u32>(static_cast<u64>(std::llround(r))));
+    const WorldSize& w = WorldSize::active();
+    const f64 lap = static_cast<f64>(w.steps[axis]);
+    f64 r = std::fmod(steps, lap); // (−lap, lap), exact
+    if (r >= lap * 0.5) r -= lap;
+    else if (r < -lap * 0.5) r += lap;
+    return w.wrap(std::llround(r), axis); // rounding may reach +size/2
+}
+
+// a · n modulo the lap, without overflow: values stay below 2⁵⁸, sums below 2⁵⁹.
+i64 mulWrapped(i64 a, i64 n, int axis) {
+    const WorldSize& w = WorldSize::active();
+    a = w.wrap(a, axis);
+    const bool negative = n < 0;
+    u64 k = negative ? 0u - static_cast<u64>(n) : static_cast<u64>(n);
+    i64 result = 0;
+    while (k) {
+        if (k & 1u) result = w.wrap(result + a, axis);
+        a = w.wrap(a * 2, axis);
+        k >>= 1;
+    }
+    return negative ? w.wrap(-result, axis) : result;
+}
+
+f64 lengthSteps(const GlobalOffset& o) {
+    if (o.isShort()) return std::sqrt(static_cast<f64>(o.lengthSquared()));
+    return std::sqrt(static_cast<f64>(o.x) * o.x + static_cast<f64>(o.y) * o.y + static_cast<f64>(o.z) * o.z);
 }
 
 } // namespace
 
 // ------------------------------------------------------------- GlobalOffset --
 GlobalOffset GlobalOffset::fromMeters(const glm::dvec3& m) {
-    constexpr f64 perMeter = 1.0 / WorldSpace::kUnit;
-    return {toWrappedSteps(m.x * perMeter), toWrappedSteps(m.y * perMeter), toWrappedSteps(m.z * perMeter)};
+    constexpr f64 perMeter = static_cast<f64>(WorldSpace::kStepsPerMeter);
+    return {toWrappedSteps(m.x * perMeter, 0), toWrappedSteps(m.y * perMeter, 1), toWrappedSteps(m.z * perMeter, 2)};
 }
 
-glm::dvec3 GlobalOffset::toMeters() const { return glm::dvec3(x, y, z) * WorldSpace::kUnit; }
-
-glm::dvec3 GlobalOffset::toUnits(LengthUnit u) const { return glm::dvec3(x, y, z) * (WorldSpace::kUnit / metersPer(u)); }
-
-f64 GlobalOffset::length() const { return std::sqrt(static_cast<f64>(lengthSquared())) * WorldSpace::kUnit; }
-
-f64 GlobalOffset::length(LengthUnit u) const {
-    return std::sqrt(static_cast<f64>(lengthSquared())) * (WorldSpace::kUnit / metersPer(u));
+glm::dvec3 GlobalOffset::toMeters() const {
+    return glm::dvec3(static_cast<f64>(x), static_cast<f64>(y), static_cast<f64>(z)) * WorldSpace::kUnit;
 }
+
+glm::dvec3 GlobalOffset::toUnits(LengthUnit u) const { return toMeters() / metersPer(u); }
+
+f64 GlobalOffset::length() const { return lengthSteps(*this) * WorldSpace::kUnit; }
+
+f64 GlobalOffset::length(LengthUnit u) const { return lengthSteps(*this) * (WorldSpace::kUnit / metersPer(u)); }
 
 bool GlobalOffset::isShorterThan(f64 meters) const {
     if (!(meters > 0.0)) return false;
-    const f64 steps = meters / WorldSpace::kUnit;
-    if (steps >= kTwoPow32) return true; // longer than any offset (≤ 2³¹·√3)
+    const f64 steps = meters * static_cast<f64>(WorldSpace::kStepsPerMeter);
+    if (!isShort()) return lengthSteps(*this) < steps;
+    if (steps >= 4294967296.0) return true; // longer than any short offset (≤ 2³¹·√3 < 2³²)
     // length < steps ⇔ length² < steps², exact on the integer part; the last step in double.
     const u64 n = static_cast<u64>(steps);
     const u64 l2 = lengthSquared();
@@ -50,11 +71,20 @@ bool GlobalOffset::isShorterThan(f64 meters) const {
 }
 
 GlobalOffset GlobalOffset::scaled(f64 factor) const {
-    return {toWrappedSteps(x * factor), toWrappedSteps(y * factor), toWrappedSteps(z * factor)};
+    return {toWrappedSteps(static_cast<f64>(x) * factor, 0), toWrappedSteps(static_cast<f64>(y) * factor, 1),
+            toWrappedSteps(static_cast<f64>(z) * factor, 2)};
+}
+
+GlobalOffset operator*(const GlobalOffset& a, i64 n) {
+    return {mulWrapped(a.x, n, 0), mulWrapped(a.y, n, 1), mulWrapped(a.z, n, 2)};
 }
 
 int compareLength(const GlobalOffset& a, const GlobalOffset& b) {
-    const u64 la = a.lengthSquared(), lb = b.lengthSquared();
+    if (a.isShort() && b.isShort()) {
+        const u64 la = a.lengthSquared(), lb = b.lengthSquared();
+        return la < lb ? -1 : (lb < la ? 1 : 0);
+    }
+    const f64 la = lengthSteps(a), lb = lengthSteps(b);
     return la < lb ? -1 : (lb < la ? 1 : 0);
 }
 

@@ -404,81 +404,86 @@ std::string readable(f64 meters) {
     std::snprintf(buf, sizeof(buf), "%.4g %s", fromMeters(meters, u), unitSymbol(u));
     return buf;
 }
+// The world's size and every position in it: shrinking the world brings positions inside, so an
+// undo puts back both, bit for bit.
+struct WorldState {
+    WorldSize size;
+    std::vector<std::pair<entt::entity, GlobalPosition>> positions;
+
+    static WorldState of(Scene& scene) {
+        WorldState s{scene.worldSize(), {}};
+        for (auto [e, t] : scene.registry().view<TransformComponent>().each()) s.positions.emplace_back(e, t.position);
+        return s;
+    }
+    void apply(Scene& scene) const {
+        scene.setWorldSize(size);
+        auto& reg = scene.registry();
+        for (const auto& [e, p] : positions)
+            if (auto* t = reg.valid(e) ? reg.try_get<TransformComponent>(e) : nullptr) t->position = p.rewrapped();
+    }
+};
 } // namespace
 
 WorldPanel::WorldPanel() : Panel("World", DockSlot::RightBottom) {}
 
 void WorldPanel::onImGui(EditorContext& ctx) {
     Scene& scene = ctx.scene();
-    ImGui::TextDisabled("Torus: %s per axis, circular  |  step %s", readable(WorldSpace::kLap).c_str(),
-                        readable(WorldSpace::kUnit).c_str());
+    ImGui::TextDisabled("Circular on every axis  |  step %s", readable(WorldSpace::kUnit).c_str());
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Positions are Q13.18 fixed point: leaving one side enters the other");
+        ImGui::SetTooltip("Positions are Q45.18 fixed point (int64): leaving one side enters the other");
     ImGui::Separator();
 
-    // Size and edge per axis. One undo step per edit (a drag is one edit); during Play the change
-    // applies to the running world and goes away on Stop, like any other edit.
-    static WorldBounds before;
+    // Size per axis. One undo step per edit (a drag is one edit); during Play the change applies
+    // to the running world and goes away on Stop, like any other edit.
+    static WorldState before;
     static bool editing = false;
-    WorldBounds bounds = scene.worldBounds();
+    WorldSize size = scene.worldSize();
     bool changed = false, finished = false;
     const char* axisNames[3] = {"X", "Y", "Z"};
-    const char* edges[] = {"Wrap", "Barrier"};
+    if (!editing) before = WorldState::of(scene);
     for (int i = 0; i < 3; ++i) {
         ImGui::PushID(i);
-        WorldAxis& a = bounds.axes[static_cast<size_t>(i)];
-        if (!editing) before = scene.worldBounds();
-        const bool whole = a.edge == WorldEdge::Wrap && a.size >= WorldSpace::kLap;
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(axisNames[i]);
         ImGui::SameLine(30.0f);
-        ImGui::SetNextItemWidth(90.0f);
-        int edge = static_cast<int>(a.edge);
-        if (ImGui::Combo("##edge", &edge, edges, 2)) {
-            a.edge = static_cast<WorldEdge>(edge);
-            if (a.edge == WorldEdge::Barrier && a.size > WorldBounds::kMaxBarrierSize) a.size = 100.0;
-            changed = finished = true;
-        }
-        ImGui::SameLine();
         ImGui::SetNextItemWidth(-1.0f);
-        f64 size = a.size;
-        const f64 lo = WorldBounds::kMinSize;
-        const f64 hi = a.edge == WorldEdge::Barrier ? WorldBounds::kMaxBarrierSize : WorldSpace::kLap;
-        if (ImGui::DragScalar("##size", ImGuiDataType_Double, &size, 0.5f, &lo, &hi, whole ? "whole torus" : "%.2f m")) {
-            a.size = size;
+        f64 meters = size.size(i);
+        const f64 lo = WorldSpace::kMinSize, hi = WorldSpace::kMaxSize;
+        if (ImGui::DragScalar("##size", ImGuiDataType_Double, &meters, 0.5f, &lo, &hi, "%.2f m",
+                              ImGuiSliderFlags_Logarithmic)) {
+            size.steps[i] = WorldSize::toSteps(meters);
             changed = true;
             editing = true;
         }
         if (ImGui::IsItemDeactivatedAfterEdit()) finished = true;
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(a.edge == WorldEdge::Barrier
-                                  ? "Barrier: centers stop at +-size/2, their velocity along this axis is zeroed"
-                                  : "Wrap: leaving +size/2 enters at -size/2 (the whole torus wraps by itself)");
+            ImGui::SetTooltip("%s: leaving +size/2 enters at -size/2", readable(size.size(i)).c_str());
         ImGui::PopID();
     }
-    if (changed) scene.setWorldBounds(bounds);
+    if (changed) scene.setWorldSize(size);
+    auto pushUndo = [&ctx](const WorldState& old) {
+        const WorldState now = WorldState::of(ctx.scene());
+        if (now.size == old.size || ctx.isPlaying()) return;
+        ctx.undoStack().push({"World Size", [&ctx, old] { old.apply(ctx.scene()); },
+                              [&ctx, now] { now.apply(ctx.scene()); }});
+    };
     if (finished) {
         editing = false;
-        const WorldBounds after = scene.worldBounds();
-        if (!(after == before) && !ctx.isPlaying())
-            ctx.undoStack().push({"World Edges", [&ctx, b = before] { ctx.scene().setWorldBounds(b); },
-                                  [&ctx, after] { ctx.scene().setWorldBounds(after); }});
+        pushUndo(before);
     }
-    if (ImGui::SmallButton("Whole torus")) {
-        const WorldBounds old = scene.worldBounds();
-        scene.setWorldBounds({});
-        if (!ctx.isPlaying() && !(old == WorldBounds{}))
-            ctx.undoStack().push({"World Edges", [&ctx, old] { ctx.scene().setWorldBounds(old); },
-                                  [&ctx] { ctx.scene().setWorldBounds({}); }});
+    if (ImGui::SmallButton("Default (16 km)")) {
+        const WorldState old = WorldState::of(scene);
+        scene.setWorldSize({});
+        pushUndo(old);
     }
     ImGui::Separator();
     const glm::dvec3 cam = ctx.camera().position.toMeters();
     ImGui::Text("Camera  %s, %s, %s", readable(cam.x).c_str(), readable(cam.y).c_str(), readable(cam.z).c_str());
     if (scene.isSimulating()) {
-        const glm::dvec3 o = scene.physicsOrigin().toMeters();
-        ImGui::Text("Physics origin  %s, %s, %s", readable(o.x).c_str(), readable(o.y).c_str(), readable(o.z).c_str());
+        const glm::dvec3 o = scene.worldOrigin().toMeters();
+        ImGui::Text("World origin  %s, %s, %s", readable(o.x).c_str(), readable(o.y).c_str(), readable(o.z).c_str());
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("The float window of the physics follows the focus, keeping the seam away from it");
+            ImGui::SetTooltip("What the physics engine's (0, 0, 0) is: it follows the focus on a grid of cells");
     }
 }
 

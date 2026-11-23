@@ -192,7 +192,7 @@ private:
         contactMarks().clear();
         m_fireTimer = 0.0f;
         m_determinism.clear();
-        scene().setWorldBounds({});
+        scene().setWorldSize({});
         scene().setPhysicsSettings({});
 
         m_current = index;

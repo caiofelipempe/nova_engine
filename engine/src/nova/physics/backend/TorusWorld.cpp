@@ -7,10 +7,6 @@ namespace nova::physics {
 
 namespace {
 
-// How far the focus may drift from the window origin before it is recentered. Within an eighth
-// of a lap, whatever is near the focus stays well away from the far side of the window (the seam).
-constexpr f64 kRecenterDistance = WorldSpace::kLap / 8.0;
-
 local::BodyDesc toLocalDesc(const BodyDesc& d, const glm::vec3& position) {
     local::BodyDesc l;
     l.shape = d.shape;
@@ -32,10 +28,12 @@ local::BodyDesc toLocalDesc(const BodyDesc& d, const glm::vec3& position) {
     return l;
 }
 
-// The copy of `p` (float meters from the origin) on the lap around the origin.
+// The copy of `p` (float meters from the origin) on the lap around the origin: each axis of the
+// active world with its own size.
 glm::vec3 nearestLap(glm::vec3 p) {
-    constexpr f32 lap = static_cast<f32>(WorldSpace::kLap), half = static_cast<f32>(WorldSpace::kHalfLap);
+    const WorldSize& w = WorldSize::active();
     for (int i = 0; i < 3; ++i) {
+        const f32 lap = static_cast<f32>(w.size(i)), half = lap * 0.5f;
         if (p[i] > half) p[i] -= lap;
         else if (p[i] < -half) p[i] += lap;
     }
@@ -50,14 +48,12 @@ TorusWorld::~TorusWorld() = default;
 
 // ------------------------------------------------------------------ window --
 void TorusWorld::setFocus(const GlobalPosition& focus) {
-    if (!isWithin(focus, m_origin, kRecenterDistance)) recenter(focus);
+    // The origin moves by an amount floats represent exactly: the integer origin and the float
+    // engine agree to the bit after the move, however often it happens.
+    if (m_origin.needsMove(focus)) recenter(m_origin.moveTo(WorldOrigin::snapped(focus)));
 }
 
-void TorusWorld::recenter(const GlobalPosition& target) {
-    // Shift by an amount floats represent exactly: the integer origin and the float engine agree
-    // to the bit after the move, however often it happens.
-    const glm::vec3 shift = (target - m_origin).toVec3();
-    m_origin += GlobalOffset::fromMeters(shift);
+void TorusWorld::recenter(const glm::vec3& shift) {
     m_world->shiftOrigin(shift);
     rewrap(true);
     // Joints to the world hold a point in the float world's coordinates: place them again.

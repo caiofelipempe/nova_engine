@@ -745,7 +745,7 @@ void worldSeam() {
     // The world is a 16 km torus: across the seam the editor sees one continuous world. A camera at
     // +8 191.5 m looking +X picks and renders a box that sits at −8 191.5 m, one meter ahead.
     Fixture f;
-    const f64 seam = WorldSpace::kHalfLap;
+    const f64 seam = (WorldSpace::kDefaultSize / 2);
     const MeshData cube = MeshData::cube();
     MeshLookup meshes = [&](MeshHandle h) { return h.id == 1 ? &cube : nullptr; };
     Entity across = f.scene.createEntity("Across");

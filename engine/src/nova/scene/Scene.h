@@ -4,6 +4,7 @@
 /// @brief Scene: ECS registry, gameplay update, physics integration and scene queries.
 
 #include "nova/math/Time.h"
+#include "nova/math/WorldOrigin.h"
 #include "nova/renderer/Renderer.h"
 #include "nova/scene/Entity.h"
 #include "nova/scene/Script.h"
@@ -121,16 +122,23 @@ public:
     ///        (e.g. after moving it with an editor gizmo).
     void syncTransformToPhysics(Entity e);
 
-    /// @brief Where the action is (e.g. the player): the physics keeps the seam of the torus away
-    ///        from it. Without a focus, the primary camera is the focus.
+    /// @brief Where the action is (e.g. the player): the physics keeps its WorldOrigin near it
+    ///        (precise there, the seam of the world away from it). Without a focus, the primary
+    ///        camera is the focus.
     void setPhysicsFocus(const GlobalPosition& focus) {
         m_physicsFocus = focus;
         m_hasPhysicsFocus = true;
     }
     /// @brief Goes back to following the primary camera.
     void clearPhysicsFocus() { m_hasPhysicsFocus = false; }
-    /// @brief What the physics engine's float origin is on the torus (it follows the focus).
-    GlobalPosition physicsOrigin() const { return m_physics ? m_physics->origin() : GlobalPosition(); }
+    /// @brief The WorldOrigin: what the physics engine's float (0, 0, 0) is in the world. It
+    ///        follows the focus on a grid (see WorldOrigin), unless fixed with setWorldOrigin().
+    GlobalPosition worldOrigin() const { return m_physics ? m_physics->origin() : GlobalPosition(); }
+    /// @brief Fixes the WorldOrigin at `origin` (snapped to its grid), or with `std::nullopt` lets
+    ///        it follow the focus again.
+    void setWorldOrigin(std::optional<GlobalPosition> origin) { m_fixedOrigin = origin; }
+    /// @brief The fixed WorldOrigin, if any (setWorldOrigin()).
+    const std::optional<GlobalPosition>& fixedWorldOrigin() const { return m_fixedOrigin; }
     /// @brief Number of physics bodies.
     u32 physicsBodyCount() const { return m_physics ? m_physics->bodyCount() : 0; }
     /// @brief Gravity, collision layers and their names (saved with the scene).
@@ -139,17 +147,20 @@ public:
     void setPhysicsSettings(const PhysicsSettings& settings);
     /// @}
 
-    /// @name World edges
-    /// The world's size and edges per axis (WorldBounds): the whole 16 km torus by default, or a
-    /// smaller world whose edges wrap around (circular) or are barriers (walls). Wraps act on entity
-    /// centers outside the physics engine; barriers are static walls while simulating, plus a
-    /// stop on centers for what they miss. Saved with the scene.
+    /// @name World
+    /// The world is circular on every axis: its size per axis (WorldSize, 16 384 m by default) is
+    /// where leaving one side enters the other. Positions go around it by themselves (the scene
+    /// makes its size the active one: WorldSize::setActive), and the physics sees the two sides of
+    /// a seam as neighbours. Saved with the scene.
     /// @{
-    /// @brief The world's size and edges.
-    const WorldBounds& worldBounds() const { return m_worldBounds; }
-    /// @brief Changes them (sizes are brought into range: WorldBounds::valid()); the walls of a
-    ///        running simulation are rebuilt.
-    void setWorldBounds(const WorldBounds& bounds);
+    /// @brief The world's size per axis.
+    const WorldSize& worldSize() const { return m_worldSize; }
+    /// @brief Changes it (and makes it active); every position is brought into the new world.
+    void setWorldSize(const WorldSize& size);
+    /// @brief Makes this scene's WorldSize the active one (update(), buildRenderScene() and the
+    ///        simulation do it themselves; call it before working with positions of a scene that
+    ///        is not the last one updated).
+    void activateWorld() const { WorldSize::setActive(m_worldSize); }
 
     /// @brief Hash of the simulation state: every entity's exact position, rotation, scale and body
     ///        velocities, in UUID order. Two runs of the same scene with the same inputs give the same
@@ -253,11 +264,8 @@ private:
     physics::QueryFilter filterIgnoring(Entity e, u32 layerMask = physics::kAllLayers) const;
     void dispatchContacts();
     SceneHit toSceneHit(const physics::QueryHit& hit);
-    void constrainEntities();
-    void constrainSimulated();
-    void recordEdgeHits(entt::entity e, u32 changed, const std::array<WorldEdgeHit, 3>& hits);
-    void dispatchEdgeHits();
-    void buildEdgeWalls();
+    void noteWrap(entt::entity e, const GlobalPosition& before, const GlobalPosition& after);
+    void dispatchWrapHits();
 
     std::string m_name;
     entt::registry m_registry;
@@ -272,9 +280,9 @@ private:
     GlobalPosition m_physicsFocus;
     bool m_hasPhysicsFocus = false;
     Duration m_physicsAccumulator;
-    WorldBounds m_worldBounds;
-    std::vector<physics::BodyId> m_edgeWalls; // barrier walls while simulating
-    std::vector<std::pair<entt::entity, WorldEdgeHit>> m_edgeHits; // reported after the update
+    std::optional<GlobalPosition> m_fixedOrigin;
+    WorldSize m_worldSize;
+    std::vector<std::pair<entt::entity, WorldWrapHit>> m_wrapHits; // reported after the update
 };
 
 } // namespace nova

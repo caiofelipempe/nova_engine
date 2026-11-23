@@ -34,7 +34,7 @@ constexpr i32 kMin = std::numeric_limits<i32>::min();
 // ------------------------------------------------------------------- tests --
 void defaults() {
     CHECK(WorldSpace::kUnit == std::ldexp(1.0, -18)); // 3.8 µm
-    CHECK(WorldSpace::kLap == 16384.0 && WorldSpace::kHalfLap == 8192.0);
+    CHECK(WorldSpace::kDefaultSize == 16384.0 && WorldSize{}.steps.x == (i64(1) << 32));
     // Q13.18: 1.5 m is exactly 1.5 · 2^18 steps; meters convert back exactly.
     GlobalPosition p = GlobalPosition::fromMeters({1.5, -2.25, 1000.0});
     CHECK(p.raw(0) == 393216 && p.raw(1) == -589824 && p.raw(2) == 262144000);
@@ -57,7 +57,7 @@ void exactness() {
         exact &= a + (b - a) == b && b - (b - a) == a;
         // The offset is the shortest way: never more than half a lap on an axis.
         const glm::dvec3 d = (b - a).toMeters();
-        for (int k = 0; k < 3; ++k) shortest &= std::abs(d[k]) <= WorldSpace::kHalfLap;
+        for (int k = 0; k < 3; ++k) shortest &= std::abs(d[k]) <= (WorldSpace::kDefaultSize / 2);
     }
     CHECK(exact && shortest);
     // A walker taking a million steps of "1 mm" arrives exactly a million steps away: sums never
@@ -144,6 +144,95 @@ void helpers() {
     // Across the seam, lerp takes the short way.
     GlobalPosition e = GlobalPosition::fromMeters({8191.0, 0, 0}), f = GlobalPosition::fromMeters({-8191.0, 0, 0});
     CHECK(lerp(e, f, 0.5) == GlobalPosition::fromRaw(kMin, 0, 0)); // the seam, 1 m from each
+}
+
+void worldSizes() {
+    // Any size: exact relations and shortest offsets, in a tiny world, the default one and a big one.
+    for (const f64 size : {48.0, WorldSpace::kDefaultSize, 1.0e6}) {
+        ScopedWorldSize scope(WorldSize::cube(size));
+        const i64 lap = WorldSize::active().steps.x, half = lap / 2;
+        std::mt19937_64 rng(77);
+        std::uniform_int_distribution<i64> any(-half, half - 1);
+        bool exact = true, shortest = true, inside = true;
+        for (int i = 0; i < 20000; ++i) {
+            const GlobalPosition a = GlobalPosition::fromRaw(any(rng), any(rng), any(rng));
+            const GlobalPosition b = GlobalPosition::fromRaw(any(rng), any(rng), any(rng));
+            const GlobalOffset d = b - a;
+            exact &= a + d == b && b - d == a;
+            for (int k = 0; k < 3; ++k) {
+                shortest &= d[k] >= -half && d[k] < half;
+                inside &= (a + d * 3).raw(k) >= -half && (a + d * 3).raw(k) < half;
+            }
+        }
+        CHECK(exact && shortest && inside);
+        // Leaving one side enters the other: from just below +size/2, one more step is −size/2.
+        GlobalPosition edge = GlobalPosition::fromRaw(half - 1, 0, 0);
+        edge += GlobalOffset(1, 0, 0);
+        CHECK(edge.raw(0) == -half && edge.toMeters().x == -size / 2);
+        // Meters loop: a whole lap is nothing, a lap and a half is the opposite side.
+        CHECK(GlobalPosition(size, 0.0, 0.0) == GlobalPosition() && GlobalOffset::fromMeters(glm::dvec3(size * 1.5, 0, 0)).x == -half);
+    }
+
+    // The 1000 km world: across the seam, two points 200 km apart (the long way is 800 km).
+    {
+        ScopedWorldSize scope(WorldSize::cube(1.0e6));
+        const GlobalPosition east(400'000.0, 0.0, 0.0), west(-400'000.0, 0.0, 0.0);
+        CHECK((west - east).toMeters().x == 200'000.0);
+        CHECK(distance(east, west) == 200'000.0);
+        CHECK(lerp(east, west, 0.5) == GlobalPosition(-500'000.0, 0.0, 0.0)); // the seam, the short way
+        CHECK(!(west - east).isShort() && (west - east).lengthSquared() == ~u64(0));
+        CHECK(compareLength(west - east, GlobalOffset::fromMeters(glm::dvec3(199'999.0, 0, 0))) > 0);
+        CHECK(isWithin(east, west, 200'001.0) && !isWithin(east, west, 199'999.0));
+    }
+
+    // The largest world (2⁴⁰ m per axis): positions beyond a billion meters, exact in steps.
+    {
+        ScopedWorldSize scope(WorldSize::cube(WorldSpace::kMaxSize));
+        const GlobalPosition far = GlobalPosition::fromRaw(i64(1) << 56, -(i64(1) << 56), 12345);
+        CHECK(far.toMeters().x == 274877906944.0); // 2⁵⁶ steps = 2³⁸ m
+        CHECK(far + (GlobalPosition() - far) == GlobalPosition());
+        CHECK((far - GlobalPosition()) * 4 == GlobalOffset(0, 0, 12345 * 4)); // 2⁵⁸ is a whole lap
+    }
+
+    // Integer multiples loop around without overflow.
+    {
+        ScopedWorldSize scope(WorldSize::cube(48.0));
+        const GlobalOffset m = GlobalOffset::fromMeters(glm::dvec3(1.0, 0, 0));
+        CHECK(m * 50 == GlobalOffset::fromMeters(glm::dvec3(2.0, 0, 0)) && m * -50 == GlobalOffset::fromMeters(glm::dvec3(-2.0, 0, 0)));
+        CHECK(m * 4'000'000'000'000'000 == GlobalOffset::fromMeters(glm::dvec3(4e15 - 48.0 * 83'333'333'333'333, 0, 0)));
+    }
+}
+
+void worldOrigin() {
+    // Default world: cells of 256 m; the origin moves when the focus is more than 160 m away.
+    CHECK(WorldOrigin::cellSteps(0) == (i64(1) << 26));
+    CHECK(WorldOrigin::snapped(GlobalPosition(130.0, 0.0, -130.0)) == GlobalPosition(256.0, 0.0, -256.0));
+    CHECK(WorldOrigin::snapped(GlobalPosition(127.0, 5.0, -127.0)) == GlobalPosition());
+    WorldOrigin o;
+    CHECK(!o.needsMove(GlobalPosition(150.0, -150.0, 150.0)));
+    CHECK(o.needsMove(GlobalPosition(170.0, 0.0, 0.0)));
+    const glm::vec3 shift = o.follow(GlobalPosition(170.0, 0.0, 0.0));
+    CHECK(shift == glm::vec3(256.0f, 0.0f, 0.0f) && o.position() == GlobalPosition(256.0, 0.0, 0.0)); // exact
+    CHECK(o.follow(GlobalPosition(120.0, 0.0, 0.0)) == glm::vec3(0.0f)); // hysteresis: back across the border, no move
+    CHECK(o.toGlobal(o.toLocal(GlobalPosition(300.5, 2.0, 0.0))) == GlobalPosition(300.5, 2.0, 0.0));
+
+    // Far away: the origin is an exact i64 position; local floats are small.
+    WorldOrigin far(GlobalPosition(8000.0, 0.0, -8000.0));
+    CHECK(far.position() == GlobalPosition(7936.0, 0.0, -7936.0)); // 31 cells
+    CHECK(far.toLocal(GlobalPosition(8000.0, 1.0, -8000.0)) == glm::vec3(64.0f, 1.0f, -64.0f));
+
+    // Across the seam of the default world: the shift is the short way.
+    WorldOrigin seam(GlobalPosition(7950.0, 0.0, 0.0)); // 7 936 m
+    const glm::vec3 across = seam.follow(GlobalPosition(-8150.0, 0.0, 0.0));
+    CHECK(across.x == 256.0f && seam.position() == GlobalPosition(-8192.0, 0.0, 0.0));
+
+    // A tiny world: cells of an eighth of the axis at most (48 m → 4 m), so the seam stays far.
+    ScopedWorldSize tiny(WorldSize::cube(48.0));
+    CHECK(WorldOrigin::cellSteps(0) == (i64(1) << 20));
+    WorldOrigin t;
+    CHECK(t.follow(GlobalPosition(23.0, 0.0, 0.0)) == glm::vec3(-24.0f, 0.0f, 0.0f)); // +24 m ≡ −24 m: either way
+    CHECK(t.position() == GlobalPosition(-24.0, 0.0, 0.0)); // +24 m is −24 m in this world
+    CHECK(t.toLocal(GlobalPosition(-23.0, 0.0, 0.0)) == glm::vec3(1.0f, 0.0f, 0.0f));
 }
 
 void sceneIntegration() {
@@ -365,10 +454,12 @@ int main() {
     Log::init();
     Log::core().set_level(spdlog::level::off); // the tests trigger expected warnings
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
-        {"defaults: Q13.18 on the 16 km torus", defaults},
+        {"defaults: Q45.18, the 16 km world", defaults},
         {"exact arithmetic, shortest offsets", exactness},
-        {"the torus: the lap is the integer overflow", torus},
+        {"the default world: 2^32 steps per axis", torus},
         {"offsets: 64-bit squared lengths, looping sums", offsets},
+        {"world sizes: tiny, default, 1000 km, the largest", worldSizes},
+        {"WorldOrigin: grid, hysteresis, exact moves", worldOrigin},
         {"metric units", units},
         {"helpers (lerp, moveTowards, rotateAround)", helpers},
         {"scenes: files, older files, prefabs, relative matrices", sceneIntegration},

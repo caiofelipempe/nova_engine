@@ -5,16 +5,15 @@
 using namespace nova;
 
 // ------------------------------------------------------------------ scripts --
-void EdgeFlash::onWorldEdge(const WorldEdgeHit& hit) {
+void EdgeFlash::onWorldWrap(const WorldWrapHit&) {
     glow = 1.0f;
-    lastWasBarrier = hit.edge == WorldEdge::Barrier;
-    (lastWasBarrier ? barrierHits : wraps) += 1;
+    ++wraps;
 }
 
 void EdgeFlash::onUpdate(float dt) {
     glow = std::max(0.0f, glow - dt * 2.0f);
     if (auto* mesh = entity().tryGet<MeshComponent>()) {
-        mesh->material.emissive = lastWasBarrier ? glm::vec3(1.0f, 0.25f, 0.15f) : glm::vec3(0.2f, 0.85f, 1.0f);
+        mesh->material.emissive = glm::vec3(0.2f, 0.85f, 1.0f);
         mesh->material.emissiveStrength = glow * 6.0f;
     }
 }
@@ -33,15 +32,8 @@ void Mover::onUpdate(float dt) {
     if (along < speed) scene().setLinearVelocity(entity(), v + d * (speed - along)); // keep its vertical motion
 }
 
-void Mover::onWorldEdge(const WorldEdgeHit& hit) {
-    // The barrier zeroed the velocity along its axis: head back inside (like a billiard ball).
-    if (hit.edge != WorldEdge::Barrier) return;
-    if ((direction[hit.axis] > 0.0f) == (hit.side > 0)) direction[hit.axis] = -direction[hit.axis];
-}
-
 void reflectScenarioTypes() {
     reflect::type<EdgeFlash>("EdgeFlash")
-        .field("barrierHits", &EdgeFlash::barrierHits, {.readOnly = true})
         .field("wraps", &EdgeFlash::wraps, {.readOnly = true})
         .script();
     reflect::type<Mover>("Mover")
@@ -93,26 +85,32 @@ Entity camera(Scene& scene, const GlobalPosition& at, const GlobalPosition& look
 const glm::vec4 kColors[] = {{0.9f, 0.3f, 0.25f, 1}, {0.25f, 0.6f, 0.95f, 1}, {0.95f, 0.8f, 0.2f, 1},
                              {0.4f, 0.85f, 0.4f, 1}, {0.75f, 0.4f, 0.9f, 1}, {0.95f, 0.55f, 0.2f, 1}};
 
-// A 60 × 60 m world on X and Z (Y is the whole torus): barriers or wrapping edges, no walls. The
-// floor is 2 m larger, so a center at the edge still stands on it.
-Entity buildSmall(Scene& scene, const ScenarioMeshes& m, WorldEdge edge) {
+// A 60 × 60 m world on X and Z (Y keeps the default size). The floor is 6 × 6 tiles: each one is
+// a static body the physics places on the copy nearest its origin, so the floor surrounds what is
+// near the focus, across the seams too.
+Entity buildSmall(Scene& scene, const ScenarioMeshes& m) {
     common(scene);
-    scene.setWorldBounds(WorldBounds::box(kSmallWorldSize, 0.0, kSmallWorldSize, edge));
-    const double floorSize = kSmallWorldSize + 2.0;
-    Entity floor = mesh(scene, "Floor", m.plane, {0.0, 0.0, 0.0}, {floorSize, 1.0f, floorSize},
-                        edge == WorldEdge::Barrier ? glm::vec4(0.8f, 0.76f, 0.74f, 1) : glm::vec4(0.74f, 0.79f, 0.82f, 1));
-    floor.get<MeshComponent>().material.checker = true;
-    floor.add<RigidBodyComponent>(physics::BodyType::Static);
-    floor.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
-    // Corner posts mark the edges (decoration: they do not collide).
+    scene.setWorldSize(WorldSize::meters(kSmallWorldSize, 0.0, kSmallWorldSize));
+    constexpr double tile = 10.0;
+    const int count = static_cast<int>(kSmallWorldSize / tile);
+    for (int x = 0; x < count; ++x)
+        for (int z = 0; z < count; ++z) {
+            const GlobalPosition at(-kSmallWorldSize / 2 + tile * (x + 0.5), 0.0, -kSmallWorldSize / 2 + tile * (z + 0.5));
+            const float shade = ((x + z) % 2) ? 0.7f : 0.8f;
+            Entity t = mesh(scene, "Tile " + std::to_string(x) + "," + std::to_string(z), m.plane, at,
+                            {static_cast<float>(tile), 1.0f, static_cast<float>(tile)}, {shade, shade + 0.04f, shade + 0.07f, 1});
+            t.get<MeshComponent>().material.checker = true;
+            t.add<RigidBodyComponent>(physics::BodyType::Static);
+            t.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
+        }
+    // Corner posts mark the seams (decoration: they do not collide).
     const double half = kSmallWorldSize / 2;
     for (int i = 0; i < 4; ++i) {
-        const double x = (i & 1) ? half : -half, z = (i & 2) ? half : -half;
-        mesh(scene, "Corner", m.cube, {x, 1.5, z}, {0.3f, 3.0f, 0.3f},
-             edge == WorldEdge::Barrier ? glm::vec4(0.9f, 0.25f, 0.2f, 1) : glm::vec4(0.2f, 0.75f, 0.95f, 1));
+        const double x = (i & 1) ? half - 0.2 : -half + 0.2, z = (i & 2) ? half - 0.2 : -half + 0.2;
+        mesh(scene, "Corner", m.cube, {x, 1.5, z}, {0.3f, 3.0f, 0.3f}, {0.2f, 0.75f, 0.95f, 1});
     }
 
-    // Balls wandering around: they reach the edges and flash (red: stopped, cyan: wrapped).
+    // Balls wandering around: they go through the seams and flash.
     for (int i = 0; i < 12; ++i) {
         const double a = i * 0.5236, r = 6.0 + (i % 3) * 4.0;
         Entity b = ball(scene, m, "Ball " + std::to_string(i), {r * std::cos(a), 1.0 + (i % 4), r * std::sin(a)},
@@ -122,9 +120,9 @@ Entity buildSmall(Scene& scene, const ScenarioMeshes& m, WorldEdge edge) {
         mover.speed = 7.0f + (i % 4);
         mover.kickEvery = 2.5f + (i % 5) * 0.7f;
         mover.seed = 17u + static_cast<unsigned>(i) * 31u;
-        mover.direction = {std::cos(a), 0.0f, std::sin(a)};
+        mover.direction = {static_cast<float>(std::cos(a)), 0.0f, static_cast<float>(std::sin(a))};
     }
-    // Crates to knock around (and out of the world, when it wraps).
+    // Crates to knock around (and across the seams).
     for (int i = 0; i < 8; ++i) {
         Entity c = mesh(scene, "Crate " + std::to_string(i), m.cube, {-12.0 + i * 3.4, 0.6, -4.0 + (i % 2) * 8.0},
                         glm::vec3(1.2f), {0.55f, 0.38f, 0.2f, 1});
@@ -136,9 +134,9 @@ Entity buildSmall(Scene& scene, const ScenarioMeshes& m, WorldEdge edge) {
 }
 
 Entity buildOpen(Scene& scene, const ScenarioMeshes& m) {
-    // A floor strip across the X seam of the torus (+8 192 m ≡ −8 192 m): 400 m long, 60 m wide.
+    // A floor strip across the X seam of the default world (+8 192 m ≡ −8 192 m): 400 m long, 60 m wide.
     common(scene);
-    const double seam = WorldSpace::kHalfLap, tile = 10.0;
+    const double seam = WorldSpace::kDefaultSize / 2, tile = 10.0;
     const int along = static_cast<int>(kSeamFloorLength / tile), across = static_cast<int>(kSmallWorldSize / tile);
     for (int x = 0; x < along; ++x)
         for (int z = 0; z < across; ++z) {
@@ -179,10 +177,9 @@ Entity buildOpen(Scene& scene, const ScenarioMeshes& m) {
 
 Entity buildSmallWorld(Scene& scene, const ScenarioMeshes& meshes, SmallWorld kind) {
     scene.clear();
-    scene.setWorldBounds({});
+    scene.setWorldSize({});
     switch (kind) {
-        case SmallWorld::Barrier: scene.setName("Small world (barriers)"); return buildSmall(scene, meshes, WorldEdge::Barrier);
-        case SmallWorld::Wrap: scene.setName("Small world (wrap-around)"); return buildSmall(scene, meshes, WorldEdge::Wrap);
+        case SmallWorld::Wrap: scene.setName("Small world (wrap-around)"); return buildSmall(scene, meshes);
         case SmallWorld::TorusSeam: break;
     }
     scene.setName("Torus seam");

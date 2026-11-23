@@ -456,7 +456,7 @@ void farFromOrigin() {
     const GlobalPosition base(7900.0, 0.0, -7900.0);
     FarScene f(base);
     f.scene.startSimulation();
-    CHECK(f.scene.physicsOrigin() == f.camera.transform().position);
+    CHECK(f.scene.worldOrigin() == WorldOrigin::snapped(f.camera.transform().position)); // on its grid
     for (int i = 0; i < 180; ++i) f.scene.update(Duration::perSecond(60));
     const glm::dvec3 rest = (f.ball.transform().position - base).toMeters();
     CHECK_NEAR(rest.y, 0.5, 0.02); // resting on the ground
@@ -484,11 +484,11 @@ void rebase() {
     const GlobalPosition before = f.ball.transform().position;
     const GlobalPosition groundBefore = f.ground.transform().position;
 
-    // The focus jumps 5 km: every body shifts, the window origin follows, nothing moves in the world.
+    // The focus jumps 5 km: every body shifts, the WorldOrigin follows (to its grid), nothing moves.
     const GlobalPosition focus = base + glm::vec3(5000.0f, 0.0f, 0.0f);
     f.scene.setPhysicsFocus(focus);
     f.scene.update(Duration::perSecond(60));
-    CHECK(isWithin(f.scene.physicsOrigin(), focus, 1e-3));
+    CHECK(f.scene.worldOrigin() == WorldOrigin::snapped(focus));
     const f64 moved = (f.ball.transform().position - before).toMeters().x;
     // One more step at 3 m/s, velocity kept. The ball is now 5 km from the physics origin, where
     // floats are 0.5 mm apart: the shift itself rounds by up to half of that.
@@ -504,7 +504,7 @@ void rebase() {
     // ...and comes back when the focus does: a new rebase near the ball, and 60 steps are exact.
     f.scene.clearPhysicsFocus();
     f.scene.update(Duration::perSecond(60));
-    CHECK(isWithin(f.scene.physicsOrigin(), f.camera.transform().position, 1e-3));
+    CHECK(f.scene.worldOrigin() == WorldOrigin::snapped(f.camera.transform().position));
     mark = f.ball.transform().position;
     for (int i = 0; i < 60; ++i) f.scene.update(Duration::perSecond(60));
     CHECK_NEAR((f.ball.transform().position - mark).toMeters().x, 3.0, 2e-4);
@@ -512,7 +512,7 @@ void rebase() {
 
 void wrapSeam() {
     Scene scene("loop");
-    const f64 seam = WorldSpace::kHalfLap; // +8 192 m ≡ −8 192 m
+    const f64 seam = (WorldSpace::kDefaultSize / 2); // +8 192 m ≡ −8 192 m
     // A box just past the seam and a ball just before it rolling towards it: with the physics
     // focus at the seam they are neighbours for the physics engine.
     Entity box = scene.createEntity("Box");
@@ -848,7 +848,7 @@ void nativeIntegerBackend() {
     CHECK_NEAR(fallen, -9.81 / 2.0 * (61.0 / 60.0), 1e-3);
     CHECK(ball.transform().position == raw->bodies[0].desc.position);
     CHECK((ball.transform().position - base).x == 0 && (ball.transform().position - base).z == 0); // no drift sideways
-    CHECK(scene.physicsOrigin() == GlobalPosition()); // no window
+    CHECK(scene.worldOrigin() == GlobalPosition()); // no window
 }
 
 } // namespace

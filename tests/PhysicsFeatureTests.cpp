@@ -612,120 +612,82 @@ void farJointsAndRebase() {
     CHECK(j.joint.valid());
 }
 
-// World edges: a barrier (not circular) is a wall the bodies hit, plus a stop on the center (velocity
-// along that axis zeroed) for what the walls miss; a small wrapped world moves the center to the
-// other side, velocity kept, outside the physics engine.
+// The circular world: positions go around the world's size by themselves; the physics carries
+// bodies across a seam (velocity kept, reported to scripts) and collides them across it.
 struct EdgeRecorder : Script {
-    std::vector<WorldEdgeHit> hits;
-    void onWorldEdge(const WorldEdgeHit& h) override { hits.push_back(h); }
+    std::vector<WorldWrapHit> hits;
+    void onWorldWrap(const WorldWrapHit& h) override { hits.push_back(h); }
 };
 
-void worldEdges() {
+void circularWorld() {
     // The rule itself, in exact world steps.
-    const WorldBounds barrier = WorldBounds::box(20.0, 0.0, 0.0, WorldEdge::Barrier);
-    GlobalPosition p(10.5, 3.0, -7000.0);
-    std::array<WorldEdgeHit, 3> hits;
-    CHECK(barrier.constrain(p, &hits) == 1u && p == GlobalPosition(10.0, 3.0, -7000.0));
-    CHECK(hits[0].axis == 0 && hits[0].side == 1 && hits[0].edge == WorldEdge::Barrier);
-    CHECK(barrier.constrain(p) == 0u); // on the edge is inside
-    p = GlobalPosition(-12.0, 0.0, 0.0);
-    CHECK(barrier.constrain(p) == 1u && p == GlobalPosition(-10.0, 0.0, 0.0));
-    const WorldBounds wrap = WorldBounds::box(20.0, 0.0, 20.0, WorldEdge::Wrap);
-    p = GlobalPosition(10.25, 1.0, -10.5);
-    CHECK(wrap.constrain(p, &hits) == 5u && p == GlobalPosition(-9.75, 1.0, 9.5));
-    CHECK(hits[2].side == -1 && hits[2].edge == WorldEdge::Wrap);
-    p = GlobalPosition(-10.0, 0.0, 0.0);
-    CHECK(wrap.constrain(p) == 0u); // [−10, +10)
-    p = GlobalPosition(8000.0, 0.0, 0.0);
-    CHECK(WorldBounds{}.constrain(p) == 0u && WorldBounds{}.isNative()); // the whole torus: nothing to do
-    CHECK(WorldBounds::box(1e9, 0.0, 0.0, WorldEdge::Barrier).axes[0].size == WorldBounds::kMaxBarrierSize);
-
-    // A ball rolling at a barrier hits its wall and bounces back, the touch reported.
     Scene scene;
-    scene.setWorldBounds(WorldBounds::box(20.0, 0.0, 0.0, WorldEdge::Barrier));
+    scene.setWorldSize(WorldSize::meters(20.0, 0.0, 20.0));
+    CHECK(scene.worldSize().size(0) == 20.0 && scene.worldSize().size(1) == WorldSpace::kDefaultSize);
+    CHECK(GlobalPosition(10.25, 1.0, -10.5) == GlobalPosition(-9.75, 1.0, 9.5));
+    CHECK(GlobalPosition(-10.0, 0.0, 0.0).toMeters().x == -10.0); // [−10, +10)
+    CHECK(GlobalPosition(10.0, 0.0, 0.0).toMeters().x == -10.0);
+    CHECK((GlobalPosition(9.0, 0.0, 0.0) - GlobalPosition(-9.0, 0.0, 0.0)).toMeters().x == -2.0); // the short way
+    CHECK(GlobalPosition(0.0, 8000.0, 0.0).toMeters().y == 8000.0); // Y keeps the default size
+    CHECK(WorldSize::meters(1e15, 0.0, 0.0).size(0) == WorldSpace::kMaxSize);
+
+    // A ball rolling out at +10 m comes in at −10 m, same velocity, the crossing reported.
     PhysicsSettings ps;
     ps.gravity = {0.0, 0.0, 0.0};
     scene.setPhysicsSettings(ps);
     Entity ball = scene.createEntity("Ball");
+    ball.transform().position = {9.0, 0.0, 0.0};
     auto& brb = ball.add<RigidBodyComponent>();
     brb.linearDamping = 0.0f;
-    brb.restitution = 0.8f;
     ball.add<SphereColliderComponent>();
     auto& rec = ball.addScript<EdgeRecorder>();
     scene.startSimulation();
-    CHECK(scene.physicsBodyCount() == 3); // the ball and the two X walls
     scene.update(Duration::perSecond(60)); // onCreate
-    scene.setLinearVelocity(ball, {12.0f, 0.0f, 1.0f});
-    f64 farthest = 0.0;
-    for (int i = 0; i < 90; ++i) {
-        scene.update(Duration::perSecond(60));
-        farthest = std::max(farthest, ball.transform().position.toMeters().x);
-    }
-    CHECK(farthest < 9.6 && farthest > 9.3); // its surface stopped at the wall (radius 0.5)
-    const glm::vec3 v = scene.linearVelocity(ball).toGlm();
-    CHECK(v.x < -5.0f && v.z > 0.5f); // bounced back, still sliding along Z
-    CHECK(!rec.hits.empty() && rec.hits[0].axis == 0 && rec.hits[0].side == 1 && rec.hits[0].edge == WorldEdge::Barrier);
-
-    // What the walls miss (here: a layer that does not collide with them) stops by its center:
-    // exactly at the edge, its X velocity zeroed, Z velocity kept. It is not pinned there.
-    scene.stopSimulation();
-    ps.layers.set(0, 1, false);
-    scene.setPhysicsSettings(ps);
-    Entity ghost = scene.createEntity("Ghost");
-    ghost.transform().position = {0.0, 0.0, 5.0};
-    auto& grb = ghost.add<RigidBodyComponent>();
-    grb.linearDamping = 0.0f;
-    grb.layer = 1;
-    ghost.add<SphereColliderComponent>();
-    auto& grec = ghost.addScript<EdgeRecorder>();
-    scene.startSimulation();
-    scene.update(Duration::perSecond(60));
-    scene.setLinearVelocity(ghost, {12.0f, 0.0f, 1.0f});
-    for (int i = 0; i < 90; ++i) scene.update(Duration::perSecond(60));
-    CHECK(ghost.transform().position.toMeters().x == 10.0);
-    const glm::vec3 gv = scene.linearVelocity(ghost).toGlm();
-    CHECK(gv.x == 0.0f && std::abs(gv.z - 1.0f) < 1e-3f);
-    CHECK(!grec.hits.empty() && grec.hits[0].axis == 0 && grec.hits[0].side == 1);
-    scene.setLinearVelocity(ghost, {-2.0f, 0.0f, 0.0f});
-    scene.update(Duration::perSecond(60));
-    CHECK(ghost.transform().position.toMeters().x < 10.0);
-    scene.destroyEntity(ghost);
-
-    // Changing the world while simulating rebuilds the walls (Z barriers too: four walls).
-    scene.setWorldBounds(WorldBounds::box(20.0, 0.0, 20.0, WorldEdge::Barrier));
-    CHECK(scene.physicsBodyCount() == 5);
-    scene.setWorldBounds({});
-    CHECK(scene.physicsBodyCount() == 1);
-
-    // The same world wrapping: out at +10 m, in at −10 m, same velocity.
-    scene.stopSimulation();
-    scene.setWorldBounds(WorldBounds::box(20.0, 0.0, 0.0, WorldEdge::Wrap));
-    ball.transform().position = {9.0, 0.0, 0.0};
-    rec.hits.clear();
-    scene.startSimulation();
     scene.setLinearVelocity(ball, {6.0f, 0.0f, 0.0f});
     for (int i = 0; i < 20; ++i) scene.update(Duration::perSecond(60)); // 2 m
     const f64 x = ball.transform().position.toMeters().x;
     CHECK(x > -10.0 && x < -8.5);
     CHECK(std::abs(scene.linearVelocity(ball).toGlm().x - 6.0f) < 1e-3f);
-    CHECK(rec.hits.size() == 1 && rec.hits[0].edge == WorldEdge::Wrap);
+    CHECK(rec.hits.size() == 1 && rec.hits[0].axis == 0 && rec.hits[0].side == 1);
 
-    // Without a body (and kinematic bodies): the transform itself, once per update.
+    // Two balls on both sides of the seam collide through it: for the physics they are neighbours.
     scene.stopSimulation();
-    scene.setWorldBounds(WorldBounds::box(20.0, 20.0, 20.0, WorldEdge::Barrier));
+    ball.transform().position = {8.5, 0.0, 0.0};
+    Entity other = scene.createEntity("Other");
+    other.transform().position = {-8.5, 0.0, 0.0};
+    other.add<RigidBodyComponent>().linearDamping = 0.0f;
+    other.add<SphereColliderComponent>();
+    scene.startSimulation();
+    scene.setLinearVelocity(ball, {6.0f, 0.0f, 0.0f});
+    for (int i = 0; i < 40; ++i) scene.update(Duration::perSecond(60));
+    CHECK(scene.linearVelocity(other).toGlm().x > 2.0f); // pushed along +X, from the other side
+    CHECK(scene.linearVelocity(ball).toGlm().x < 4.0f);
+
+    // Without a body: the transform itself is always inside.
     Entity marker = scene.createEntity("Marker");
     marker.transform().position = {0.0, 50.0, -30.0};
-    scene.update(Duration::perSecond(60));
-    CHECK(marker.transform().position == GlobalPosition(0.0, 10.0, -10.0));
+    CHECK(marker.transform().position == GlobalPosition(0.0, 50.0, -10.0));
+
+    // A smaller world brings every position inside it.
+    scene.stopSimulation();
+    marker.transform().position = {9.0, 0.0, 9.0};
+    scene.setWorldSize(WorldSize::meters(10.0, 0.0, 10.0));
+    CHECK(marker.transform().position == GlobalPosition(-1.0, 0.0, -1.0));
 
     // Saved with the scene.
     const std::string json = serializeScene(scene);
     Scene back;
     CHECK(deserializeScene(back, json));
-    CHECK(back.worldBounds() == scene.worldBounds());
+    CHECK(back.worldSize() == scene.worldSize());
     Scene plain;
     CHECK(deserializeScene(plain, R"({"format": "nova.scene", "version": 1, "entities": []})"));
-    CHECK(plain.worldBounds().isNative());
+    CHECK(plain.worldSize().isDefault());
+    // Older files with barrier edges load as circular worlds of the same size.
+    Scene old;
+    CHECK(deserializeScene(old, R"({"format": "nova.scene", "version": 1, "world": {"axes": [{"size": 30, "edge": "Barrier"},
+        {"size": 16384, "edge": "Wrap"}, {"size": 40, "edge": "Wrap"}]}, "entities": []})"));
+    CHECK(old.worldSize() == WorldSize::meters(30.0, 0.0, 40.0));
+    WorldSize::setActive({});
 }
 
 void prefabRemapsRefs() {
@@ -936,7 +898,7 @@ int main() {
         {"joints: lifetime with bodies and components", jointLifetime},
         {"joints: far out, across a rebase", farJointsAndRebase},
         {"joints: prefab references and saving", prefabRemapsRefs},
-        {"world edges: barrier walls, center stops, wrap-around", worldEdges},
+        {"circular world: wrap-around, collisions across the seam, files", circularWorld},
         {"characters: walk, land, jump", characterWalks},
         {"characters: slide along walls", characterSlidesAlongWalls},
         {"characters: stairs and steep slopes", characterStairsAndSlopes},

@@ -5,11 +5,17 @@
 
 #include "nova/math/Time.h"
 #include "nova/scene/Entity.h"
-#include "nova/scene/WorldBounds.h"
+#include "nova/math/WorldSpace.h"
 
 #include <vector>
 
 namespace nova {
+
+/// @brief A seam of the circular world crossed by an entity (see Script::onWorldWrap).
+struct WorldWrapHit {
+    int axis = 0; ///< 0 = X, 1 = Y, 2 = Z.
+    int side = 1; ///< +1: left through the positive edge (came in at the negative one), −1: the other way.
+};
 
 /// @brief A contact as seen from the script's own entity ("self").
 /// @see physics::ContactEvent for the symmetric, backend-level event.
@@ -57,9 +63,9 @@ public:
     /// @brief This entity's JointComponent broke (it held more than its break force or torque).
     /// @param connected The entity it held (invalid for the world).
     virtual void onJointBreak(Entity /*connected*/) {}
-    /// @brief This entity's center reached an edge of the world (Scene::worldBounds()): it wrapped
-    ///        to the other side, or a barrier stopped it (velocity along that axis zeroed).
-    virtual void onWorldEdge(const WorldEdgeHit& /*hit*/) {}
+    /// @brief The physics moved this entity across a seam of the circular world (Scene::worldSize()):
+    ///        it left one side and came in at the other. Reported for dynamic bodies and characters.
+    virtual void onWorldWrap(const WorldWrapHit& /*hit*/) {}
 
     /// @brief The entity this script is attached to.
     Entity entity() const { return m_entity; }

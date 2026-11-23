@@ -85,6 +85,7 @@ void Scene::resetStorage() {
 }
 
 void Scene::update(Duration frame) {
+    activateWorld(); // positions go around this scene's world
     m_time += frame;
     const f32 dt = frame.secondsF(); // scripts and built-in systems work in float seconds
 
@@ -111,9 +112,8 @@ void Scene::update(Duration frame) {
         t.rotate(r.speed * dt, r.axis);
     }
 
-    if (!m_worldBounds.isNative()) constrainEntities(); // before the steps: kinematic bodies move from here
     if (m_physics) stepPhysics(frame);
-    dispatchEdgeHits();
+    dispatchWrapHits();
 }
 
 Entity Scene::primaryCamera() {
@@ -123,6 +123,7 @@ Entity Scene::primaryCamera() {
 }
 
 bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cameraOverride) {
+    activateWorld();
     out.clear();
     out.time = static_cast<f32>(m_time.secondsInCycle(kShaderTimeCycle));
 

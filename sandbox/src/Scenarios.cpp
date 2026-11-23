@@ -97,7 +97,7 @@ struct Shuttle : Script {
 };
 
 // Keeps its body moving along `direction`, kicking it in a new pseudo-random direction every so
-// often (deterministic); turns back at barriers, keeps going through wraps.
+// often (deterministic); keeps going through the seams of the world.
 struct Mover : Script {
     glm::vec3 direction{1.0f, 0.0f, 0.0f};
     float speed = 7.0f, kickEvery = 3.0f, sinceKick = 0.0f;
@@ -113,24 +113,20 @@ struct Mover : Script {
         const float along = glm::dot(v, direction);
         if (along < speed) scene().setLinearVelocity(entity(), v + direction * (speed - along));
     }
-    void onWorldEdge(const WorldEdgeHit& hit) override {
-        if (hit.edge == WorldEdge::Barrier && (direction[hit.axis] > 0.0f) == (hit.side > 0))
-            direction[hit.axis] = -direction[hit.axis];
-    }
 };
 
-// Flashes at the world's edges: red when a barrier stopped it, cyan when it wrapped.
+// Flashes (cyan) when the physics carries it across a seam of the world.
 struct EdgeFlash : Script {
     float glow = 0.0f;
-    bool barrier = false;
-    void onWorldEdge(const WorldEdgeHit& hit) override {
+    int wraps = 0;
+    void onWorldWrap(const WorldWrapHit&) override {
         glow = 1.0f;
-        barrier = hit.edge == WorldEdge::Barrier;
+        ++wraps;
     }
     void onUpdate(float dt) override {
         glow = std::max(0.0f, glow - dt * 2.0f);
         if (auto* m = entity().tryGet<MeshComponent>()) {
-            m->material.emissive = barrier ? glm::vec3(1.0f, 0.25f, 0.15f) : glm::vec3(0.2f, 0.85f, 1.0f);
+            m->material.emissive = glm::vec3(0.2f, 0.85f, 1.0f);
             m->material.emissiveStrength = glow * 6.0f;
         }
     }
@@ -525,18 +521,31 @@ View buildPlayers(Scene& s, const BenchMeshes& m) {
     return {{0.0, 4.0, 10.0}, {0.0, 0.5, 0.0}};
 }
 
-// World edges: a 60 × 60 m world whose X/Z edges are barriers or wrap around.
-View buildEdges(Scene& s, const BenchMeshes& m, WorldEdge edge) {
-    constexpr double kSize = 60.0;
-    s.setWorldBounds(WorldBounds::box(kSize, 0.0, kSize, edge));
-    sun(s);
-    floor(s, m, static_cast<float>(kSize) + 2.0f, edge == WorldEdge::Barrier ? glm::vec4(0.8f, 0.76f, 0.74f, 1) : glm::vec4(0.74f, 0.79f, 0.82f, 1));
-    const glm::vec4 post = edge == WorldEdge::Barrier ? glm::vec4(0.9f, 0.25f, 0.2f, 1) : glm::vec4(0.2f, 0.75f, 0.95f, 1);
-    for (int i = 0; i < 4; ++i)
-        visual(s, "Corner", m.cube, {(i & 1) ? kSize / 2 : -kSize / 2, 1.5, (i & 2) ? kSize / 2 : -kSize / 2},
-               {0.3f, 3.0f, 0.3f}, post);
-    for (int i = 0; i < 12; ++i) {
-        const double a = i * 0.5236, r = 6.0 + (i % 3) * 4.0;
+// A floor of `count` × `count` tiles of `tile` meters centered on the origin (top face at y = 0).
+// In a small circular world one floor body would only cover the copy nearest its center; tiles
+// are each placed on the copy nearest the physics origin, so the floor surrounds the focus.
+void tiledFloor(Scene& s, const BenchMeshes& m, int count, float tile, bool visible, const glm::vec4& color) {
+    for (int x = 0; x < count; ++x)
+        for (int z = 0; z < count; ++z) {
+            const double cx = (x - (count - 1) * 0.5) * tile, cz = (z - (count - 1) * 0.5) * tile;
+            const float shade = ((x + z) % 2) ? 0.92f : 1.0f;
+            Entity t = s.createEntity("Floor tile");
+            t.transform().position = {cx, 0.0, cz};
+            t.transform().scale = glm::vec3(tile, 1.0f, tile);
+            if (visible) {
+                auto& mc = t.add<MeshComponent>(m.plane);
+                mc.material.baseColor = glm::vec4(glm::vec3(color) * shade, 1.0f);
+                mc.material.checker = true;
+            }
+            t.add<RigidBodyComponent>(physics::BodyType::Static);
+            t.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
+        }
+}
+
+// Balls that wander and flash at the seams, and crates to knock across them.
+void wanderers(Scene& s, const BenchMeshes& m, int balls, double spread) {
+    for (int i = 0; i < balls; ++i) {
+        const double a = i * (6.2831853 / balls), r = spread * (0.3 + (i % 3) * 0.25);
         Entity b = ball(s, m, "Ball " + std::to_string(i), {r * std::cos(a), 1.0 + (i % 4), r * std::sin(a)}, 1.0f,
                         kPalette[i % 6]);
         auto& rb = b.get<RigidBodyComponent>();
@@ -550,6 +559,18 @@ View buildEdges(Scene& s, const BenchMeshes& m, WorldEdge edge) {
         mover.seed = 17u + static_cast<unsigned>(i) * 31u;
         mover.direction = {static_cast<float>(std::cos(a)), 0.0f, static_cast<float>(std::sin(a))};
     }
+}
+
+// World edges: a 60 × 60 m world whose X and Z axes wrap around (Y keeps the default size).
+View buildEdges(Scene& s, const BenchMeshes& m) {
+    constexpr double kSize = 60.0;
+    s.setWorldSize(WorldSize::meters(kSize, 0.0, kSize));
+    sun(s);
+    tiledFloor(s, m, 6, 10.0f, true, {0.74f, 0.79f, 0.82f, 1});
+    for (int i = 0; i < 4; ++i)
+        visual(s, "Corner", m.cube, {(i & 1) ? kSize / 2 - 0.2 : -kSize / 2 + 0.2, 1.5, (i & 2) ? kSize / 2 - 0.2 : -kSize / 2 + 0.2},
+               {0.3f, 3.0f, 0.3f}, {0.2f, 0.75f, 0.95f, 1});
+    wanderers(s, m, 12, 20.0);
     for (int i = 0; i < 8; ++i) {
         Entity c = body(s, "Crate", m.cube, {-12.0 + i * 3.4, 0.6, -4.0 + (i % 2) * 8.0}, glm::vec3(1.2f), kWood);
         c.get<RigidBodyComponent>().mass = 3.0f;
@@ -579,10 +600,8 @@ const std::vector<Scenario>& scenarios() {
                      buildSensorsLayers, dropOnShelf, "Drop boxes", 0.0f, statusSensorsLayers});
         v.push_back({"Gamepads", "Each connected gamepad gets a ball: left stick rolls, A jumps.", buildPlayers,
                      nullptr, nullptr, 0.0f, nullptr, false, true});
-        v.push_back({"Edges: barrier", "60 x 60 m world with barrier edges: balls flash red and bounce back.",
-                     [](Scene& s, const BenchMeshes& m) { return buildEdges(s, m, WorldEdge::Barrier); }});
         v.push_back({"Edges: wrap", "60 x 60 m world that wraps around: balls flash cyan and come in the other side.",
-                     [](Scene& s, const BenchMeshes& m) { return buildEdges(s, m, WorldEdge::Wrap); }});
+                     buildEdges});
         return v;
     }();
     return list;

@@ -1,8 +1,9 @@
 #pragma once
 
 /// @file
-/// @brief Global-position physics on the 16 km torus, over one float world (Jolt).
+/// @brief Global-position physics on the circular world, over one float world (Jolt).
 
+#include "nova/math/WorldOrigin.h"
 #include "nova/physics/PhysicsWorld.h"
 #include "nova/physics/backend/LocalPhysicsWorld.h"
 
@@ -14,14 +15,15 @@ namespace nova::physics {
 
 /// @brief Implements PhysicsWorld over a single local::World (Jolt), directly.
 ///
-/// The whole world (16 384 m per axis, WorldSpace) fits the range where float physics is
-/// precise, so bodies, joints and characters are handed to the float engine as they are: their
-/// ids and user data are the engine's own. Positions are float meters from a window **origin**,
-/// and the only thing this layer adds is the torus:
-/// - the origin follows the focus (recentered when it is more than 2 km away, by an amount
-///   floats represent exactly), so what is near the focus is never on the far side of the seam;
-/// - bodies and characters more than half a lap from the origin are moved one lap, to their
-///   nearest copy (same place on the torus, velocity kept);
+/// Bodies, joints and characters are handed to the float engine as they are: their ids and user
+/// data are the engine's own. Positions are float meters from a **WorldOrigin**, and the only
+/// things this layer adds are the origin and the circular world (WorldSize):
+/// - the origin follows the focus (WorldOrigin::follow: a grid of cells, with hysteresis, moved by
+///   amounts floats represent exactly), so the engine is precise around the focus and what is
+///   near it is never on the far side of the seam;
+/// - bodies and characters more than half a lap from the origin (on any axis, each with its own
+///   size) are moved one lap, to their nearest copy (same place in the world, velocity kept), so
+///   the two sides of a seam are neighbours for the engine;
 /// - joints to the world are placed again after a recenter (Jolt keeps their anchor in world
 ///   coordinates); breakable joints break here, from the load of the last step.
 class TorusWorld final : public PhysicsWorld {
@@ -66,7 +68,7 @@ public:
     void setCollisionLayers(const CollisionLayers& layers) override;
     void step(Duration dt) override;
     void setFocus(const GlobalPosition& focus) override;
-    GlobalPosition origin() const override { return m_origin; }
+    GlobalPosition origin() const override { return m_origin.position(); }
 
     bool raycast(const GlobalPosition& origin, const glm::vec3& direction, f32 maxDistance, RaycastHit& hit,
                  const QueryFilter& filter) const override;
@@ -93,15 +95,15 @@ private:
         JointId local;                     // in the float world (invalid once broken)
     };
 
-    glm::vec3 toLocal(const GlobalPosition& p) const { return (p - m_origin).toVec3(); }
-    GlobalPosition toGlobal(const glm::vec3& p) const { return m_origin + p; }
+    glm::vec3 toLocal(const GlobalPosition& p) const { return m_origin.toLocal(p); }
+    GlobalPosition toGlobal(const glm::vec3& p) const { return m_origin.toGlobal(p); }
     QueryHit toGlobal(const local::QueryHit& hit, const GlobalPosition& queryOrigin, bool ray) const;
-    void recenter(const GlobalPosition& target);
+    void recenter(const glm::vec3& shift);
     void rewrap(bool everything);
     void placeJoint(u32 index);
 
     Scope<local::World> m_world;
-    GlobalPosition m_origin;          // what float (0, 0, 0) is on the torus
+    WorldOrigin m_origin;             // what float (0, 0, 0) is in the world
     std::map<u32, BodyType> m_bodies; // live bodies by id (ordered: re-wrapping is deterministic)
     std::set<u32> m_characters;       // live characters by id
     std::vector<Joint> m_joints;
