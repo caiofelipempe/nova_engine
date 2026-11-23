@@ -38,7 +38,7 @@ struct FrameData {
     uint pointLightCount;
     uint flags;
     float shadowBias;
-    float cropHalf;     // WrapCrop::View: half a side of the crop box in the camera's axes (m)
+    float _pad0;
     PointLight pointLights[MAX_POINT_LIGHTS];
 };
 

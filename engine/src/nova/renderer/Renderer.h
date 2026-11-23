@@ -157,10 +157,6 @@ enum class WrapShift : u32 {
 enum class WrapCrop : u32 {
     World,  ///< The world's own lap, fixed (from −L/2 to +L/2 on each circular axis): a diorama, cut at the seams.
     Camera, ///< The lap around the camera: the cut is half a lap from it and moves with it.
-    View,   ///< A box in the camera's own axes, turning with it (its front face always perpendicular to the
-            ///< view). By default as big as fits in the lap around the camera (from L/√3 to L a side, by the
-            ///< angle); RenderSettings::wrapCropViewSize makes it bigger, its corners trimmed by that lap.
-            ///< Only in builds with NOVA_RENDER_ORIGIN_ROTATION; otherwise as Camera.
 };
 
 /// @brief Runtime-tweakable rendering options (Renderer::settings()).
@@ -189,10 +185,6 @@ struct RenderSettings {
     glm::bvec3 wrapRepeatAxes{true, false, true};
     /// @brief WrapShift::Crop: the lap it keeps (no further laps are drawn when cropping).
     WrapCrop wrapCrop = WrapCrop::World;
-    /// @brief WrapCrop::View: 0 = the box that fits in the lap around the camera (always square to
-    ///        the view), 1 = a whole lap a side (corners trimmed by that lap when the camera looks
-    ///        along a diagonal), in between. Same cost either way (clip planes).
-    f32 wrapCropViewSize = 0.0f;
 #endif
 };
 

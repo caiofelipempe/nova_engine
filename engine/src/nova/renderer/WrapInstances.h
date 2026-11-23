@@ -45,14 +45,4 @@ using MeshBoundsLookup = std::function<const Bounds*(MeshHandle)>;
 void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLookup& bounds,
                          const glm::mat4& viewProj, const WrapOptions& options, std::vector<WrapInstance>& out);
 
-/// @brief WrapCrop::View: half a side of the crop box turning with the camera. With `grow` 0, the
-///        biggest box in the camera's own axes that fits in the lap around the camera (no point of
-///        the world inside it twice): from L/(2√3), looking along a diagonal, to L/2, looking along
-///        an axis; axes that are not circular do not limit it. `grow` 1: half the largest lap (the
-///        lap's faces trim its corners); in between, in proportion.
-/// @param view World → view rotation of the camera (camera-relative: no translation).
-/// @param size World size per axis (m); 0 = not circular.
-/// @param grow RenderSettings::wrapCropViewSize, 0..1.
-f32 viewCropHalf(const glm::mat3& view, const glm::vec3& size, f32 grow = 0.0f);
-
 } // namespace nova

@@ -409,7 +409,6 @@ void Renderer::renderToBackbuffer(CommandList& cmd, const RenderScene& scene) {
 }
 
 // ------------------------------------------------------------- instances --
-
 #if NOVA_WRAP_RENDER_MODES
 // The seam mode this GPU can draw: without clip distances, split falls back to per triangle and
 // crop to per object.
@@ -473,12 +472,6 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     fd.originTiled = glm::vec4(tiledOrigin(scene.camera.origin), gpu::kWorldTile);
 #if NOVA_WRAP_RENDER_MODES
     fd.wrapSize = glm::vec4(scene.wrapSize, static_cast<f32>(wrapMode()));
-#if NOVA_RENDER_ORIGIN_ROTATION
-    if (wrapMode() == WrapShift::Crop && s.wrapCrop == WrapCrop::View) {
-        fd.wrapSize.w = 4.0f; // NOVA_WRAP_CROP_VIEW
-        fd.cropHalf = viewCropHalf(glm::mat3(scene.camera.view), scene.wrapSize, s.wrapCropViewSize);
-    }
-#endif
 #else
     fd.wrapSize = glm::vec4(scene.wrapSize, 0.0f);
 #endif

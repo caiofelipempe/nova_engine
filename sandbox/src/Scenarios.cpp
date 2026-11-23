@@ -1,7 +1,5 @@
 #include "Scenarios.h"
 
-#include <nova/renderer/WrapInstances.h>
-
 #include <cmath>
 
 using namespace nova;
@@ -642,12 +640,6 @@ void wrapControls() {
         ImGui::RadioButton("The world's lap (fixed: a diorama)", &crop, static_cast<int>(WrapCrop::World));
         ImGui::SameLine();
         ImGui::RadioButton("Around the camera", &crop, static_cast<int>(WrapCrop::Camera));
-#if NOVA_RENDER_ORIGIN_ROTATION
-        // The crop turning with the camera: its front face always perpendicular to the view.
-        ImGui::RadioButton("Turning with the camera", &crop, static_cast<int>(WrapCrop::View));
-        if (rs.wrapCrop == WrapCrop::View)
-            ImGui::SliderFloat("Box size (0: fits, 1: a whole lap)", &rs.wrapCropViewSize, 0.0f, 1.0f, "%.2f");
-#endif
         rs.wrapCrop = static_cast<WrapCrop>(crop);
     }
     int laps = static_cast<int>(rs.wrapRepeat);
@@ -680,13 +672,6 @@ void statusTiny(Scene& s) {
         const glm::dvec3 c = cam.transform().position.toMeters();
         auto cut = [](f64 v) { return v + kTinySize / 2 >= kTinySize / 2 ? v - kTinySize / 2 : v + kTinySize / 2; };
         ImGui::Text("Cut (split) at x = %.1f m, z = %.1f m: fly to slide it", cut(c.x), cut(c.z));
-#if NOVA_RENDER_ORIGIN_ROTATION
-        // The crop turning with the camera: as big as fits in the lap around it at this angle.
-        const glm::mat3 view = glm::mat3_cast(glm::conjugate(cam.transform().orientation()));
-        const f32 grow = Application::get().renderer().settings().wrapCropViewSize;
-        ImGui::Text("Crop turning with the camera: a box %.1f m a side (fits: %.1f to %.1f by the angle)",
-                    2.0f * viewCropHalf(view, glm::vec3(s.worldSize().sizes()), grow), kTinySize / std::sqrt(3.0), kTinySize);
-#endif
     }
     wrapControls();
 }

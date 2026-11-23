@@ -36,14 +36,6 @@ option(NOVA_SHADER_COMPILER  "Compile game shaders at runtime (shaderc), with ho
 # RenderSettings::wrapRepeat draws further laps of the world. OFF: each object at its copy nearest the
 # camera, with no extra shader code.
 option(NOVA_WRAP_RENDER_MODES "Choose how objects across the world seam are drawn (triangle / object / split / crop)" ON)
-# The render origin turning with the camera too (needs NOVA_WRAP_RENDER_MODES): adds WrapCrop::View,
-# a crop box in the camera's own axes (its front face always perpendicular to the view), sized every
-# frame to fit in the lap around the camera. OFF by default; the presets (the sandbox) turn it on.
-option(NOVA_RENDER_ORIGIN_ROTATION "Crop turning with the camera (WrapCrop::View)" OFF)
-if(NOVA_RENDER_ORIGIN_ROTATION AND NOT NOVA_WRAP_RENDER_MODES)
-    message(WARNING "NOVA_RENDER_ORIGIN_ROTATION needs NOVA_WRAP_RENDER_MODES: turned off")
-    set(NOVA_RENDER_ORIGIN_ROTATION OFF CACHE BOOL "" FORCE)
-endif()
 
 if(NOT NOVA_RHI_VULKAN)
     message(FATAL_ERROR "At least one RHI backend is required (only Vulkan is implemented).")

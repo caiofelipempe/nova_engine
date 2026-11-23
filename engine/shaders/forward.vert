@@ -13,16 +13,10 @@ layout(location = 2) out vec2 vUV;
 #define NOVA_WRAP_OBJECT 1u
 #define NOVA_WRAP_SPLIT 2u
 #define NOVA_WRAP_CROP 3u
-#define NOVA_WRAP_CROP_VIEW 4u // crop in the camera's own axes (NOVA_RENDER_ORIGIN_ROTATION builds)
 
-#if NOVA_RENDER_ORIGIN_ROTATION
-#define NOVA_CLIP_PLANES 6 // the lap's box (0..2) and the crop box turning with the camera (3..5)
-#else
-#define NOVA_CLIP_PLANES 3
-#endif
 out gl_PerVertex {
     vec4 gl_Position;
-    float gl_ClipDistance[NOVA_CLIP_PLANES];
+    float gl_ClipDistance[3];
 };
 
 // Whole laps that bring `d` (from the lap's center) within half a lap, on the circular axes.
@@ -60,20 +54,6 @@ void main() {
     const bool clipped = mode == NOVA_WRAP_SPLIT || mode == NOVA_WRAP_CROP;
     for (int i = 0; i < 3; ++i)
         gl_ClipDistance[i] = (clipped && size[i] > 0.0) ? size[i] * 0.5 - abs(world[i] - cell[i]) : 1.0;
-#if NOVA_RENDER_ORIGIN_ROTATION
-    // Crop turning with the camera: a box in its own axes (positions are camera-relative, so the
-    // view matrix only turns them), cut by the lap around the camera too. As big as fits in that
-    // lap, it is all there is; bigger (RenderSettings::wrapCropViewSize), its corners are trimmed
-    // by the lap's faces: each object is drawn once, at its copy nearest the camera.
-    for (int i = 0; i < 3; ++i) gl_ClipDistance[3 + i] = 1.0;
-    if (mode == NOVA_WRAP_CROP_VIEW) {
-        const vec3 seen = mat3(pc.frame.data.view) * world.xyz;
-        for (int i = 0; i < 3; ++i) {
-            gl_ClipDistance[i] = size[i] > 0.0 ? size[i] * 0.5 - abs(world[i]) : 1.0;
-            gl_ClipDistance[3 + i] = pc.frame.data.cropHalf - abs(seen[i]);
-        }
-    }
-#endif
 #else
     Vertex v = pc.vertices.items[gl_VertexIndex]; // vertex pulling through a buffer address
     vec4 world = inst.model * vec4(v.position, 1.0);

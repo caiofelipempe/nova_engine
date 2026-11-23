@@ -75,11 +75,7 @@ public:
         load(first, false); // GameLayer starts the simulation after onStart()
 #if NOVA_WRAP_RENDER_MODES
         if (s_wrapShift >= 0) r.settings().wrapShift = static_cast<nova::WrapShift>(s_wrapShift);
-        if (s_cropSize >= 0.0f) r.settings().wrapCropViewSize = s_cropSize;
-        if (s_wrapShift == 3)
-            r.settings().wrapCrop = s_crop == "camera" ? nova::WrapCrop::Camera
-                                  : s_crop == "view"   ? nova::WrapCrop::View
-                                                       : nova::WrapCrop::World;
+        if (s_wrapShift == 3) r.settings().wrapCrop = s_cropCamera ? nova::WrapCrop::Camera : nova::WrapCrop::World;
         if (s_wrapRepeat >= 0) r.settings().wrapRepeat = static_cast<nova::u32>(s_wrapRepeat);
 #endif
         if (s_selfCheck) {
@@ -95,9 +91,8 @@ public:
 
     static inline bool s_selfCheck = false, s_checkFailed = false;
     static inline std::string s_startScenario;              // --scenario "<name>"
-    static inline int s_wrapShift = -1, s_wrapRepeat = -1; // --wrap triangle|object|split|crop|crop-camera|crop-view, --laps N
-    static inline std::string s_crop;                       // "camera", "view" or "" (the world's lap)
-    static inline float s_cropSize = -1.0f;                 // --crop-size 0..1 (crop-view)
+    static inline int s_wrapShift = -1, s_wrapRepeat = -1; // --wrap triangle|object|split|crop|crop-camera, --laps N
+    static inline bool s_cropCamera = false;
 
     // Like GameLayer::onUpdate, plus pause, single step and time scale.
     void onUpdate(float dt) override {
@@ -434,12 +429,11 @@ int main(int argc, char** argv) {
         const bool hasValue = i + 1 < argc;
         if (arg == "--check") PhysicsBench::s_selfCheck = true;
         else if (arg == "--scenario" && hasValue) PhysicsBench::s_startScenario = argv[++i];
-        else if (arg == "--crop-size" && hasValue) PhysicsBench::s_cropSize = static_cast<float>(std::atof(argv[++i]));
         else if (arg == "--laps" && hasValue) PhysicsBench::s_wrapRepeat = std::atoi(argv[++i]);
         else if (arg == "--wrap" && hasValue) {
             const std::string_view v = argv[++i];
             PhysicsBench::s_wrapShift = v == "triangle" ? 0 : v == "object" ? 1 : v == "split" ? 2 : v.starts_with("crop") ? 3 : -1;
-            if (v.starts_with("crop-")) PhysicsBench::s_crop = std::string(v.substr(5));
+            PhysicsBench::s_cropCamera = v == "crop-camera";
         }
     }
     const int code = nova::run<PhysicsBench>({.name = "Nova Physics Bench", .width = 1280, .height = 720});
