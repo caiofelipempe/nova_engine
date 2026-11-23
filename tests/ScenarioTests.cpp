@@ -78,6 +78,47 @@ void wrapWorld() {
     CHECK(c.ballsWrapped >= 6);
 }
 
+void tinyWorld() {
+    // 48 m on every axis: a crate stack stands right on the Z seam, balls cross every seam and
+    // never fall through the floor; two runs agree bit for bit.
+    auto run = [](std::vector<u64>& hashes, bool report) {
+        Scene scene;
+        buildSmallWorld(scene, kMeshes, SmallWorld::Tiny);
+        CHECK(scene.worldSize() == WorldSize::cube(kTinyWorldSize));
+        auto balls = withScript(scene, "Ball ");
+        auto crates = withScript(scene, "Seam crate ");
+        CHECK(balls.size() == 8 && crates.size() == 4);
+        // UUIDs are random per entity: number them in creation order so both runs hash alike.
+        u64 next = 1;
+        for (auto [e, id] : scene.view<IdComponent>().each()) id.uuid = next++;
+        scene.startSimulation();
+        bool aboveFloor = true, cratesUp = true;
+        f64 stackTop = 0.0;
+        for (int step = 0; step < 60 * 15; ++step) {
+            scene.update(Duration::perSecond(60));
+            for (Entity b : balls) aboveFloor &= b.transform().position.toMeters().y > 0.3;
+            for (Entity c : crates) cratesUp &= c.transform().position.toMeters().y > 0.4;
+            if (step == 120) // 2 s: settled on the seam (the balls may knock it over later)
+                for (Entity c : crates) {
+                    const glm::dvec3 p = c.transform().position.toMeters();
+                    if (p.y > stackTop) stackTop = p.y;
+                    CHECK(std::abs(std::abs(p.z) - kTinyWorldSize / 2) < 0.1); // still on the seam
+                }
+            if (step < 300) hashes.push_back(scene.stateHash());
+        }
+        CHECK(aboveFloor); // the balls never fall through the floor, across any seam
+        CHECK(cratesUp);
+        CHECK(stackTop > 3.4); // the top crate at 3.5 m: the stack stands on tiles of both sides
+        const EdgeCounts c = countEdges(balls);
+        if (report) std::printf("  tiny world: %d seams crossed by %d of 8 balls in 15 s; stack top at %.2f m after 2 s\n", c.wraps, c.ballsWrapped, stackTop);
+        CHECK(c.ballsWrapped >= 4);
+    };
+    std::vector<u64> a, b;
+    run(a, true);
+    run(b, false);
+    CHECK(a == b && a.size() == 300);
+}
+
 void openWorld() {
     Scene scene;
     Entity cam = buildSmallWorld(scene, kMeshes, SmallWorld::TorusSeam);
@@ -137,6 +178,7 @@ int main() {
     const std::vector<std::pair<const char*, std::function<void()>>> tests = {
         {"small world, wrap-around: out one side, in the other", wrapWorld},
         {"torus seam: bodies run through it", openWorld},
+        {"tiny world (48 m cube): a stack on the seam, balls through every seam, deterministic", tinyWorld},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

@@ -663,6 +663,29 @@ void circularWorld() {
     CHECK(scene.linearVelocity(other).toGlm().x > 2.0f); // pushed along +X, from the other side
     CHECK(scene.linearVelocity(ball).toGlm().x < 4.0f);
 
+    // The float window has its own seam, half a lap from the WorldOrigin. A static tile across it
+    // (from 8 m to 11 m ≡ −9 m) still holds a ball dropped on its far part: statics in small worlds
+    // have ghost copies one lap over.
+    {
+        Scene tile;
+        tile.setWorldSize(WorldSize::meters(20.0, 0.0, 0.0));
+        tile.setWorldOrigin(GlobalPosition()); // the window seam at x = ±10 m
+        Entity floor = tile.createEntity("Tile");
+        floor.transform().position = {9.5, -0.5, 0.0};
+        floor.transform().scale = {3.0, 1.0, 3.0};
+        floor.add<RigidBodyComponent>(BodyType::Static);
+        floor.add<BoxColliderComponent>();
+        Entity dropped = tile.createEntity("Dropped");
+        dropped.transform().position = {-9.6, 2.0, 0.0}; // ≡ 10.4 m: on the tile, past the window seam
+        dropped.add<RigidBodyComponent>();
+        dropped.add<SphereColliderComponent>();
+        tile.startSimulation();
+        CHECK(tile.physicsBodyCount() == 2); // ghosts are not counted
+        for (int i = 0; i < 90; ++i) tile.update(Duration::perSecond(60));
+        CHECK_NEAR(dropped.transform().position.toMeters().y, 0.5, 0.05); // resting on the tile
+        WorldSize::setActive(scene.worldSize());
+    }
+
     // Without a body: the transform itself is always inside.
     Entity marker = scene.createEntity("Marker");
     marker.transform().position = {0.0, 50.0, -30.0};

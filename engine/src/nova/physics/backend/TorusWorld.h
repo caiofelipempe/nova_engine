@@ -24,10 +24,17 @@ namespace nova::physics {
 /// - bodies and characters more than half a lap from the origin (on any axis, each with its own
 ///   size) are moved one lap, to their nearest copy (same place in the world, velocity kept), so
 ///   the two sides of a seam are neighbours for the engine;
+/// - in small worlds (axes of at most kGhostMaxSize) static bodies also get **ghost copies** one
+///   lap over on those axes: the float window has its own seam half a lap from the origin, and
+///   without them what is beyond it would have no floor (dynamic bodies only meet across the
+///   window seam's far side through the statics; keep the focus near the action);
 /// - joints to the world are placed again after a recenter (Jolt keeps their anchor in world
 ///   coordinates); breakable joints break here, from the load of the last step.
 class TorusWorld final : public PhysicsWorld {
 public:
+    /// @brief Axes of at most this size (m) give static bodies ghost copies one lap over.
+    static constexpr f64 kGhostMaxSize = 2048.0;
+
     /// @param backend Float backend creating the local world.
     /// @param desc Parameters of the local world.
     TorusWorld(Backend backend, const WorldDesc& desc);
@@ -101,11 +108,21 @@ private:
     void recenter(const glm::vec3& shift);
     void rewrap(bool everything);
     void placeJoint(u32 index);
+    std::vector<glm::vec3> ghostOffsets() const;
+    void placeGhosts(BodyId primary);
+    void removeGhosts(BodyId primary);
 
     Scope<local::World> m_world;
     WorldOrigin m_origin;             // what float (0, 0, 0) is in the world
     std::map<u32, BodyType> m_bodies; // live bodies by id (ordered: re-wrapping is deterministic)
     std::set<u32> m_characters;       // live characters by id
+    // Static bodies in small worlds: their description and ghost copies (body, offset in meters).
+    struct Ghosts {
+        BodyDesc desc;
+        std::vector<std::pair<BodyId, glm::vec3>> copies;
+    };
+    std::map<u32, Ghosts> m_ghosts;
+    u32 m_ghostCount = 0;
     std::vector<Joint> m_joints;
     std::vector<u32> m_freeJoints;
     std::vector<JointBreakEvent> m_jointBreaks;

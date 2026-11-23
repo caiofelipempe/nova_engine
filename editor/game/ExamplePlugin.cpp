@@ -154,4 +154,7 @@ void ExamplePlugin::onRegister(Registry& r) {
     r.command("Game/Scenarios/Torus Seam", [openScenario](EditorContext& ctx) {
         openScenario(ctx, SmallWorld::TorusSeam);
     });
+    r.command("Game/Scenarios/Tiny World (48 m)", [openScenario](EditorContext& ctx) {
+        openScenario(ctx, SmallWorld::Tiny);
+    });
 }

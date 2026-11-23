@@ -17,10 +17,13 @@ struct ScenarioMeshes {
 enum class SmallWorld {
     Wrap,      ///< A 60 × 60 m world (X and Z): out one side, in the other, colliding across the seam.
     TorusSeam, ///< A floor across the X seam of the default 16 km world: things run through it.
+    Tiny,      ///< 48 m on every axis (Y too): a crate stack on a seam, balls across all of them.
 };
 
 /// Side of the small worlds (X and Z), in meters.
 constexpr double kSmallWorldSize = 60.0;
+/// Size of the tiny world (every axis), in meters.
+constexpr double kTinyWorldSize = 48.0;
 /// Length of the floor across the seam (along X, centered on the seam), in meters.
 constexpr double kSeamFloorLength = 400.0;
 

@@ -173,6 +173,47 @@ Entity buildOpen(Scene& scene, const ScenarioMeshes& m) {
     return camera(scene, {seam - 20.0, 8.0, 10.0}, {seam + 5.0, 2.0, 0.0}); // looking at the seam
 }
 
+// A tiny world, 48 m on every axis (Y too: what falls below comes in from above). Floor tiles of
+// 8 m, a stack of crates right on the Z seam (standing on tiles of both sides, touching across
+// it), a bar across the X seam and balls wandering through every seam.
+Entity buildTiny(Scene& scene, const ScenarioMeshes& m) {
+    common(scene);
+    scene.setWorldSize(WorldSize::cube(kTinyWorldSize));
+    constexpr double tile = 8.0;
+    const int count = static_cast<int>(kTinyWorldSize / tile);
+    for (int x = 0; x < count; ++x)
+        for (int z = 0; z < count; ++z) {
+            const GlobalPosition at(-kTinyWorldSize / 2 + tile * (x + 0.5), 0.0, -kTinyWorldSize / 2 + tile * (z + 0.5));
+            const float shade = ((x + z) % 2) ? 0.72f : 0.82f;
+            Entity t = mesh(scene, "Tile " + std::to_string(x) + "," + std::to_string(z), m.plane, at,
+                            {static_cast<float>(tile), 1.0f, static_cast<float>(tile)}, {shade, shade + 0.03f, shade + 0.06f, 1});
+            t.get<MeshComponent>().material.checker = true;
+            t.add<RigidBodyComponent>(physics::BodyType::Static);
+            t.add<BoxColliderComponent>(glm::vec3(0.5f, 0.05f, 0.5f), glm::vec3(0.0f, -0.05f, 0.0f));
+        }
+    const double e = kTinyWorldSize / 2 - 1.0;
+    mesh(scene, "Pillar +X", m.cube, {e, 2.0, -6.0}, {0.8f, 4.0f, 0.8f}, {0.9f, 0.2f, 0.2f, 1});
+    mesh(scene, "Pillar -X", m.cube, {-e, 2.0, -6.0}, {0.8f, 4.0f, 0.8f}, {0.2f, 0.4f, 0.95f, 1});
+    mesh(scene, "Bar across the seam", m.cube, {kTinyWorldSize / 2, 0.4, 8.0}, {10.0f, 0.8f, 0.8f}, {0.95f, 0.5f, 0.15f, 1});
+    for (int i = 0; i < 4; ++i) {
+        Entity c = mesh(scene, "Seam crate " + std::to_string(i), m.cube, {-8.0 + (i % 2) * 0.2, 0.5 + i * 1.0, kTinyWorldSize / 2},
+                        glm::vec3(1.0f), {0.55f, 0.38f, 0.2f, 1});
+        c.add<RigidBodyComponent>().mass = 2.0f;
+        c.add<BoxColliderComponent>();
+    }
+    for (int i = 0; i < 8; ++i) {
+        const double a = i * 0.785, r = 5.0 + (i % 3) * 4.0;
+        Entity b = ball(scene, m, "Ball " + std::to_string(i), {r * std::cos(a), 1.0 + (i % 3), r * std::sin(a)}, kColors[i % 6]);
+        b.addScript<EdgeFlash>();
+        auto& mover = b.addScript<Mover>();
+        mover.speed = 6.0f + (i % 4);
+        mover.kickEvery = 2.0f + (i % 5) * 0.6f;
+        mover.seed = 5u + static_cast<unsigned>(i) * 13u;
+        mover.direction = {static_cast<float>(std::cos(a)), 0.0f, static_cast<float>(std::sin(a))};
+    }
+    return camera(scene, {0.0, 16.0, 26.0}, {12.0, 0.0, 0.0});
+}
+
 } // namespace
 
 Entity buildSmallWorld(Scene& scene, const ScenarioMeshes& meshes, SmallWorld kind) {
@@ -180,6 +221,7 @@ Entity buildSmallWorld(Scene& scene, const ScenarioMeshes& meshes, SmallWorld ki
     scene.setWorldSize({});
     switch (kind) {
         case SmallWorld::Wrap: scene.setName("Small world (wrap-around)"); return buildSmall(scene, meshes);
+        case SmallWorld::Tiny: scene.setName("Tiny world (48 m)"); return buildTiny(scene, meshes);
         case SmallWorld::TorusSeam: break;
     }
     scene.setName("Torus seam");
