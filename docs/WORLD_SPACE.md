@@ -1,12 +1,18 @@
 # Espaço do mundo: posições globais em inteiros
 
-> **Estado:** o mundo já é o **toro de 16 km em Q13.18** (etapas 1–6 da seção
-> [Próxima reformulação](#próxima-reformulação-ponto-fixo-e-mundo-de-16-km-planejado)): `math/Fixed.h`
-> (lib `fpm`), `GlobalPosition`/`GlobalOffset` em `int32` com a volta pelo estouro, `WorldSpace` só com
-> constantes, sem `Integer.h`. As seções de "Modelo" a "Fases" descrevem o modelo anterior (`int64`,
-> unidade e bordas configuráveis), mantidas como histórico. A física é o Jolt direto, pelo `TorusWorld`
-> (sem regiões, dormência nem paredes), compilado com `CROSS_PLATFORM_DETERMINISTIC`, e o estado da
-> simulação é todo em ponto fixo. Falta a etapa 7 (modo grande, `NOVA_LARGE_WORLDS`).
+> **Estado atual:** veja a seção
+> [Posição em 64 bits, mundo sempre circular e WorldOrigin](#posição-em-64-bits-mundo-sempre-circular-e-worldorigin-feito).
+> Resumo:
+> - `GlobalPosition`/`GlobalOffset` são `int64` Q45.18.
+> - O mundo é **sempre circular**, com um tamanho por eixo (`WorldSize`, padrão 16 384 m). Não há
+>   mais barreiras.
+> - A física roda em relação a um `WorldOrigin` em grade.
+> - A renderização é relativa à câmera; a opção `NOVA_WRAP_RENDER_MODES` escolhe como desenhar o que
+>   cruza a emenda.
+>
+> As seções de "Modelo" a "Fases" descrevem um modelo anterior (unidade e bordas configuráveis) e
+> ficam como histórico. A de "Próxima reformulação" descreve as etapas 1–6 (ponto fixo, Jolt
+> determinístico), que estão feitas. Os blocos de 4096 m da etapa 7 continuam como trabalho futuro.
 
 Objetivo: mundos grandes sem perda de precisão, com escala ajustável e bordas que dão a volta ou
 são barreiras.
@@ -159,6 +165,9 @@ scene.setWorldSpace(nova::WorldSpaceDesc::withMaxSize(10, nova::LengthUnit::Kilo
 
 ## Futuro: renderização circular (mundos que dão a volta)
 
+> Feito em boa parte, com a opção `NOVA_WRAP_RENDER_MODES` (`wrapShift`, `wrapRepeat`): veja
+> [Renderização na emenda](#renderização-na-emenda-nova_wrap_render_modes). Texto original abaixo.
+
 Hoje a física é circular, mas a renderização desenha cada objeto **uma vez**, na cópia mais próxima
 da câmera. Basta enquanto o alcance da visão (`farClip`) for menor que meia volta; num mundo de 60 m
 vendo a 400 m, o mundo deveria se repetir até o horizonte — e só aparece uma volta.
@@ -188,6 +197,9 @@ Plano:
   saltos ao mover a câmera e sem cópias fora do campo de visão.
 
 ## Cenários de teste: mundo pequeno com bordas fechadas e abertas
+
+> Histórico: o mundo com barreiras saiu. Os cenários atuais estão em
+> [Cenários](#cenários).
 
 No editor, menu **Game/Scenarios**:
 - **Small World: Closed Edges** — 60 × 40 × 60 m com barreira em todos os eixos. Bolas andam e
@@ -414,20 +426,9 @@ Para um mundo contínuo maior que 16 km, sem tela de carregamento.
   `onChunkLoad`/`onChunkUnload`) fica na engine, porque precisa manter física, renderização e consultas
   consistentes. O **conteúdo** de cada bloco (entidades, terreno, de onde vem) é do jogo.
 
-### Bordas do mundo (feito, depois das etapas 1–6)
-O toro de 16 km continua sendo o espaço das posições; `Scene::worldBounds()` (`scene/WorldBounds.h`)
-recorta dele um mundo menor, por eixo, centrado na origem:
-- **`Wrap`** (circular): até 16.384 m. No tamanho do toro não há nada a fazer (o estouro dá a volta);
-  menor que isso, o centro que passa de ±tamanho/2 é levado para o outro lado, com a mesma velocidade,
-  fora do motor físico (corpos não colidem através dessa borda).
-- **`Barrier`** (não circular): até 15.360 m. Com a simulação rodando, a cena cria paredes estáticas
-  de 4 m logo fora das bordas (cobrindo o mundo nos outros eixos, ou 4 km nos eixos que são o toro
-  inteiro); os corpos batem nelas e o contato vira `Script::onWorldEdge`, sem `onCollision` (a parede não
-  é uma entidade). Para o que as paredes não seguram, o centro volta ao limite e a velocidade naquele
-  eixo é zerada.
-- As regras de centro rodam depois de cada passo da física (corpos dinâmicos e personagens) e uma vez
-  por update para as demais entidades (sem corpo, estáticas, cinemáticas, que são teletransportadas).
-- Salvo no bloco `"world"` da cena (`"axes": [{"size", "edge"}]`); editado no painel World com undo.
+### Bordas do mundo (substituído)
+As bordas `Wrap`/`Barrier` recortadas do toro saíram: veja
+[Posição em 64 bits, mundo sempre circular e WorldOrigin](#posição-em-64-bits-mundo-sempre-circular-e-worldorigin-feito).
 
 ### Etapas de implementação
 1. ✅ Ponto fixo: `fpm` via `FetchContent`, `math/Fixed.h` (aliases, `FixedVec3`, `FixedQuat`), testes de
@@ -458,5 +459,96 @@ recorta dele um mundo menor, por eixo, centrado na origem:
    em `vcpkg-configuration.json`) com `CROSS_PLATFORM_DETERMINISTIC=ON`; o CMake recusa um Jolt sem
    `JPH_CROSS_PLATFORM_DETERMINISTIC`. O teste `physics` confere um hash de estado de referência,
    gravado e igual em Debug e Release (MSVC x64); outra plataforma tem de chegar ao mesmo valor.
-7. Modo grande (`NOVA_LARGE_WORLDS`): blocos, janela, histerese, eventos e um preset de build próprio.
-   Os testes rodam nos dois modos.
+7. Modo grande: as posições já são `int64` Q45.18 e a física já segue um `WorldOrigin` (seção
+   abaixo), sem flag de compilação. Falta o streaming por blocos (janela, dormência, histerese,
+   eventos `onChunkLoad`/`onChunkUnload`).
+
+## Posição em 64 bits, mundo sempre circular e WorldOrigin (feito)
+
+Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Barrier`.
+
+### Posições
+- `GlobalPosition`/`GlobalOffset` são três `int64` em **Q45.18**. O passo continua 2⁻¹⁸ m (≈ 3,8 µm),
+  então posições dentro de ±8 km têm os mesmos bits de antes: arquivos e `stateHash()` não mudam.
+- Os arquivos gravam metros. Acima de 2⁵³ passos por eixo (3,4×10¹⁰ m), em que o `double` deixa de
+  ser exato, gravam também `{"steps": [...]}`, que é exato.
+- `lengthSquared()` é exato até 2³¹ passos por eixo (8 km) e satura além disso. `compareLength`,
+  `isShorterThan` e `isWithin` caem para `double` nesses casos, sem aritmética de 128 bits.
+
+### O mundo é sempre circular
+- `WorldSize` (`math/WorldSpace.h`) guarda o tamanho de cada eixo, em passos pares. O padrão é
+  16 384 m (2³² passos) e a faixa vai de 1 m a 2⁴⁰ m. Todo eixo dá a volta.
+- Um tamanho fica **ativo** de cada vez (`WorldSize::active()`, `ScopedWorldSize`). A aritmética de
+  `GlobalPosition` dá a volta nele:
+  - as coordenadas ficam sempre em [−L/2, L/2);
+  - `b − a` é o caminho mais curto e `a + (b − a) == b`, bit a bit;
+  - `lerp`, `distance` e o resto do código seguem certos perto da emenda sem cuidado especial.
+- A cena ativa o seu tamanho (`update`, `buildRenderScene`, a simulação). `Scene::setWorldSize`
+  leva toda posição para dentro do mundo novo. `Scene::activateWorld()` serve para quem mexe em
+  posições de uma cena que não foi a última atualizada.
+- Saíram `WorldBounds`, `WorldEdge::Barrier`, as paredes e as paradas pelo centro.
+  `Script::onWorldEdge` virou `onWorldWrap(WorldWrapHit{axis, side})`, avisado quando a física
+  leva um corpo dinâmico ou um personagem através de uma emenda.
+- Arquivos antigos com `"edge": "Barrier"` carregam como mundos circulares do mesmo tamanho, com um
+  aviso no log.
+- Painel World: tamanho por eixo, com undo, que restaura também as posições. *View/Show World Seams*
+  desenha as emendas (as duas, quando o mundo é menor que o alcance).
+
+### WorldOrigin: a origem da física
+- `math/WorldOrigin.h`: uma `GlobalPosition` `int64` que fica sempre numa **grade de células**. A
+  célula é uma potência de 2 de passos, no máximo 256 m e no máximo 1/8 do eixo (4 m num mundo de
+  48 m).
+- A origem segue o foco (`setPhysicsFocus`, ou a câmera principal) com histerese: só se move quando
+  o foco passa de 5/8 de célula, e vai para a célula sob o foco. O deslocamento é um número inteiro
+  de células, exato em inteiro e em `float`.
+- Com células de 256 m, a origem fica a no máximo 160 m do foco, onde o `float` tem passo de 15 µm
+  ou menos. Antes, o recentrar podia deixá-la a até 2 km.
+- O Jolt recebe `p − origem` em `float`. `Scene::worldOrigin()` informa a origem atual, e
+  `Scene::setWorldOrigin(p)` a fixa (com `std::nullopt`, ela volta a seguir o foco).
+- Cada corpo vai para a cópia mais próxima da origem, eixo por eixo, com o seu `L`. Assim, em
+  qualquer tamanho de mundo, os dois lados de uma emenda são vizinhos para o Jolt, que **colide
+  através da emenda**.
+- **Corpos fantasma:** a janela `float` tem uma emenda própria, a meia volta da origem. Num mundo
+  pequeno ela cai no meio da ação. Por isso, nos eixos de até 2048 m, os corpos estáticos ganham
+  cópias a ±L, para o chão e as paredes existirem dos dois lados dela. Elas acompanham recentrar,
+  teleporte e propriedades, e não contam em `physicsBodyCount()`.
+- **Limite:** dois corpos dinâmicos de lados opostos da emenda da janela não colidem entre si. Com
+  o foco perto da ação, essa emenda fica a meio mundo dela. Um corpo maior que L/2 pode encostar na
+  própria cópia.
+
+### Renderização na emenda (`NOVA_WRAP_RENDER_MODES`)
+- Tudo continua relativo à câmera: cada objeto é posto na cópia mais próxima dela, pela sua origem.
+  Um objeto que cruza a emenda do outro lado da câmera, a meia volta, aparece inteiro de um lado só.
+- A opção de CMake `NOVA_WRAP_RENDER_MODES` vem **desligada** por padrão. Desligada, não há código
+  novo no shader. O preset `windows-vs2022-wrap` compila com ela ligada em `build-wrap/`. Ligada,
+  `RenderSettings::wrapShift` escolhe:
+  - **`Triangle`** (padrão): cada objeto cuja esfera envolvente cruza a borda da volta da câmera é
+    desenhado sem índice. O `forward.vert` lê os três vértices do triângulo e leva o triângulo
+    inteiro para a volta do seu centróide, então o objeto aparece em parte de cada lado. O corte
+    segue as arestas, e um triângulo grande vai inteiro para um lado; malhas subdivididas (o
+    `MeshData::plane(1, 32)` do sandbox) cortam bem.
+  - **`Object`**: o comportamento sem a opção.
+  - **`Split`**: o objeto é desenhado também na cópia a uma volta (quatro cópias num canto), e cada
+    cópia é recortada exatamente na emenda com `gl_ClipDistance`. Sem o recurso `shaderClipDistance`,
+    o modo cai para `Triangle`. O TLAS recebe as cópias.
+- `RenderSettings::wrapRepeat` desenha mais `n` voltas de cada lado, nos eixos circulares e com
+  frustum culling por cópia. Um mundo pequeno se repete até o horizonte.
+- A lógica das instâncias fica em `renderer/WrapInstances.h` (`expandWrapInstances`). É o mesmo
+  código nos dois builds e tem teste sem GPU.
+- Layouts, nos dois builds: `FrameData::wrapSize`, `DrawPush::indices` e
+  `InstanceData::extra.yzw` (o centro da volta da cópia). A versão do cache de shaders subiu.
+- **Limites:**
+  - no modo `Triangle`, a sombra por ray tracing (BLAS por objeto) e o picking seguem a origem da
+    malha;
+  - no modo `Split`, o ray tracing vê as cópias sem o recorte;
+  - padrões de `s.worldPos` só são contínuos através da emenda quando o período divide L.
+- **Não verificado em GPU** (o desenvolvimento foi sem monitor): os pipelines Vulkan e a imagem dos
+  modos novos ainda precisam ser conferidos no cenário "Tiny circular world" do sandbox.
+
+### Cenários
+- Sandbox: **Edges: wrap** (60 × 60 m) e **Tiny circular world**, com 48 m em todos os eixos. Este
+  tem um chão de uma malha só atravessando a emenda X, sobre ladrilhos invisíveis de colisão,
+  pilares dos dois lados das emendas, uma barra e uma pilha de caixas sobre elas. No painel (com a
+  opção ligada) escolhem-se o modo e as voltas em volta.
+- Editor (*Game/Scenarios*): Small World (Wrap-around), Torus Seam e Tiny World (48 m). Os três
+  rodam sem tela nos `ScenarioTests` (o minúsculo duas vezes, comparando o hash).
