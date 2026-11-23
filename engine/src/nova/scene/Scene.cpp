@@ -94,7 +94,6 @@ void Scene::resetStorage() {
 void Scene::update(Duration frame) {
     activateWorld(); // positions go around this scene's world
     m_time += frame;
-    const f32 dt = frame.secondsF(); // scripts and built-in systems work in float seconds
 
     updateTransforms(); // links made since the last update (loaded, set by tools) before scripts move parents
 
@@ -118,7 +117,8 @@ void Scene::update(Duration frame) {
 
     // Built-in systems.
     for (auto [e, t, r] : m_registry.view<TransformComponent, RotatorComponent>().each()) {
-        t.rotate(r.speed * dt, r.axis);
+        const f64 angle = toDouble(r.speed) * frame.seconds(); // exact frame time, no float in between
+        t.rotation = (TransformComponent::turn(angle, r.axis.toDouble()) * t.rotation).normalized();
     }
 
     updateTransforms(); // children follow their parents (moved by scripts and systems)

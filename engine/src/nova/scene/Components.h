@@ -85,12 +85,13 @@ struct TransformComponent {
         rotation = nova::rotateTowards(orientation(), target, maxAngle);
     }
     /// @brief The fixed-point rotation of `angle` radians around `axis` (any length; zero = none).
-    static FixedQuat turn(f32 angle, const glm::vec3& axis) {
-        const glm::dvec3 a(axis);
-        const f64 len = glm::length(a);
+    static FixedQuat turn(f32 angle, const glm::vec3& axis) { return turn(static_cast<f64>(angle), glm::dvec3(axis)); }
+    /// @brief Same, from doubles (an angle worked out exactly, e.g. a speed times a Duration).
+    static FixedQuat turn(f64 angle, const glm::dvec3& axis) {
+        const f64 len = glm::length(axis);
         if (!(len > 0.0)) return {};
-        const f64 wrapped = std::remainder(static_cast<f64>(angle), 2.0 * glm::pi<f64>()); // [−π, π]: fits Q3.28
-        return FixedQuat::fromAxisAngle(UnitVec(a / len), toFixed<Angle>(wrapped));
+        const f64 wrapped = std::remainder(angle, 2.0 * glm::pi<f64>()); // [−π, π]: fits Q3.28
+        return FixedQuat::fromAxisAngle(UnitVec(axis / len), toFixed<Angle>(wrapped));
     }
 
     /// @brief Interpolates two transforms: exact position (shortest way, wrap seams included),
@@ -188,9 +189,12 @@ struct PointLightComponent {
 };
 
 /// @brief Built-in behaviour: spins the entity around `axis` while the scene updates.
+///
+/// Fixed point like the rest of what moves the simulation (it turns kinematic bodies): each
+/// update turns it by `speed` times the exact frame duration.
 struct RotatorComponent {
-    glm::vec3 axis{0.0f, 1.0f, 0.0f}; ///< Rotation axis (world space; normalized internally).
-    f32 speed = 1.0f;                 ///< Angular speed in radians per second.
+    ScalarVec axis{0, 1, 0}; ///< Rotation axis (world space, any length; normalized internally).
+    Scalar speed = 1;        ///< Angular speed in radians per second.
 };
 
 /// @brief Marks an entity created from a prefab or model asset (see AssetDatabase::instantiate).
