@@ -15,6 +15,7 @@
     "imguizmo",
     "joltphysics",
     "nlohmann-json",
+    "miniaudio",
     {
       "name": "imgui",
       "features": [ "docking-experimental", "glfw-binding", "vulkan-binding" ]

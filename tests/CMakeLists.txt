@@ -19,6 +19,11 @@ target_link_libraries(NovaAssetTests PRIVATE Nova::Engine)
 set_target_properties(NovaAssetTests PROPERTIES FOLDER "Tests")
 add_test(NAME assets COMMAND NovaAssetTests)
 
+add_executable(NovaAudioTests AudioTests.cpp)
+target_link_libraries(NovaAudioTests PRIVATE Nova::Engine)
+set_target_properties(NovaAudioTests PROPERTIES FOLDER "Tests")
+add_test(NAME audio COMMAND NovaAudioTests)
+
 add_executable(NovaShaderTests ShaderTests.cpp)
 target_link_libraries(NovaShaderTests PRIVATE Nova::Engine)
 nova_copy_shaders(NovaShaderTests) # engine GLSL headers in <exe>/shaders/include

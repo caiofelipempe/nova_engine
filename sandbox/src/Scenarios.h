@@ -39,6 +39,7 @@ extern bool gRecordContacts;
 struct FlashOnHit : nova::Script {
     float flash = 0.0f;
     glm::vec3 color{1.0f, 0.6f, 0.2f};
+    float sinceKnock = 1.0f; // seconds since its last knock sound
     void onCollision(const nova::Collision& c) override;
     void onUpdate(float dt) override;
 };

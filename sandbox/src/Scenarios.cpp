@@ -11,13 +11,39 @@ std::vector<ContactMark>& contactMarks() {
 }
 bool gRecordContacts = true;
 
+namespace {
+// A short knock (decaying noise), made once.
+std::shared_ptr<const AudioClip> knockSound() {
+    static const std::shared_ptr<const AudioClip> clip = [] {
+        auto c = std::make_shared<AudioClip>();
+        c->name = "knock";
+        c->sampleRate = 22050;
+        unsigned seed = 12345u;
+        for (int i = 0; i < 22050 / 8; ++i) {
+            seed = seed * 1664525u + 1013904223u;
+            const float noise = static_cast<float>(seed >> 8) / static_cast<float>(1u << 24) * 2.0f - 1.0f;
+            const float t = static_cast<float>(i) / 22050.0f;
+            c->samples.push_back(noise * std::exp(-t * 40.0f) * 0.6f + std::sin(t * 2.0f * 3.14159265f * 180.0f) * std::exp(-t * 25.0f) * 0.4f);
+        }
+        return c;
+    }();
+    return clip;
+}
+} // namespace
+
 void FlashOnHit::onCollision(const Collision& c) {
     flash = 1.0f;
     if (gRecordContacts && contactMarks().size() < 2000) contactMarks().push_back({c.point, c.normal, 0.0f});
+    // A knock where it hit (not more than ~10 a second per body; not in hidden determinism runs).
+    if (gRecordContacts && sinceKnock > 0.1f) {
+        sinceKnock = 0.0f;
+        scene().playSound(knockSound(), c.point, 0.7f, 0.8f + 0.4f * flash);
+    }
 }
 
 void FlashOnHit::onUpdate(float dt) {
     flash = std::max(0.0f, flash - dt * 3.0f);
+    sinceKnock += dt;
     if (auto* m = entity().tryGet<MeshComponent>()) {
         m->material.emissive = color;
         m->material.emissiveStrength = flash * 4.0f;

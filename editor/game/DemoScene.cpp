@@ -118,8 +118,17 @@ void buildDemoScene(editor::EditorContext& ctx) {
     if (const AssetRecord* model = assets.findByPath("models/crate/crate.gltf"))
         assets.instantiate(model->guid, scene, {3.5f, 0.5f, 3.0f});
     // An animated model: its root plays the first clip ("spin"); the inspector picks another by name.
-    if (const AssetRecord* windmill = assets.findByPath("models/windmill/windmill.gltf"))
-        assets.instantiate(windmill->guid, scene, {-4.0f, 0.0f, 3.0f});
+    if (const AssetRecord* windmill = assets.findByPath("models/windmill/windmill.gltf")) {
+        auto parts = assets.instantiate(windmill->guid, scene, {-4.0f, 0.0f, 3.0f});
+        // It hums while the scene plays (Play): a looping sound placed at the windmill.
+        if (const AssetRecord* hum = assets.findByPath("sounds/hum.wav"); hum && !parts.empty()) {
+            auto& src = parts[0].add<AudioSourceComponent>();
+            src.clip = AssetDatabase::makeRef(hum->guid, 0);
+            src.loop = true;
+            src.volume = 0.6f;
+            src.maxDistance = 25.0f;
+        }
+    }
     if (const AssetRecord* stack = assets.findByPath("prefabs/crate_stack.prefab.json"))
         assets.instantiate(stack->guid, scene, {-8.5f, 0.5f, 2.0f});
 

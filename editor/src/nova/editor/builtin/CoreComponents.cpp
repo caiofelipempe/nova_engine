@@ -129,6 +129,49 @@ void CoreComponentsPlugin::onRegister(Registry& r) {
         return changed;
     });
     r.component<SkinComponent>();
+    r.component<AudioSourceComponent>();
+    // The source's sound by name: every sound asset of the project; the reference in the tooltip.
+    r.fieldDrawer("AudioSource", "clip", [](void* field, const reflect::FieldInfo& info, EditorContext& ctx) {
+        std::string& clip = *static_cast<std::string*>(field);
+        AssetDatabase& assets = ctx.assets();
+        Entity e = ctx.selected();
+        const AudioSourceComponent* src = e.valid() ? e.tryGet<AudioSourceComponent>() : nullptr;
+        std::string label = "<none>";
+        AssetGuid guid = 0;
+        u32 index = 0;
+        if (AssetDatabase::parseRef(clip, guid, index)) {
+            const AssetRecord* r = assets.find(guid);
+            label = r ? r->path.generic_string() : clip;
+        } else if (!clip.empty()) {
+            label = clip;
+        } else if (src && src->data) {
+            label = src->data->name + " (set by code)";
+        }
+        bool changed = false;
+        if (ImGui::BeginCombo(info.label.c_str(), label.c_str())) {
+            if (ImGui::Selectable("<none>", clip.empty()) && !clip.empty()) {
+                clip.clear();
+                changed = true;
+            }
+            for (const AssetRecord& r : assets.assets()) {
+                if (r.type != "Sound") continue;
+                const std::string ref = AssetDatabase::makeRef(r.guid, 0);
+                if (ImGui::Selectable(r.path.generic_string().c_str(), ref == clip) && ref != clip) {
+                    clip = ref;
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered() && !clip.empty()) ImGui::SetTooltip("%s", clip.c_str());
+        if (changed && e.valid() && e.has<AudioSourceComponent>()) { // the new sound from its start
+            auto& s = e.get<AudioSourceComponent>();
+            if (clip.empty()) s.data.reset();
+            s.started = false;
+        }
+        return changed;
+    });
+    r.component<AudioListenerComponent>();
 
     // Scripts without reflection can't be edited or saved: show that they exist.
     ComponentEditor scripts;

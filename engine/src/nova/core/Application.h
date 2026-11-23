@@ -14,6 +14,7 @@
 namespace nova {
 
 class Renderer;
+class Audio;
 
 /// @brief Startup configuration of an Application.
 ///
@@ -91,6 +92,8 @@ public:
     rhi::Device& device() { return *m_device; }
     /// @brief The engine renderer (meshes, render views, settings).
     Renderer& renderer() { return *m_renderer; }
+    /// @brief The sound output (silent without a device); every scene plays through it by default.
+    Audio& audio() { return *m_audio; }
     /// @brief The Dear ImGui renderer, or `nullptr` when ApplicationDesc::imgui is false.
     rhi::ImGuiRenderer* imgui() { return m_imguiRenderer.get(); }
     /// @brief The configuration the application was created with.
@@ -115,6 +118,7 @@ private:
     Scope<rhi::Device> m_device;
     Scope<rhi::ImGuiRenderer> m_imguiRenderer;
     Scope<Renderer> m_renderer;
+    Scope<Audio> m_audio;
     std::vector<Scope<Layer>> m_layers;
 
     bool m_running = true;

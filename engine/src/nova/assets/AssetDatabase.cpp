@@ -122,6 +122,26 @@ void AssetDatabase::registerBuiltinImporters() {
         },
     });
 
+    addImporter({
+        .type = "Sound",
+        .extensions = {".wav", ".mp3", ".flac"},
+        .load = [](AssetDatabase&, const fs::path& file, AssetData& out) { // decoded once, no GPU needed
+            auto clip = decodeAudioFile(file);
+            if (!clip) return false;
+            out.payload = std::const_pointer_cast<AudioClip>(clip);
+            return true;
+        },
+        .instantiate = [](AssetDatabase&, const AssetData& data, Scene& scene, const GlobalPosition& position) {
+            // A sound placed in the scene: an entity playing it where it is.
+            const auto* clip = data.as<AudioClip>();
+            Entity e = scene.createEntity(clip ? clip->name : "Sound");
+            e.transform().position = position;
+            auto& src = e.add<AudioSourceComponent>();
+            src.loop = true;
+            return std::vector<Entity>{e};
+        },
+    });
+
     addImporter({.type = "Scene", .extensions = {".scene.json"}});
 }
 
@@ -322,6 +342,12 @@ std::vector<Entity> AssetDatabase::instantiate(AssetGuid guid, Scene& scene, con
         if (!e.has<PrefabInstanceComponent>()) e.add<PrefabInstanceComponent>();
         e.get<PrefabInstanceComponent>().asset = guid;
     }
+    if (!entities.empty() && r->type == "Sound")
+        if (auto* src = entities[0].tryGet<AudioSourceComponent>()) { // by reference: saved scenes find it again
+            src->clip = makeRef(guid, 0);
+            src->data = std::static_pointer_cast<const AudioClip>(data->payload);
+            src->resolved = src->clip;
+        }
     if (!entities.empty() && r->type == "Model") {
         entities[0].get<NameComponent>().name = r->path.stem().string(); // the root
         if (auto* anim = entities[0].tryGet<AnimatorComponent>()) { // its clip, by reference: saved scenes find it again
@@ -361,6 +387,18 @@ std::vector<std::string> AssetDatabase::animationNames(AssetGuid guid) {
     if (const ModelData* model = data ? data->as<ModelData>() : nullptr)
         for (const auto& clip : model->animations) names.push_back(clip ? clip->name : std::string());
     return names;
+}
+
+Scene::SoundSource AssetDatabase::soundSource() {
+    return [this](const std::string& ref) -> std::shared_ptr<const AudioClip> {
+        AssetGuid guid = 0;
+        u32 index = 0;
+        if (!parseRef(ref, guid, index)) return nullptr;
+        const AssetRecord* r = find(guid);
+        if (!r || r->type != "Sound") return nullptr;
+        const AssetData* data = load(guid);
+        return data && data->payload ? std::static_pointer_cast<const AudioClip>(data->payload) : nullptr;
+    };
 }
 
 Scene::SkinSource AssetDatabase::skinSource() {

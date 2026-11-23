@@ -3,6 +3,7 @@
 #include "nova/reflect/Reflect.h"
 
 #include "nova/scene/Animation.h"
+#include "nova/scene/AudioComponents.h"
 #include "nova/scene/Components.h"
 
 namespace nova::reflect::detail {
@@ -199,6 +200,17 @@ void registerEngineTypes() {
         .field("loop", &AnimatorComponent::loop)
         .field("playing", &AnimatorComponent::playing)
         .component();
+    type<AudioSourceComponent>("AudioSource")
+        .field("clip", &AudioSourceComponent::clip, {.tooltip = "The sound, by reference (asset:<guid> for a sound asset)"})
+        .field("volume", &AudioSourceComponent::volume, {.min = 0.0f, .max = 4.0f})
+        .field("pitch", &AudioSourceComponent::pitch, {.min = 0.1f, .max = 4.0f})
+        .field("loop", &AudioSourceComponent::loop)
+        .field("playOnStart", &AudioSourceComponent::playOnStart, {.tooltip = "Starts by itself on the first update"})
+        .field("spatial", &AudioSourceComponent::spatial, {.tooltip = "Heard from the entity (fades with distance) or flat (music)"})
+        .field("minDistance", &AudioSourceComponent::minDistance, {.min = 0.0f, .max = 1000.0f})
+        .field("maxDistance", &AudioSourceComponent::maxDistance, {.min = 0.0f, .max = 10000.0f})
+        .component();
+    type<AudioListenerComponent>("AudioListener").field("active", &AudioListenerComponent::active).component();
     type<SkinComponent>("Skin")
         .field("root", &SkinComponent::root, {.tooltip = "The model's root: the joints are found under it"})
         .field("skin", &SkinComponent::skin, {.tooltip = "The skeleton, by reference (asset:<guid>#<index> for a model's skin)"})

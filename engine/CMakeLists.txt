@@ -8,6 +8,7 @@ find_package(imgui CONFIG REQUIRED)
 find_path(CGLTF_INCLUDE_DIRS "cgltf.h" REQUIRED)
 find_path(STB_INCLUDE_DIRS "stb_image.h" REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h REQUIRED) # header-only (vcpkg "miniaudio")
 
 # fpm: header-only fixed-point numbers (deterministic arithmetic, sqrt and trigonometry) for the
 # simulation state. Not in vcpkg; only its headers are used (SOURCE_SUBDIR skips its test build).
@@ -33,6 +34,7 @@ file(GLOB_RECURSE NOVA_CORE_SOURCES CONFIGURE_DEPENDS
     ${SRC}/physics/backend/*.cpp ${SRC}/physics/backend/*.h
     ${SRC}/reflect/*.cpp   ${SRC}/reflect/*.h
     ${SRC}/assets/*.cpp    ${SRC}/assets/*.h
+    ${SRC}/audio/*.cpp     ${SRC}/audio/*.h
     ${SRC}/math/*.cpp      ${SRC}/math/*.h
     ${SRC}/ui/*.h          ${SRC}/ui/ImGuiTheme.cpp ${SRC}/ui/ImGuiSync.cpp
     ${SRC}/Nova.h)
@@ -153,6 +155,7 @@ nova_add_shader(NovaShaders ${SH}/skin.comp       DEPENDS ${NOVA_SHADER_INCLUDES
 # Hybrid variant: same shader, shadows traced with VK_KHR_ray_query against the TLAS.
 nova_add_shader(NovaShaders ${SH}/forward.frag OUTPUT forward_rq.frag.spv DEFINES NOVA_RAY_QUERY=1 DEPENDS ${NOVA_SHADER_INCLUDES})
 add_dependencies(NovaEngine NovaShaders)
+target_include_directories(NovaEngine PRIVATE ${MINIAUDIO_INCLUDE_DIR})
 if(NOVA_WRAP_RENDER_MODES)
     target_compile_definitions(NovaEngine PUBLIC NOVA_WRAP_RENDER_MODES=1)
 else()

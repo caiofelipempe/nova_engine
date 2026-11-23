@@ -259,6 +259,15 @@ O `Material` segue o modelo PBR do glTF:
 
 O glTF traz tudo isso, criando cada textura no espaço de cor certo (cor e emissiva em sRGB, os mapas de dados lineares; `Renderer::createTexture2D(..., srgb)`). Materiais de jogo (`nova/material.glsl`) recebem `Surface::alpha` e `Surface::occlusion` também. O cenário **Surfaces** do sandbox mostra cada recurso. Limite: o recorte por alfa ainda projeta a sombra inteira no ray tracing.
 
+## Áudio
+
+Som com a [miniaudio](https://miniaud.io) (vcpkg), atrás de uma classe `Audio` que não expõe a biblioteca:
+- `AudioClip`: o som já decodificado (WAV, MP3 e FLAC: `decodeAudioFile`). Arquivos de som em `assets/` são assets ("Sound"): arrastados para a cena viram uma entidade tocando em laço.
+- `AudioSourceComponent` toca numa entidade (`clip` por referência, volume, pitch, laço, "tocar ao começar", espacial com distâncias mínima e máxima); `AudioListenerComponent` marca o ouvinte (sem ele, a câmera principal). Scripts: `scene.playSource(e)`, `stopSource`, `playSound(clip, posição)` para um som avulso num ponto do mundo e `playSound(clip)` para música e interface.
+- Cada som é posicionado relativo ao ouvinte pela diferença das posições `int64` (exato longe da origem e através das emendas do mundo circular), e só então vira `float` para a saída.
+- Sem dispositivo de áudio (ou com `Audio(true)`), a saída é silenciosa mas as vozes andam no tempo e terminam: testes e servidores funcionam igual. `Application::audio()` é a saída padrão de toda cena.
+- No editor, o inspetor escolhe o som pelo nome. Exemplos: `assets/sounds/hum.wav` (o moinho da cena de demonstração zumbe no Play) e `chime.wav`; no sandbox, as batidas dos objetos (`FlashOnHit`) fazem um estalo no ponto do contato.
+
 ## Shaders do jogo
 
 O jogo traz os próprios shaders — **materiais**, **pós-processamento** e **compute** — e escolhe, por shader, de onde vem o SPIR-V:

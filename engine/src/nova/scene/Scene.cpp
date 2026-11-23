@@ -20,6 +20,7 @@ void Scene::connectSignals() {
     m_registry.on_destroy<RigidBodyComponent>().connect<&Scene::onRigidBodyDestroyed>(*this);
     m_registry.on_destroy<JointComponent>().connect<&Scene::onJointDestroyed>(*this);
     m_registry.on_destroy<CharacterControllerComponent>().connect<&Scene::onCharacterDestroyed>(*this);
+    m_registry.on_destroy<AudioSourceComponent>().connect<&Scene::onAudioSourceDestroyed>(*this); // its sound stops
 }
 
 Scene::~Scene() {
@@ -129,6 +130,7 @@ void Scene::update(Duration frame) {
         updateTransforms(); // and their parents' bodies (a child's own dynamic body moves it on its own)
     }
     dispatchWrapHits();
+    updateAudio(frame); // sounds where everything ended up
 }
 
 Entity Scene::primaryCamera() {

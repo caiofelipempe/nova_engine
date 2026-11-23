@@ -7,6 +7,7 @@
 #include "nova/math/WorldOrigin.h"
 #include "nova/renderer/Renderer.h"
 #include "nova/scene/Animation.h"
+#include "nova/scene/AudioComponents.h"
 #include "nova/scene/Entity.h"
 #include "nova/scene/Script.h"
 
@@ -144,6 +145,36 @@ public:
     /// @brief The animation events the last update() passed, with the animated entity, in order
     ///        (scripts also get them: Script::onAnimationEvent).
     const std::vector<std::pair<Entity, AnimationEventHit>>& animationEvents() const { return m_animationHits; }
+    /// @}
+
+    /// @name Sound
+    /// AudioSourceComponent plays from entities; the listener is the entity with an active
+    /// AudioListenerComponent, else the primary camera. Every position is taken relative to the
+    /// listener exactly (int64), then handed to the output as floats. Run by update(), after
+    /// everything moved; without an output (setAudio / setDefaultAudio) nothing plays.
+    /// @{
+    /// @brief The output this scene plays through (null: the default one).
+    void setAudio(Audio* audio) { m_audio = audio; }
+    /// @brief Default output of every scene (Application sets its own).
+    static void setDefaultAudio(Audio* audio);
+    /// @brief The output in use, or null.
+    Audio* audio() const;
+    /// @brief Finds a clip by the reference in AudioSourceComponent::clip (e.g. AssetDatabase::soundSource()).
+    using SoundSource = std::function<std::shared_ptr<const AudioClip>(const std::string&)>;
+    void setSoundSource(SoundSource source) { m_soundSource = std::move(source); }
+    static void setDefaultSoundSource(SoundSource source);
+    /// @brief The clip a reference names, or null.
+    std::shared_ptr<const AudioClip> findSound(const std::string& clip) const;
+    /// @brief Plays a clip once at a place in the world (it stays there while the listener moves).
+    VoiceId playSound(std::shared_ptr<const AudioClip> clip, const GlobalPosition& at, f32 volume = 1.0f, f32 pitch = 1.0f);
+    /// @brief Plays a clip heard flat, from nowhere (UI, music).
+    VoiceId playSound(std::shared_ptr<const AudioClip> clip, f32 volume = 1.0f, f32 pitch = 1.0f, bool loop = false);
+    /// @brief Starts (again, from the beginning) an entity's AudioSourceComponent.
+    void playSource(Entity entity);
+    /// @brief Stops an entity's AudioSourceComponent.
+    void stopSource(Entity entity);
+    /// @brief True while the entity's source plays.
+    bool isSourcePlaying(Entity entity) const;
     /// @}
 
     /// @brief Runs scripts, built-in systems and (if simulating) physics.
@@ -357,6 +388,17 @@ private:
     Duration m_physicsAccumulator;
     std::unordered_map<u64, entt::entity> m_byUuid; // rebuilt by updateTransforms (checked before use)
     AnimationSource m_animationSource;
+    Audio* m_audio = nullptr;
+    SoundSource m_soundSource;
+    struct PlacedSound {
+        VoiceId voice;
+        GlobalPosition at;
+        VoiceParams params;
+    };
+    std::vector<PlacedSound> m_placedSounds; // one-shots at a place, kept relative to the listener
+    void updateAudio(Duration frame);
+    bool listenerPose(GlobalPosition& position, glm::quat& rotation);
+    void onAudioSourceDestroyed(entt::registry& registry, entt::entity e);
     SkinSource m_skinSource;
     bool skinJoints(entt::entity e, const TransformComponent& pose, RenderScene& out, u32& offset, u32& count);
     bool jointMatrices(entt::entity e, const TransformComponent& pose, std::vector<glm::mat4>& out, bool drawn);

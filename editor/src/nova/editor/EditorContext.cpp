@@ -14,12 +14,14 @@ EditorContext::EditorContext(Scene& scene) : m_scene(&scene) {
     // Model animations saved by reference play again after loading (and after Stop).
     m_scene->setAnimationSource(m_assets.animationSource());
     m_scene->setSkinSource(m_assets.skinSource());
+    m_scene->setSoundSource(m_assets.soundSource());
 }
 
 EditorContext::~EditorContext() {
     if (m_scene) { // they pointed at this context's assets
         m_scene->setAnimationSource({});
         m_scene->setSkinSource({});
+        m_scene->setSoundSource({});
     }
 }
 

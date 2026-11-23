@@ -156,6 +156,9 @@ public:
     /// @brief Finds the skeletons of model assets by reference ("asset:<guid>#<index>", what
     ///        instantiate() puts in SkinComponent::skin). Give it to Scene::setSkinSource.
     Scene::SkinSource skinSource();
+    /// @brief Finds sound assets by reference ("asset:<guid>", what instantiate() puts in
+    ///        AudioSourceComponent::clip). Give it to Scene::setSoundSource (the editor does).
+    Scene::SoundSource soundSource();
     /// @}
 
     /// @name References

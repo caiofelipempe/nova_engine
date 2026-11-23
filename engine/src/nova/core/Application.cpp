@@ -36,6 +36,8 @@ Application::Application(const ApplicationDesc& desc) : m_desc(desc) {
     m_renderer = makeScope<Renderer>(*m_device);
     // Mesh colliders (convex hull, triangle mesh) read vertices from the renderer's CPU copies.
     Scene::setDefaultMeshSource([renderer = m_renderer.get()](MeshHandle m) { return renderer->meshData(m); });
+    m_audio = makeScope<Audio>();
+    Scene::setDefaultAudio(m_audio.get());
 }
 
 Application::~Application() {
@@ -43,6 +45,8 @@ Application::~Application() {
     for (auto it = m_layers.rbegin(); it != m_layers.rend(); ++it) (*it)->onDetach();
     m_layers.clear();
     Scene::setDefaultMeshSource({});
+    Scene::setDefaultAudio(nullptr);
+    m_audio.reset();
     m_renderer.reset();
     shutdownImGui();
     m_device.reset();
