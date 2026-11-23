@@ -48,11 +48,30 @@ struct AnimationChannel {
     glm::vec4 sample(f32 time) const;
 };
 
-/// @brief A named animation: channels over a duration.
+/// @brief A moment of a clip that tells scripts something happened (a footstep, a hit frame).
+struct AnimationEvent {
+    f32 time = 0.0f;  ///< Seconds into the clip.
+    std::string name; ///< What it is ("footstep").
+    f32 value = 0.0f; ///< Anything more (which foot...).
+};
+
+/// @brief An animation event the playback passed (Script::onAnimationEvent, Scene::animationEvents).
+struct AnimationEventHit {
+    std::string name;  ///< AnimationEvent::name.
+    f32 value = 0.0f;  ///< AnimationEvent::value.
+    std::string clip;  ///< The clip's name.
+    f32 time = 0.0f;   ///< The event's time in the clip.
+};
+
+/// @brief A named animation: channels over a duration, and events.
+///
+/// glTF has no events: add them to a clip you play (for a model's clip, a copy:
+/// `auto c = std::make_shared<AnimationClip>(*clip); c->events.push_back({0.4f, "footstep"});`).
 struct AnimationClip {
     std::string name;
     f32 duration = 0.0f; ///< Seconds (the last key of any channel).
     std::vector<AnimationChannel> channels;
+    std::vector<AnimationEvent> events; ///< Fired when the playback passes their time (any order).
 };
 
 /// @brief How a mixed-in clip combines with the others (AnimationMix::mode).
@@ -70,6 +89,7 @@ struct AnimationMix {
     /// @brief The nodes it moves, as paths from the animated entity ("Hips/Spine"): each covers
     ///        that node and everything under it. Empty: the whole skeleton.
     std::vector<std::string> mask;
+    bool events = false;                ///< Fires its clip's events too (only the main clip's otherwise).
 };
 
 /// @brief True when channel target `path` is in `mask` (one of its paths or under one; an empty
@@ -88,6 +108,7 @@ struct AnimationLayer {
     bool sync = false;                         ///< Follows the main clip's phase (walk and run in step).
     AnimationBlend mode = AnimationBlend::Average; ///< Averaged in, or overriding the others.
     std::vector<std::string> mask;             ///< The nodes it moves (AnimationMix::mask); empty: all.
+    bool events = false;                       ///< Fires its clip's events (never while fading out).
     const AnimationClip* boundClip = nullptr;  ///< The clip `targets` were found for.
     std::vector<entt::entity> targets;         ///< One per channel.
 };
@@ -118,6 +139,7 @@ struct AnimatorComponent {
     std::vector<entt::entity> targets;          ///< One per channel (entt::null: not found).
     f32 weight = 1.0f;                          ///< The main clip's share of the mix.
     f32 fade = 0.0f;                            ///< Its weight change per second (fading in to 1).
+    bool started = true;                        ///< Not played yet: events at its start fire on the first update.
     std::vector<AnimationLayer> layers;         ///< Fading out and mixed-in clips.
 };
 

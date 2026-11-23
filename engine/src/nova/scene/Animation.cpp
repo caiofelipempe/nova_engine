@@ -200,6 +200,43 @@ void advance(f64& time, f64 seconds, const AnimationClip& clip, bool loop) {
     else time = std::clamp(time, 0.0, length);
 }
 
+// The events of `clip` the playback passes going `delta` seconds from `from` (backwards when
+// negative), in the order passed: each loop of a looping clip again, at most 8 per event per
+// update; a clip that does not loop holds at its ends. `fromIncluded`: an event right at `from`
+// counts (a clip just started).
+void passedEvents(const AnimationClip& clip, f64 from, f64 delta, bool loop, bool fromIncluded,
+                  std::vector<std::pair<f64, const AnimationEvent*>>& out) {
+    out.clear();
+    if (clip.events.empty() || (delta == 0.0 && !fromIncluded)) return;
+    const f64 length = clip.duration;
+    const bool forward = delta >= 0.0;
+    if (!loop || length <= 0.0) {
+        const f64 to = length > 0.0 ? std::clamp(from + delta, 0.0, length) : from;
+        for (const AnimationEvent& ev : clip.events) {
+            const f64 t = ev.time;
+            const bool in = forward ? ((t > from || (fromIncluded && t == from)) && t <= to)
+                                    : ((t < from || (fromIncluded && t == from)) && t >= to);
+            if (in) out.emplace_back(t, &ev);
+        }
+    } else {
+        const f64 to = from + delta; // unwrapped
+        for (const AnimationEvent& ev : clip.events) {
+            const f64 t = ev.time;
+            // Every lap k with t + k·length in (from, to] (forward) or [to, from) (backward).
+            i64 first, last;
+            if (forward) {
+                first = fromIncluded ? static_cast<i64>(std::ceil((from - t) / length)) : static_cast<i64>(std::floor((from - t) / length)) + 1;
+                last = static_cast<i64>(std::floor((to - t) / length));
+            } else {
+                first = static_cast<i64>(std::ceil((to - t) / length));
+                last = fromIncluded ? static_cast<i64>(std::floor((from - t) / length)) : static_cast<i64>(std::ceil((from - t) / length)) - 1;
+            }
+            for (i64 k = first, n = 0; k <= last && n < 8; ++k, ++n) out.emplace_back(t + static_cast<f64>(k) * length, &ev);
+        }
+    }
+    std::sort(out.begin(), out.end(), [forward](const auto& a, const auto& b) { return forward ? a.first < b.first : a.first > b.first; });
+}
+
 // One node's mix: the weighted sums of each property's values.
 struct Mix {
     glm::dvec3 position{0.0}, scale{0.0};
@@ -216,6 +253,8 @@ void Scene::updateAnimations(Duration frame) {
     std::reverse(animated.begin(), animated.end()); // creation order
     std::vector<std::pair<entt::entity, Mix>> mixes; // per node, in the order first met
     std::vector<std::pair<entt::entity, LocalTransform>> poses; // the nodes' offsets being made
+    std::vector<std::pair<f64, const AnimationEvent*>> passed;  // events passed by one clip
+    m_animationHits.clear();
     for (entt::entity e : animated) {
         if (!m_registry.valid(e)) continue;
         auto& anim = m_registry.get<AnimatorComponent>(e);
@@ -227,16 +266,36 @@ void Scene::updateAnimations(Duration frame) {
         const AnimationClip* clip = anim.data.get();
         if (clip) bindTargets(e, clip, anim.boundClip, anim.targets);
 
-        // Time and weights move on.
+        // Time and weights move on; the events passed on the way are noted.
         if (anim.playing) {
-            if (clip) advance(anim.time, toDouble(anim.speed) * dt, *clip, anim.loop);
+            if (clip) {
+                const f64 delta = toDouble(anim.speed) * dt;
+                if (anim.weight > 0.0f || anim.fade > 0.0f) {
+                    passedEvents(*clip, anim.time, delta, anim.loop, anim.started, passed);
+                    for (const auto& [at, ev] : passed)
+                        m_animationHits.emplace_back(Entity{e, this}, AnimationEventHit{ev->name, ev->value, clip->name, ev->time});
+                }
+                anim.started = false;
+                advance(anim.time, delta, *clip, anim.loop);
+            }
             anim.weight = std::clamp(anim.weight + anim.fade * static_cast<f32>(dt), 0.0f, 1.0f);
             if (anim.weight >= 1.0f) anim.fade = 0.0f;
             const f64 phase = clip && clip->duration > 0.0f ? anim.time / clip->duration : 0.0;
             for (AnimationLayer& layer : anim.layers) {
                 if (!layer.data) continue;
-                if (layer.sync && clip) layer.time = phase * layer.data->duration;
-                else advance(layer.time, layer.speed * dt, *layer.data, layer.loop);
+                const f64 before = layer.time;
+                f64 delta = layer.speed * dt;
+                if (layer.sync && clip) {
+                    layer.time = phase * layer.data->duration;
+                    delta = clip->duration > 0.0f ? toDouble(anim.speed) * dt * layer.data->duration / clip->duration : 0.0;
+                } else {
+                    advance(layer.time, delta, *layer.data, layer.loop);
+                }
+                if (layer.events && layer.fade >= 0.0f && layer.weight > 0.0f) {
+                    passedEvents(*layer.data, before, delta, layer.loop, false, passed);
+                    for (const auto& [at, ev] : passed)
+                        m_animationHits.emplace_back(Entity{e, this}, AnimationEventHit{ev->name, ev->value, layer.data->name, ev->time});
+                }
                 layer.weight += layer.fade * static_cast<f32>(dt);
             }
             std::erase_if(anim.layers, [](const AnimationLayer& l) { return !l.data || (l.fade < 0.0f && l.weight <= 0.0f); });
@@ -352,6 +411,17 @@ void Scene::playAnimation(Entity entity, std::shared_ptr<const AnimationClip> cl
     anim.playing = true;
     anim.weight = fadeSeconds > 0.0f ? 0.0f : 1.0f;
     anim.fade = fadeSeconds > 0.0f ? 1.0f / fadeSeconds : 0.0f;
+    anim.started = true; // events at its start fire on the next update
+}
+
+void Scene::dispatchAnimationEvents() {
+    for (size_t i = 0; i < m_animationHits.size(); ++i) {
+        const auto [entity, hit] = m_animationHits[i]; // a copy: scripts may play other clips
+        if (!entity.valid()) continue;
+        if (auto* sc = m_registry.try_get<ScriptComponent>(entity.handle()))
+            for (size_t k = 0; k < sc->scripts.size(); ++k)
+                if (sc->scripts[k]->m_created) sc->scripts[k]->onAnimationEvent(hit);
+    }
 }
 
 void Scene::playAnimation(Entity entity, const std::string& clip, f32 fadeSeconds, bool loop) {
@@ -379,6 +449,7 @@ void Scene::blendAnimation(Entity entity, std::shared_ptr<const AnimationClip> c
         layer.sync = mix.sync;
         layer.mode = mix.mode;
         layer.mask = mix.mask;
+        layer.events = mix.events;
     };
     for (auto it = anim.layers.begin(); it != anim.layers.end(); ++it)
         if (it->data == clip && it->fade >= 0.0f) { // already mixed in: new options

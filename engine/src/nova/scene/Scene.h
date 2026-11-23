@@ -141,6 +141,9 @@ public:
     ///        (bone masks: e.g. an Override of weight 1 on "Hips/Spine" waves the upper body while
     ///        the main clip walks the rest).
     void blendAnimation(Entity entity, std::shared_ptr<const AnimationClip> clip, const AnimationMix& mix);
+    /// @brief The animation events the last update() passed, with the animated entity, in order
+    ///        (scripts also get them: Script::onAnimationEvent).
+    const std::vector<std::pair<Entity, AnimationEventHit>>& animationEvents() const { return m_animationHits; }
     /// @}
 
     /// @brief Runs scripts, built-in systems and (if simulating) physics.
@@ -372,6 +375,8 @@ private:
     std::optional<GlobalPosition> m_fixedOrigin;
     WorldSize m_worldSize;
     std::vector<std::pair<entt::entity, WorldWrapHit>> m_wrapHits; // reported after the update
+    std::vector<std::pair<Entity, AnimationEventHit>> m_animationHits; // this update's animation events
+    void dispatchAnimationEvents();
 };
 
 } // namespace nova

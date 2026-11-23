@@ -724,6 +724,75 @@ void boneMasks() {
     CHECK(std::abs(glm::degrees(glm::angle(glm::quat(scene.localTransform(hips).rotation)))) < 0.01f);
 }
 
+struct EventLog : Script {
+    std::vector<std::string> seen; // "name value"
+    void onAnimationEvent(const AnimationEventHit& e) override {
+        seen.push_back(e.name + " " + std::to_string(static_cast<int>(e.value)));
+    }
+};
+
+void animationEvents() {
+    auto clip = std::make_shared<AnimationClip>();
+    clip->name = "walk";
+    clip->duration = 1.0f;
+    clip->events = {{0.75f, "step", 1.0f}, {0.0f, "start"}, {0.25f, "step", 0.0f}}; // any order
+    Scene scene;
+    Entity e = scene.createEntity("Walker");
+    auto& log = e.addScript<EventLog>();
+    auto seen = [&] {
+        std::string all;
+        for (const std::string& s : log.seen) all += (all.empty() ? "" : ", ") + s;
+        log.seen.clear();
+        return all;
+    };
+    scene.playAnimation(e, clip);
+    scene.update(Duration::fromSeconds(0.5)); // from the start: start, the first step
+    CHECK(seen() == "start 0, step 0");
+    CHECK(scene.animationEvents().size() == 2 && scene.animationEvents()[0].first == e &&
+          scene.animationEvents()[1].second.clip == "walk" && scene.animationEvents()[1].second.time == 0.25f);
+    scene.update(Duration::fromSeconds(0.5)); // to the end, which is the next lap's start
+    CHECK(seen() == "step 1, start 0" && scene.animationEvents().size() == 2);
+    scene.update(Duration::fromSeconds(0.3)); // on into the next lap
+    CHECK(seen() == "step 0");
+    scene.update(Duration::fromSeconds(0.0));
+    CHECK(seen().empty() && scene.animationEvents().empty());
+
+    // Twice as fast for a second: two laps, in order.
+    e.get<AnimatorComponent>().speed = 2;
+    scene.update(Duration::fromSeconds(1.0)); // from 0.3 to 2.3
+    CHECK(seen() == "step 1, start 0, step 0, step 1, start 0, step 0");
+    // Backwards: in reverse order.
+    e.get<AnimatorComponent>().speed = -1;
+    scene.update(Duration::fromSeconds(0.5)); // from 0.3 back to −0.2 ≡ 0.8
+    CHECK(seen() == "step 0, start 0");
+
+    // Without looping: once to the end, then nothing while it holds there.
+    e.get<AnimatorComponent>().speed = 1;
+    scene.playAnimation(e, clip, 0.0f, false);
+    scene.update(Duration::fromSeconds(2.0));
+    CHECK(seen() == "start 0, step 0, step 1");
+    scene.update(Duration::fromSeconds(1.0));
+    CHECK(seen().empty());
+
+    // A clip fading out stays quiet; a mixed-in one fires only when asked to.
+    auto other = std::make_shared<AnimationClip>(*clip);
+    other->name = "run";
+    other->events = {{0.5f, "breath"}};
+    scene.playAnimation(e, clip);
+    scene.update(Duration::fromSeconds(0.1));
+    seen();
+    scene.playAnimation(e, other, 1.0f); // walk fades out: its steps are not heard
+    scene.update(Duration::fromSeconds(0.6));
+    CHECK(seen() == "breath 0");
+    AnimationMix loud;
+    loud.events = true;
+    loud.sync = false;
+    scene.blendAnimation(e, clip, loud);
+    scene.update(Duration::fromSeconds(0.2)); // run 0.6 → 0.8, the walk layer 0 → 0.2
+    scene.update(Duration::fromSeconds(0.1)); // the walk layer passes 0.25
+    CHECK(seen() == "step 0");
+}
+
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // keep output if a check crashes
     Log::init();
@@ -740,6 +809,7 @@ int main() {
         {"animation: read from a glTF file", gltfAnimation},
         {"animation: cross-fades, mixing by weight, rotations, in step, by reference", animationMixing},
         {"animation: bone masks (override and averaged, subtrees, rotations)", boneMasks},
+        {"animation: events (start, laps, speed, backwards, no loop, fades, layers)", animationEvents},
         {"skinning: joint matrices (bend, the model moving, far out, no skeleton)", skinning},
         {"skinning: a glTF skeleton", gltfSkin},
         {"import", importFiles},

@@ -122,6 +122,7 @@ void Scene::update(Duration frame) {
     }
 
     updateAnimations(frame); // clips set their nodes' offsets from their parents
+    dispatchAnimationEvents(); // and tell scripts what they passed
     updateTransforms(); // children follow their parents (moved by scripts, systems and animations)
     if (m_physics) {
         stepPhysics(frame);

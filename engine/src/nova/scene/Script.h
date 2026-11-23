@@ -4,6 +4,7 @@
 /// @brief Native C++ gameplay scripts.
 
 #include "nova/math/Time.h"
+#include "nova/scene/Animation.h"
 #include "nova/scene/Entity.h"
 #include "nova/math/WorldSpace.h"
 
@@ -66,6 +67,9 @@ public:
     /// @brief The physics moved this entity across a seam of the circular world (Scene::worldSize()):
     ///        it left one side and came in at the other. Reported for dynamic bodies and characters.
     virtual void onWorldWrap(const WorldWrapHit& /*hit*/) {}
+    /// @brief The entity's AnimatorComponent passed an event of its clip (AnimationClip::events):
+    ///        after the animations of the update, in the order they were passed.
+    virtual void onAnimationEvent(const AnimationEventHit& /*event*/) {}
 
     /// @brief The entity this script is attached to.
     Entity entity() const { return m_entity; }
