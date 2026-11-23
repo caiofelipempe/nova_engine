@@ -73,6 +73,7 @@ public:
         for (int i = 0; i < static_cast<int>(scenarios().size()); ++i)
             if (s_startScenario == scenarios()[i].name) first = i;
         load(first, false); // GameLayer starts the simulation after onStart()
+        if (s_noRt) r.settings().rayTracedShadows = false;
 #if NOVA_WRAP_RENDER_MODES
         if (s_wrapShift >= 0) r.settings().wrapShift = static_cast<nova::WrapShift>(s_wrapShift);
         if (s_wrapShift == 3) r.settings().wrapCrop = s_cropCamera ? nova::WrapCrop::Camera : nova::WrapCrop::World;
@@ -90,6 +91,7 @@ public:
     }
 
     static inline bool s_selfCheck = false, s_checkFailed = false;
+    static inline bool s_noRt = false;
     static inline std::string s_startScenario;              // --scenario "<name>"
     static inline int s_wrapShift = -1, s_wrapRepeat = -1; // --wrap triangle|object|split|crop|crop-camera, --laps N
     static inline bool s_cropCamera = false;
@@ -429,6 +431,7 @@ int main(int argc, char** argv) {
         const bool hasValue = i + 1 < argc;
         if (arg == "--check") PhysicsBench::s_selfCheck = true;
         else if (arg == "--scenario" && hasValue) PhysicsBench::s_startScenario = argv[++i];
+        else if (arg == "--no-rt") PhysicsBench::s_noRt = true; // shadow maps instead of rays
         else if (arg == "--laps" && hasValue) PhysicsBench::s_wrapRepeat = std::atoi(argv[++i]);
         else if (arg == "--wrap" && hasValue) {
             const std::string_view v = argv[++i];

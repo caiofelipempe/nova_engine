@@ -1,6 +1,6 @@
 # Nova Engine
 
-Engine 3D em C++20, distribuída como **biblioteca** (`Nova::Engine`). Usa Vulkan 1.3 e GLFW, ambos atrás de interfaces abstratas (backends), ECS com EnTT, Dear ImGui (docking) e um renderer híbrido com sombras por **ray tracing** (ray query).
+Engine 3D em C++20, distribuída como **biblioteca** (`Nova::Engine`). Usa Vulkan 1.3 e GLFW, ambos atrás de interfaces abstratas (backends), ECS com EnTT, Dear ImGui (docking) e um renderer híbrido com sombras por **ray tracing** (ray query) e, sem RT, sombras do sol por **shadow maps** em cascata.
 
 ## Usando a engine no seu `main`
 
@@ -336,6 +336,7 @@ Já implementado:
 - uma **BLAS** por mesh, criada junto com a mesh;
 - uma **TLAS** por frame em voo, reconstruída a cada frame a partir das instâncias da cena;
 - **sombras por ray query** no fragment shader (sol e point lights), num pipeline-variante (`forward_rq.frag`, e a variante `rq` de cada material do jogo). Em GPUs sem RT, o pipeline raster normal é usado sem nenhuma mudança no código do jogo.
+- **shadow maps em cascata** do sol quando não há ray tracing (ou com `RenderSettings::rayTracedShadows` desligado): 4 cascatas num atlas de profundidade (`shadowMapSize`, padrão 2048 por cascata) até `shadowDistance` (padrão 120 m), divisões práticas entre log e linear, cada cascata numa esfera estável (sem tremer ao girar a câmera) com o centro preso aos texels em coordenadas de mundo, PCF 3×3 e deslocamento pela normal contra acne. Projetam sombra as malhas com esqueleto (mesmo vertex shader) e as recortadas respeitam o alfa (`shadow.frag`); as transparentes (`Blend`) não projetam. Desligue com `RenderSettings::shadowMaps = false`. Limites: as point lights só têm sombra por ray tracing, e não há mistura entre cascatas. `Sandbox --no-rt` força esse caminho.
 
 Próximos passos (a estrutura já está preparada):
 1. `rhi::RayTracingPipelineDesc` + `CommandList::traceRays` + shader binding table — os entry points (`vkCreateRayTracingPipelinesKHR`, `vkCmdTraceRaysKHR`) já são carregados quando há suporte.
@@ -357,6 +358,6 @@ Próximos passos (a estrutura já está preparada):
 - **Renderização circular**: feita como opção de compilação (`NOVA_WRAP_RENDER_MODES`, `RenderSettings::wrapShift` / `wrapRepeat`). Falta conferir em GPU e fazer o picking ciente das cópias.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
-- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Próximos: shadow maps como fallback sem RT, render graph, culling em GPU, backend D3D12.
+- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT (feito). Próximos: render graph, culling em GPU, backend D3D12.
 - Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*; modelos glTF instanciados com a árvore dos nós, sob uma raiz com o nome do arquivo).
 - Animação: dos nós, skinning (com sombras e picking na pose atual), troca e mistura de clipes, máscaras por osso, eventos e escolha do clipe pelo nome no inspetor (feitos).

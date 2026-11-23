@@ -15,6 +15,8 @@ namespace nova::gpu {
 
 constexpr u32 kMaxPointLights = 16;      ///< Point lights per frame (`MAX_POINT_LIGHTS`).
 constexpr u32 kFrameFlagRtShadows = 1u;  ///< FrameData::flags: trace shadow rays (`FRAME_FLAG_RT_SHADOWS`).
+constexpr u32 kFrameFlagShadowMaps = 2u; ///< FrameData::flags: the sun's shadow maps (`FRAME_FLAG_SHADOW_MAPS`).
+constexpr u32 kShadowCascades = 4;       ///< Shadow map cascades (a 2 × 2 atlas).
 constexpr u32 kMaterialFlagChecker = 1u; ///< InstanceData::params.z bit: checker pattern (`MATERIAL_FLAG_CHECKER`).
 /// @brief Period (m) of the world position shaders see (`NOVA_WORLD_TILE`): patterns whose period divides it are seamless.
 constexpr f32 kWorldTile = 4096.0f;
@@ -39,13 +41,18 @@ struct FrameData {
     glm::vec4 groundColor;   ///< rgb = ground color.
     glm::vec4 originTiled;   ///< xyz = frame origin (camera) modulo kWorldTile, w = kWorldTile.
     glm::vec4 wrapSize;      ///< xyz = size of the circular world per axis (m), w = WrapShift (NOVA_WRAP_RENDER_MODES builds).
+    glm::mat4 shadowMatrices[kShadowCascades]; ///< Camera-relative world → each cascade's clip space.
+    glm::vec4 shadowSplits;  ///< Where each cascade ends (distance along the view, m).
+    glm::vec4 shadowTexels;  ///< Each cascade's texel size in the world (m): the normal offset.
+    glm::vec4 shadowParams;  ///< x = atlas texture (bindless), y = depth bias, z = cascade resolution (texels).
+    glm::vec4 cameraForward; ///< xyz = the camera's view direction.
     u32 pointLightCount;     ///< Number of valid entries in pointLights.
     u32 flags;               ///< kFrameFlag* bits.
     f32 shadowBias;          ///< Shadow ray origin offset along the normal.
     f32 _pad0;               ///< Padding (std430).
     PointLight pointLights[kMaxPointLights]; ///< Point lights.
 };
-static_assert(sizeof(FrameData) == 256 + 8 * 16 + 16 + kMaxPointLights * 32);
+static_assert(sizeof(FrameData) == 256 + 8 * 16 + 4 * 64 + 4 * 16 + 16 + kMaxPointLights * 32);
 
 /// @brief Per-draw instance data, indexed by DrawPush::instanceIndex.
 struct InstanceData {

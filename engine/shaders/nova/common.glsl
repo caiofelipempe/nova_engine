@@ -9,6 +9,7 @@
 #define MAX_POINT_LIGHTS 16
 
 #define FRAME_FLAG_RT_SHADOWS 1u
+#define FRAME_FLAG_SHADOW_MAPS 2u
 
 #define MATERIAL_FLAG_CHECKER 1u
 
@@ -35,6 +36,11 @@ struct FrameData {
     vec4 groundColor;
     vec4 originTiled;   // xyz = frame origin modulo NOVA_WORLD_TILE, w = NOVA_WORLD_TILE
     vec4 wrapSize;      // xyz = size of the circular world per axis (m), w = wrap mode (NOVA_WRAP_RENDER_MODES)
+    mat4 shadowMatrices[4]; // camera-relative world -> each cascade's clip space
+    vec4 shadowSplits;  // where each cascade ends (distance along the view, m)
+    vec4 shadowTexels;  // each cascade's texel size in the world (m)
+    vec4 shadowParams;  // x = atlas texture (bindless), y = depth bias, z = cascade resolution
+    vec4 cameraForward; // xyz = the camera's view direction
     uint pointLightCount;
     uint flags;
     float shadowBias;

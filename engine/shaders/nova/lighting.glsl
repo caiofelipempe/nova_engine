@@ -77,6 +77,31 @@ float nova_traceShadow(vec3 origin, vec3 dir, float tMax) {
 #endif
 }
 
+// The sun's visibility from the shadow maps (cascades by distance, 3 × 3 filtered): 1 = lit.
+float nova_shadowMaps(vec3 P, vec3 N) {
+    float along = dot(P, pc.frame.data.cameraForward.xyz);
+    int c = 0;
+    while (c < 4 && along > pc.frame.data.shadowSplits[c]) ++c;
+    if (c >= 4) return 1.0; // beyond the shadow distance
+    vec3 offsetP = P + N * pc.frame.data.shadowTexels[c] * 1.5; // off the surface by a texel or so
+    vec4 clip = pc.frame.data.shadowMatrices[c] * vec4(offsetP, 1.0);
+    vec3 ndc = clip.xyz / clip.w;
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || ndc.z > 1.0) return 1.0;
+    int atlas = int(pc.frame.data.shadowParams.x);
+    int res = int(pc.frame.data.shadowParams.z);
+    ivec2 tile = ivec2(c & 1, c >> 1) * res;
+    ivec2 at = tile + clamp(ivec2(uv * float(res)), ivec2(0), ivec2(res - 1));
+    float depth = ndc.z - pc.frame.data.shadowParams.y;
+    float lit = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 q = clamp(at + ivec2(x, y), tile, tile + ivec2(res - 1));
+            lit += depth <= texelFetch(g_textures[nonuniformEXT(atlas)], q, 0).r ? 1.0 : 0.0;
+        }
+    return lit / 9.0;
+}
+
 // Shades a surface with the sun, the point lights and the ambient (darkened by `occlusion`);
 // `sunShadow` receives the sun visibility (for the Shadows debug view).
 vec3 nova_shadeOccluded(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float roughness, float occlusion,
@@ -92,6 +117,7 @@ vec3 nova_shadeOccluded(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, flo
     vec3 Ls = -normalize(pc.frame.data.sunDirection.xyz);
     if (dot(N, Ls) > 0.0) {
         if (rtShadows) sunShadow = nova_traceShadow(origin, Ls, 10000.0);
+        else if ((pc.frame.data.flags & FRAME_FLAG_SHADOW_MAPS) != 0u) sunShadow = nova_shadowMaps(P, N);
         color += nova_brdf(N, V, Ls, albedo, metallic, roughness) * pc.frame.data.sunColor.rgb *
                  pc.frame.data.sunDirection.w * sunShadow;
     }

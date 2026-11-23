@@ -171,6 +171,11 @@ enum class WrapCrop : u32 {
 /// @brief Runtime-tweakable rendering options (Renderer::settings()).
 struct RenderSettings {
     bool rayTracedShadows = true;                ///< Ray-query shadows; ignored when the GPU lacks ray queries.
+    /// @brief Without ray-traced shadows (off, or no ray queries), the sun casts shadows from
+    ///        cascaded shadow maps (4 cascades up to shadowDistance; point lights cast none).
+    bool shadowMaps = true;
+    f32 shadowDistance = 120.0f;                 ///< How far from the camera shadow maps reach (m).
+    u32 shadowMapSize = 2048;                    ///< Texels per side of each cascade.
     bool wireframe = false;                      ///< Draw meshes as lines (needs DeviceCaps::wireframe).
     DebugView debugView = DebugView::Lit;        ///< Debug visualization.
     Tonemapper tonemapper = Tonemapper::ACES;    ///< Tonemapping operator.
@@ -198,6 +203,9 @@ struct RenderSettings {
 };
 
 struct WrapInstance; // WrapInstances.h
+namespace gpu {
+struct FrameData; // GpuTypes.h
+}
 
 /// @brief Counters of the last completed frame.
 struct RenderStats {
@@ -408,6 +416,11 @@ private:
     rhi::PipelineHandle m_forwardRtPipeline;
     rhi::PipelineHandle m_wireframePipeline;
     rhi::PipelineHandle m_skinPipeline; // skin.comp: deformed vertices for ray tracing
+    rhi::PipelineHandle m_shadowPipeline;     // depth only, for the shadow maps
+    rhi::PipelineHandle m_shadowMaskPipeline; // the same, alpha-tested (cut-out casters)
+    rhi::TextureHandle m_shadowAtlas;     // the cascades, 2 × 2
+    u32 m_shadowAtlasSize = 0;
+    void renderShadowMaps(rhi::CommandList& cmd, const RenderScene& scene, gpu::FrameData& fd, u64 instances, u64 joints);
     // Skinned draws in the ray tracing scene: their deformed vertices and a BLAS refitted to them.
     struct SkinnedShape {
         rhi::BufferHandle vertices;

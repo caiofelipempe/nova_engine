@@ -160,8 +160,10 @@ Renderer::~Renderer() {
     for (AccelStructHandle t : m_tlas) m_device.destroyAccelStruct(t);
     for (auto& [key, shape] : m_skinnedShapes) releaseSkinnedShape(shape);
     m_skinnedShapes.clear();
-    for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline})
+    for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline,
+                             m_shadowPipeline, m_shadowMaskPipeline})
         if (p) m_device.destroyPipeline(p);
+    if (m_shadowAtlas) m_device.destroyTexture(m_shadowAtlas);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
     for (auto& [id, mp] : m_materialPipelines)
@@ -214,6 +216,18 @@ void Renderer::createPipelines() {
         wire.cullMode = CullMode::None;
         wire.debugName = "pipeline.wireframe";
         m_wireframePipeline = m_device.createGraphicsPipeline(wire);
+    }
+
+    { // shadow maps: the forward vertex shader (skinning, seams) writing depth only
+        GraphicsPipelineDesc shadow;
+        shadow.vertex = forwardVS;
+        shadow.depthFormat = kDepthFormat;
+        shadow.cullMode = CullMode::None; // thin and single-sided things cast too
+        shadow.debugName = "pipeline.shadow";
+        m_shadowPipeline = m_device.createGraphicsPipeline(shadow);
+        shadow.fragment = loadShader("shadow.frag"); // cut-out casters: discarded where transparent
+        shadow.debugName = "pipeline.shadow.mask";
+        m_shadowMaskPipeline = m_device.createGraphicsPipeline(shadow);
     }
 
     if (m_device.caps().accelerationStructures) {
@@ -495,6 +509,118 @@ void Renderer::expandDraws(const RenderScene& scene, const glm::mat4& viewProj) 
     expandWrapInstances(scene.draws, bounds, viewProj, options, m_instances);
 }
 
+// Cascaded shadow maps of the sun: the view up to shadowDistance in 4 slices, each fitted with a
+// sphere and seen by an orthographic camera along the light, snapped to whole texels in the world
+// (no shimmer as the camera moves), rendered into one quarter of the atlas.
+void Renderer::renderShadowMaps(CommandList& cmd, const RenderScene& scene, gpu::FrameData& fd, u64 instances, u64 joints) {
+    const RenderSettings& s = m_settings;
+    const u32 res = std::clamp(s.shadowMapSize, 256u, 4096u);
+    if (!m_shadowAtlas || m_shadowAtlasSize != res) {
+        if (m_shadowAtlas) m_device.destroyTexture(m_shadowAtlas);
+        m_shadowAtlas = m_device.createTexture(
+            {res * 2, res * 2, 1, kDepthFormat, TextureUsage::DepthStencil | TextureUsage::Sampled, "shadow atlas"});
+        m_shadowAtlasSize = res;
+    }
+
+    // The view's slices: practical split (log and linear mixed).
+    const glm::mat4& proj = scene.camera.projection;
+    const f32 tanX = 1.0f / std::abs(proj[0][0]), tanY = 1.0f / std::abs(proj[1][1]);
+    const f32 nearClip = std::max(proj[3][2] / proj[2][2], 0.01f);
+    const f32 farShadow = std::max(s.shadowDistance, nearClip * 2.0f);
+    const glm::mat3 toWorld = glm::transpose(glm::mat3(scene.camera.view)); // the view is a rotation
+    const glm::vec3 forward = toWorld * glm::vec3(0.0f, 0.0f, -1.0f);
+    f32 splits[gpu::kShadowCascades];
+    for (u32 c = 0; c < gpu::kShadowCascades; ++c) {
+        const f32 t = static_cast<f32>(c + 1) / gpu::kShadowCascades;
+        splits[c] = 0.75f * nearClip * std::pow(farShadow / nearClip, t) + 0.25f * (nearClip + (farShadow - nearClip) * t);
+    }
+    // The light's frame: it travels along `light`.
+    const glm::vec3 light = glm::normalize(scene.sun.direction);
+    const glm::vec3 helper = std::abs(light.y) < 0.99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+    const glm::vec3 right = glm::normalize(glm::cross(light, helper)), up = glm::cross(right, light);
+    const glm::dvec3 camera = scene.camera.origin.toMeters(); // to snap to texels fixed in the world
+    const f64 camRight = glm::dot(camera, glm::dvec3(right)), camUp = glm::dot(camera, glm::dvec3(up));
+    constexpr f32 kCasterReach = 80.0f; // casters up to this far beyond a slice, toward the light
+
+    for (u32 c = 0; c < gpu::kShadowCascades; ++c) {
+        const f32 d0 = c == 0 ? nearClip : splits[c - 1], d1 = splits[c];
+        glm::vec3 corners[8];
+        glm::vec3 center(0.0f);
+        for (int k = 0; k < 8; ++k) {
+            const f32 d = (k & 4) ? d1 : d0;
+            corners[k] = toWorld * glm::vec3(((k & 1) ? 1.0f : -1.0f) * d * tanX, ((k & 2) ? 1.0f : -1.0f) * d * tanY, -d);
+            center += corners[k] / 8.0f;
+        }
+        f32 radius = 0.0f;
+        for (const glm::vec3& p : corners) radius = std::max(radius, glm::length(p - center));
+        radius = std::ceil(radius * 16.0f) / 16.0f; // a stable size
+        const f64 texel = 2.0 * radius / res;
+        // Snap the center to whole texels of a grid fixed in the world.
+        const f64 x = std::floor((glm::dot(center, right) + camRight) / texel) * texel - camRight;
+        const f64 y = std::floor((glm::dot(center, up) + camUp) / texel) * texel - camUp;
+        const glm::vec3 snapped = right * static_cast<f32>(x) + up * static_cast<f32>(y) + light * glm::dot(center, light);
+        const glm::vec3 eye = snapped - light * (radius + kCasterReach);
+        const glm::mat4 lightView = glm::lookAt(eye, snapped, up);
+        glm::mat4 lightProj = glm::ortho(-radius, radius, -radius, radius, 0.0f, 2.0f * radius + kCasterReach);
+        lightProj[1][1] *= -1.0f; // as the camera's: y down in Vulkan's clip space
+        fd.shadowMatrices[c] = lightProj * lightView;
+        fd.shadowSplits[c] = d1;
+        fd.shadowTexels[c] = static_cast<f32>(texel);
+    }
+    fd.shadowParams = glm::vec4(static_cast<f32>(m_device.bindlessIndex(m_shadowAtlas)), 0.0015f, static_cast<f32>(res), 0.0f);
+    fd.cameraForward = glm::vec4(forward, 0.0f);
+    fd.flags |= gpu::kFrameFlagShadowMaps;
+
+    // Each cascade: the scene's casters into its quarter, through a copy of the frame data seen
+    // from the light (the forward vertex shader reads viewProj).
+    cmd.beginDebugLabel("Shadow maps");
+    RenderingDesc pass;
+    pass.depth = DepthAttachment{m_shadowAtlas, LoadOp::Clear, StoreOp::Store, 1.0f};
+    cmd.beginRendering(pass);
+    for (u32 c = 0; c < gpu::kShadowCascades; ++c) {
+        FrameAllocation cascade = allocate(sizeof(gpu::FrameData));
+        if (!cascade.cpu) break;
+        auto& cf = *static_cast<gpu::FrameData*>(cascade.cpu);
+        cf = fd;
+        cf.viewProj = fd.shadowMatrices[c];
+        const f32 x = static_cast<f32>((c & 1u) * res), y = static_cast<f32>((c >> 1) * res);
+        cmd.setViewport(x, y, static_cast<f32>(res), static_cast<f32>(res));
+        cmd.setScissor(static_cast<i32>(x), static_cast<i32>(y), res, res);
+        gpu::DrawPush push{};
+        push.frame = cascade.gpu;
+        push.instances = instances;
+        BufferHandle boundIndex{};
+        PipelineHandle bound{};
+        for (u32 i = 0; i < m_instances.size(); ++i) {
+            const WrapInstance& di = m_instances[i];
+            const DrawItem& d = scene.draws[di.draw];
+            if (!d.castShadows || d.material.alphaMode == AlphaMode::Blend) continue;
+            const PipelineHandle want = d.material.alphaMode == AlphaMode::Mask && m_shadowMaskPipeline ? m_shadowMaskPipeline : m_shadowPipeline;
+            if (!(want == bound)) {
+                cmd.bindPipeline(want);
+                bound = want;
+            }
+            const GpuMesh& mesh = m_meshes[d.mesh.id];
+            if (!(mesh.indexBuffer == boundIndex)) {
+                cmd.bindIndexBuffer(mesh.indexBuffer);
+                boundIndex = mesh.indexBuffer;
+            }
+            push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
+            push.instanceIndex = i;
+            push.indices = di.triangles ? m_device.deviceAddress(mesh.indexBuffer) : 0;
+            const bool skinned = d.jointCount > 0 && mesh.skinBuffer && joints && d.jointOffset + d.jointCount <= scene.joints.size();
+            push.skin = skinned ? m_device.deviceAddress(mesh.skinBuffer) : 0;
+            push.joints = skinned ? joints + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
+            cmd.pushConstants(push);
+            if (di.triangles) cmd.draw(mesh.indexCount);
+            else cmd.drawIndexed(mesh.indexCount);
+        }
+    }
+    cmd.endRendering();
+    cmd.transition(m_shadowAtlas, ResourceState::ShaderRead);
+    cmd.endDebugLabel();
+}
+
 void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, RenderView& view, TextureHandle output) {
     const TextureHandle hdr = view.m_hdr;
     const TextureHandle depth = view.m_depth;
@@ -682,6 +808,10 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         tlasAddress = m_device.accelStructAddress(tlas);
         m_stats.tlasInstances += tlasCount;
     }
+
+    // ---- shadow maps (the sun), when rays do not draw the shadows
+    if (!useRt && s.shadowMaps && s.shadowDistance > 0.0f && m_shadowPipeline)
+        renderShadowMaps(cmd, scene, fd, instAlloc.gpu, jointsAddress);
 
     // ---- sky + opaque
     cmd.beginDebugLabel("Forward");

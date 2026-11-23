@@ -151,6 +151,7 @@ endif()
 nova_add_shader(NovaShaders ${SH}/forward.frag    DEPENDS ${NOVA_SHADER_INCLUDES})
 nova_add_shader(NovaShaders ${SH}/debug_line.vert DEPENDS ${NOVA_SHADER_INCLUDES})
 nova_add_shader(NovaShaders ${SH}/debug_line.frag DEPENDS ${NOVA_SHADER_INCLUDES})
+nova_add_shader(NovaShaders ${SH}/shadow.frag     DEPENDS ${NOVA_SHADER_INCLUDES}) # cut-out shadow casters
 nova_add_shader(NovaShaders ${SH}/skin.comp       DEPENDS ${NOVA_SHADER_INCLUDES}) # skinned meshes for ray tracing
 # Hybrid variant: same shader, shadows traced with VK_KHR_ray_query against the TLAS.
 nova_add_shader(NovaShaders ${SH}/forward.frag OUTPUT forward_rq.frag.spv DEFINES NOVA_RAY_QUERY=1 DEPENDS ${NOVA_SHADER_INCLUDES})
