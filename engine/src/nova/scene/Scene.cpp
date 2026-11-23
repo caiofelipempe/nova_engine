@@ -176,8 +176,10 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
         if (!m.mesh) continue;
         const TransformComponent& at = drawnPose(e, t, drawn) ? drawn : t;
         DrawItem item{m.mesh, at.matrixRelativeTo(out.camera.origin), m.material, m.castShadows};
-        if (m_registry.all_of<SkinComponent>(e)) // skinned: its joints' matrices
+        if (m_registry.all_of<SkinComponent>(e)) { // skinned: its joints' matrices (and its shape for ray tracing)
             if (!skinJoints(e, at, out, item.jointOffset, item.jointCount)) item.jointCount = 0;
+            if (const auto* id = m_registry.try_get<IdComponent>(e)) item.skinKey = id->uuid;
+        }
         out.draws.push_back(item);
     }
     return hasCamera;

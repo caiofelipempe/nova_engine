@@ -163,6 +163,48 @@ void VulkanCommandList::buildTLAS(AccelStructHandle h, u64 instanceAddress, u32 
     vkCmdPipelineBarrier2(m_cmd, &dep);
 }
 
+void VulkanCommandList::updateBLAS(AccelStructHandle h) {
+    VulkanAccelStruct* as = m_device.accelStruct(h);
+    NOVA_ASSERT(as && !as->topLevel && as->allowUpdate, "updateBLAS: not an updatable BLAS");
+    constexpr VkPipelineStageFlags2 kTraceStages =
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+
+    // The vertices written by shaders before, and earlier traces / TLAS builds of this BLAS done.
+    VkMemoryBarrier2 pre{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    pre.srcStageMask = kTraceStages | VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    pre.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR |
+                        VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    pre.dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    pre.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR |
+                        VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &pre;
+    vkCmdPipelineBarrier2(m_cmd, &dep);
+
+    VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+    build.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    build.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+    build.srcAccelerationStructure = as->handle;
+    build.dstAccelerationStructure = as->handle;
+    build.geometryCount = 1;
+    build.pGeometries = &as->geometry;
+    build.scratchData.deviceAddress = as->scratchAddress;
+    VkAccelerationStructureBuildRangeInfoKHR range{as->primitiveCount, 0, 0, 0};
+    const VkAccelerationStructureBuildRangeInfoKHR* ranges = &range;
+    m_device.ext().vkCmdBuildAccelerationStructuresKHR(m_cmd, 1, &build, &ranges);
+
+    // Later TLAS builds and traces see it refitted.
+    VkMemoryBarrier2 post{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    post.srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    post.srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    post.dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | kTraceStages;
+    post.dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    dep.pMemoryBarriers = &post;
+    vkCmdPipelineBarrier2(m_cmd, &dep);
+}
+
 void VulkanCommandList::beginDebugLabel(const char* name) {
     if (!m_device.ext().vkCmdBeginDebugUtilsLabelEXT) return;
     VkDebugUtilsLabelEXT label{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT};

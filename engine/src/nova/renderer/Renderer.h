@@ -90,6 +90,10 @@ struct DrawItem {
     /// @brief Skinned meshes: this draw's joint matrices in RenderScene::joints (count 0: drawn
     ///        rigid, in the bind pose). Each maps the bind pose to the pose, in mesh space.
     u32 jointOffset = 0, jointCount = 0;
+    /// @brief Skinned draws: a key that stays the same from frame to frame for the same object
+    ///        (Scene uses the entity's UUID). With it, the deformed shape casts ray-traced shadows
+    ///        (a BLAS of its own, refitted every frame); 0: none (the draw casts no ray-traced shadow).
+    u64 skinKey = 0;
 };
 
 /// @brief Everything needed to draw one frame of a scene.
@@ -393,6 +397,17 @@ private:
     rhi::PipelineHandle m_forwardPipeline;
     rhi::PipelineHandle m_forwardRtPipeline;
     rhi::PipelineHandle m_wireframePipeline;
+    rhi::PipelineHandle m_skinPipeline; // skin.comp: deformed vertices for ray tracing
+    // Skinned draws in the ray tracing scene: their deformed vertices and a BLAS refitted to them.
+    struct SkinnedShape {
+        rhi::BufferHandle vertices;
+        rhi::AccelStructHandle blas;
+        u32 mesh = ~0u;
+        u64 lastFrame = 0;
+    };
+    std::unordered_map<u64, SkinnedShape> m_skinnedShapes; // by DrawItem::skinKey
+    u64 m_frameNumber = 0;
+    void releaseSkinnedShape(SkinnedShape& shape);
     std::unordered_map<rhi::Format, rhi::PipelineHandle> m_tonemapPipelines;
     rhi::ShaderDesc m_fullscreenVS;
     rhi::ShaderDesc m_tonemapFS;

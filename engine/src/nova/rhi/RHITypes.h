@@ -243,6 +243,9 @@ struct BLASDesc {
     u64 indexOffset = 0;                       ///< Byte offset of the first index.
     u32 indexCount = 0;                        ///< Number of indices (3 per triangle).
     bool opaque = true;                        ///< Skip any-hit shaders.
+    /// @brief Can be refitted with CommandList::updateBLAS after its vertices move (same buffers,
+    ///        same triangles): it keeps its geometry and build scratch memory.
+    bool allowUpdate = false;
     const char* debugName = nullptr;           ///< Name for graphics debuggers.
 };
 

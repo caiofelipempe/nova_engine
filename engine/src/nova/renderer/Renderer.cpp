@@ -158,7 +158,9 @@ Renderer::~Renderer() {
     for (TextureHandle t : m_textures) m_device.destroyTexture(t);
     for (BufferHandle b : m_frameBuffers) m_device.destroyBuffer(b);
     for (AccelStructHandle t : m_tlas) m_device.destroyAccelStruct(t);
-    for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline})
+    for (auto& [key, shape] : m_skinnedShapes) releaseSkinnedShape(shape);
+    m_skinnedShapes.clear();
+    for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline})
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
@@ -206,6 +208,13 @@ void Renderer::createPipelines() {
         wire.cullMode = CullMode::None;
         wire.debugName = "pipeline.wireframe";
         m_wireframePipeline = m_device.createGraphicsPipeline(wire);
+    }
+
+    if (m_device.caps().accelerationStructures) {
+        ComputePipelineDesc skin;
+        skin.compute = loadShader("skin.comp");
+        skin.debugName = "pipeline.skin";
+        m_skinPipeline = m_device.createComputePipeline(skin);
     }
 
     if (m_device.caps().rayQuery) {
@@ -278,6 +287,12 @@ MeshHandle Renderer::createMesh(const MeshData& data, const std::string& name) {
         m_meshes.push_back(std::move(mesh));
     }
     return {id};
+}
+
+void Renderer::releaseSkinnedShape(SkinnedShape& shape) {
+    if (shape.blas) m_device.destroyAccelStruct(shape.blas);
+    if (shape.vertices) m_device.destroyBuffer(shape.vertices);
+    shape = {};
 }
 
 void Renderer::destroyMesh(MeshHandle h) {
@@ -490,6 +505,74 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         fd.pointLights[i] = {glm::vec4(l.position, l.radius), glm::vec4(l.color, l.intensity)};
     }
 
+    // Joint matrices of skinned draws, for this frame.
+    u64 jointsAddress = 0;
+    if (!scene.joints.empty()) {
+        const u64 bytes = scene.joints.size() * sizeof(glm::mat4);
+        FrameAllocation jointAlloc = allocate(bytes, 64);
+        if (jointAlloc.cpu) {
+            std::memcpy(jointAlloc.cpu, scene.joints.data(), bytes);
+            jointsAddress = jointAlloc.gpu;
+        }
+    }
+
+    // ---- skinned shapes for ray tracing: deform each skinned draw's vertices (skin.comp) into
+    // a buffer of its own and refit its BLAS, so the rays see the pose, not the bind pose.
+    ++m_frameNumber;
+    std::unordered_map<u32, AccelStructHandle> skinnedBlas; // draw index -> its refitted BLAS
+    if (useRt && m_skinPipeline && jointsAddress) {
+        bool bound = false;
+        for (u32 di = 0; di < scene.draws.size(); ++di) {
+            const DrawItem& d = scene.draws[di];
+            if (!d.skinKey || d.jointCount == 0 || !d.castShadows || d.mesh.id >= m_meshes.size()) continue;
+            const GpuMesh& mesh = m_meshes[d.mesh.id];
+            if (!mesh.alive || !mesh.skinBuffer || d.jointOffset + d.jointCount > scene.joints.size()) continue;
+            SkinnedShape& shape = m_skinnedShapes[d.skinKey];
+            if (shape.mesh != d.mesh.id) { // new, or another mesh: its own vertices and BLAS
+                releaseSkinnedShape(shape);
+                const u64 bytes = u64(mesh.vertexCount) * sizeof(Vertex);
+                shape.vertices = m_device.createBuffer({bytes, BufferUsage::Storage | BufferUsage::AccelStructInput,
+                                                        MemoryUsage::GpuOnly, "skinned vertices"});
+                m_device.uploadBuffer(shape.vertices, mesh.cpu.vertices.data(), bytes, 0); // the bind pose to start with
+                BLASDesc blas;
+                blas.vertexBuffer = shape.vertices;
+                blas.vertexStride = sizeof(Vertex);
+                blas.vertexCount = mesh.vertexCount;
+                blas.indexBuffer = mesh.indexBuffer;
+                blas.indexCount = mesh.indexCount;
+                blas.allowUpdate = true;
+                blas.debugName = "skinned blas";
+                shape.blas = m_device.createBLAS(blas);
+                shape.mesh = d.mesh.id;
+            }
+            shape.lastFrame = m_frameNumber;
+            if (!bound) {
+                cmd.beginDebugLabel("Skinned shapes");
+                cmd.bindPipeline(m_skinPipeline);
+                bound = true;
+            }
+            struct SkinPush {
+                u64 source, skin, joints, target;
+                u32 count, _pad[3];
+            } push{m_device.deviceAddress(mesh.vertexBuffer), m_device.deviceAddress(mesh.skinBuffer),
+                   jointsAddress + u64(d.jointOffset) * sizeof(glm::mat4), m_device.deviceAddress(shape.vertices),
+                   mesh.vertexCount, {0, 0, 0}};
+            cmd.pushConstants(push);
+            cmd.dispatch((mesh.vertexCount + 63) / 64);
+            cmd.updateBLAS(shape.blas); // waits for the shader's writes
+            skinnedBlas[di] = shape.blas;
+        }
+        if (bound) cmd.endDebugLabel();
+    }
+    // Shapes of skinned objects not drawn for a while (gone, or culled): released.
+    for (auto it = m_skinnedShapes.begin(); it != m_skinnedShapes.end();)
+        if (m_frameNumber - it->second.lastFrame > 120) {
+            releaseSkinnedShape(it->second);
+            it = m_skinnedShapes.erase(it);
+        } else {
+            ++it;
+        }
+
     // ---- instances (+ TLAS records)
     auto* instances = static_cast<gpu::InstanceData*>(instAlloc.cpu);
     AccelStructInstance* tlasRecords = nullptr;
@@ -521,17 +604,20 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
 
         // Split copies (moved off their lap's center) stay out of the TLAS: the rays see each
         // object whole, once per lap; a copy laid over its original would shadow itself.
-        // Skinned draws too, for now: their BLAS holds the bind pose (it would cast the undeformed
-        // shape and shade the deformed one); they receive shadows, they do not cast ray-traced ones.
+        // Skinned draws: their refitted BLAS (the pose); without one they cast no ray-traced shadow
+        // (the mesh's own BLAS is the bind pose: it would cast the undeformed shape).
         const bool skinned = d.jointCount > 0;
-        if (tlasRecords && d.castShadows && m_meshes[d.mesh.id].blas && !di.splitCopy && !skinned) {
+        const auto refitted = skinned ? skinnedBlas.find(di.draw) : skinnedBlas.end();
+        const AccelStructHandle blas = skinned ? (refitted != skinnedBlas.end() ? refitted->second : AccelStructHandle{})
+                                               : m_meshes[d.mesh.id].blas;
+        if (tlasRecords && d.castShadows && blas && !di.splitCopy) {
             AccelStructInstance& r = tlasRecords[tlasCount++];
             toInstanceTransform(model, r.transform);
             r.instanceCustomIndex = i;
             r.mask = 0xFF;
             r.sbtRecordOffset = 0;
             r.flags = AccelInstanceTriangleCullDisable;
-            r.blasAddress = m_device.accelStructAddress(m_meshes[d.mesh.id].blas);
+            r.blasAddress = m_device.accelStructAddress(blas);
         }
     }
 
@@ -574,15 +660,6 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     }
     std::stable_sort(m_drawOrder.begin(), m_drawOrder.end(),
                      [](const auto& a, const auto& b) { return a.first < b.first; });
-
-    // Joint matrices of skinned draws, for this frame.
-    u64 jointsAddress = 0;
-    if (!scene.joints.empty()) {
-        const u64 bytes = scene.joints.size() * sizeof(glm::mat4);
-        FrameAllocation jointAlloc = allocate(bytes, 64);
-        std::memcpy(jointAlloc.cpu, scene.joints.data(), bytes);
-        jointsAddress = jointAlloc.gpu;
-    }
 
     gpu::DrawPush push{};
     push.frame = frameAlloc.gpu;

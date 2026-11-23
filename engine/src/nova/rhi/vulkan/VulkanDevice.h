@@ -58,6 +58,10 @@ struct VulkanAccelStruct {
     VkDeviceAddress scratchAddress = 0;                 ///< Scratch address, aligned as the driver requires.
     bool topLevel = false;                              ///< TLAS (true) or BLAS.
     u32 maxInstances = 0;                               ///< TLAS capacity.
+    // Updatable BLAS: what it was built from (the buffers stay where they are).
+    bool allowUpdate = false;
+    VkAccelerationStructureGeometryKHR geometry{};
+    u32 primitiveCount = 0;
 };
 
 /// @brief Emits an image barrier from the texture's tracked state to `state` and updates the tracking.
@@ -107,6 +111,7 @@ public:
     void globalBarrier() override;
     void copyBuffer(BufferHandle src, BufferHandle dst, u64 size, u64 srcOffset, u64 dstOffset) override;
     void buildTLAS(AccelStructHandle tlas, u64 instanceAddress, u32 instanceCount) override;
+    void updateBLAS(AccelStructHandle blas) override;
     void beginDebugLabel(const char* name) override;
     void endDebugLabel() override;
 

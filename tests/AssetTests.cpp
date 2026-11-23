@@ -519,6 +519,7 @@ void skinning() {
         const CameraData eye = CameraData::relativeLookAt(GlobalPosition(far, 1, 10), {0, 0, -1}, 1.0f, 1.0f, 0.1f, 100.0f);
         scene.buildRenderScene(rs, 1.0f, &eye);
         CHECK(rs.draws.size() == 1 && rs.draws[0].jointCount == 1 && rs.joints.size() == 1);
+        CHECK(rs.draws[0].skinKey == body.uuid()); // the same from frame to frame: its ray tracing shape is kept
         const glm::vec4 rest = rs.joints[0] * glm::vec4(0, 2, 0, 1);
         CHECK(glm::length(glm::vec3(rest) - glm::vec3(0, 2, 0)) < 1e-5f); // the bind pose: unmoved
 

@@ -69,6 +69,12 @@ public:
     /// @param instanceAddress Device address of the instance array (16-byte aligned), typically inside a per-frame upload buffer.
     /// @param instanceCount Number of instances (at most TLASDesc::maxInstances).
     virtual void buildTLAS(AccelStructHandle tlas, u64 instanceAddress, u32 instanceCount) = 0;
+    /// @brief Refits a BLAS created with BLASDesc::allowUpdate to the current contents of its
+    ///        vertex buffer (e.g. written by a compute shader earlier in this command list).
+    ///
+    /// Inserts the barriers needed: earlier shader writes are visible to the build, earlier traces
+    /// of it finish first, and later TLAS builds and traces see the refitted structure.
+    virtual void updateBLAS(AccelStructHandle blas) = 0;
 
     /// @brief Opens a named region shown in graphics debuggers (RenderDoc, Nsight).
     virtual void beginDebugLabel(const char* name) = 0;

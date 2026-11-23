@@ -1103,6 +1103,7 @@ AccelStructHandle VulkanDevice::createBLAS(const BLASDesc& desc) {
     VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
     build.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
     build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    if (desc.allowUpdate) build.flags |= VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
     build.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     build.geometryCount = 1;
     build.pGeometries = &geom;
@@ -1122,8 +1123,10 @@ AccelStructHandle VulkanDevice::createBLAS(const BLASDesc& desc) {
     VK_CHECK(m_ext.vkCreateAccelerationStructureKHR(m_device, &ci, nullptr, &as.handle));
     setDebugName(VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR, reinterpret_cast<u64>(as.handle), desc.debugName);
 
+    // Updatable: the scratch memory is kept for the refits (large enough for both).
+    const VkDeviceSize scratchSize = desc.allowUpdate ? std::max(sizes.buildScratchSize, sizes.updateScratchSize) : sizes.buildScratchSize;
     BufferHandle scratch = createBuffer(
-        {sizes.buildScratchSize + m_asScratchAlignment, BufferUsage::Storage, MemoryUsage::GpuOnly, "blas scratch"});
+        {scratchSize + m_asScratchAlignment, BufferUsage::Storage, MemoryUsage::GpuOnly, "blas scratch"});
     build.dstAccelerationStructure = as.handle;
     build.scratchData.deviceAddress = alignUp(m_buffers.get(scratch)->address, m_asScratchAlignment);
 
@@ -1131,9 +1134,17 @@ AccelStructHandle VulkanDevice::createBLAS(const BLASDesc& desc) {
     const VkAccelerationStructureBuildRangeInfoKHR* ranges = &range;
     immediateSubmit([&](VkCommandBuffer cmd) { m_ext.vkCmdBuildAccelerationStructuresKHR(cmd, 1, &build, &ranges); });
 
-    VulkanBuffer scratchCopy = *m_buffers.get(scratch);
-    m_buffers.remove(scratch);
-    destroyBufferNow(scratchCopy);
+    if (desc.allowUpdate) {
+        as.allowUpdate = true;
+        as.geometry = geom;
+        as.primitiveCount = primitiveCount;
+        as.scratch = scratch;
+        as.scratchAddress = build.scratchData.deviceAddress;
+    } else {
+        VulkanBuffer scratchCopy = *m_buffers.get(scratch);
+        m_buffers.remove(scratch);
+        destroyBufferNow(scratchCopy);
+    }
 
     VkAccelerationStructureDeviceAddressInfoKHR ai{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
     ai.accelerationStructure = as.handle;
