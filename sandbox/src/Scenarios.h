@@ -53,6 +53,7 @@ struct Scenario {
     void (*status)(nova::Scene&) = nullptr;                 ///< Optional ImGui lines (measurements).
     bool character = false;                                 ///< A "Player" character the bench drives.
     bool gamepads = false;                                  ///< The bench spawns a ball per gamepad.
+    void (*enter)() = nullptr; ///< Optional: when the bench opens it (renderer settings; not in hidden runs).
 };
 
 /// Every scenario, in menu order.

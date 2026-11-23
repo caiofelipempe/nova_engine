@@ -210,6 +210,7 @@ private:
         m_current = index;
         const Scenario& sc = scenarios()[index];
         const View view = sc.build(scene(), m_meshes);
+        if (sc.enter && !keep) sc.enter(); // a reset keeps what was chosen in its panel
         m_camera = scene().createEntity("Camera");
         m_camera.add<nova::CameraComponent>().farClip = 500.0f;
         m_camera.transform().position = keep ? eye : view.eye;

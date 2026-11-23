@@ -503,7 +503,10 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         const u32 customTex = d.material.customTexture ? m_device.bindlessIndex(d.material.customTexture) : ~0u;
         inst.extra = glm::vec4(customTex == ~0u ? -1.0f : static_cast<f32>(customTex), di.cell);
 
-        if (tlasRecords && d.castShadows && m_meshes[d.mesh.id].blas) {
+        // Split copies (moved off their lap's center) stay out of the TLAS: the rays see each
+        // object whole, once per lap; a copy laid over its original would shadow itself.
+        const bool splitCopy = di.offset != di.cell;
+        if (tlasRecords && d.castShadows && m_meshes[d.mesh.id].blas && !splitCopy) {
             AccelStructInstance& r = tlasRecords[tlasCount++];
             toInstanceTransform(model, r.transform);
             r.instanceCustomIndex = i;

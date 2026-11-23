@@ -608,6 +608,16 @@ View buildTiny(Scene& s, const BenchMeshes& m) {
     // camera moves; per triangle its big faces go whole to one side or the other (the cut follows
     // its 12 triangles); split cuts it exactly at the seam.
     visual(s, "Bar across the seam", m.cube, {kTinySize / 2, 0.4, 8.0}, {10.0f, 0.8f, 0.8f}, {0.95f, 0.5f, 0.15f, 1});
+    // More to cut at the X seam: a big sphere, a turning cube and a capsule lying across it. With
+    // the camera at x = 0 the cut (split) is the seam itself: the near part ends in a clean cut,
+    // the far part is drawn one lap over (behind the camera; with further laps the next lap fills
+    // in). Per object they stay whole; per triangle the cut follows their triangles.
+    visual(s, "Sphere on the seam", m.sphere, {kTinySize / 2, 3.0, -14.0}, glm::vec3(6.0f), {0.25f, 0.55f, 0.95f, 1});
+    Entity turning = visual(s, "Turning cube", m.cube, {kTinySize / 2, 2.0, -1.5}, glm::vec3(3.0f), {0.35f, 0.8f, 0.4f, 1});
+    turning.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.4f);
+    visual(s, "Capsule across the seam", m.capsule, {kTinySize / 2 + 0.5, 1.0, 14.0}, glm::vec3(1.5f), {0.9f, 0.3f, 0.6f, 1})
+        .transform()
+        .setEulerDegrees({0.0f, 0.0f, 90.0f}); // lying along X
     // A stack of crates right on the Z seam: it stands on tiles of both sides, and its crates
     // touch across the seam.
     for (int i = 0; i < 4; ++i) {
@@ -615,17 +625,11 @@ View buildTiny(Scene& s, const BenchMeshes& m) {
         c.addScript<EdgeFlash>();
     }
     wanderers(s, m, 8, 14.0);
-    return {{0.0, 16.0, 26.0}, {12.0, 0.0, 0.0}};
+    return {{0.0, 11.0, 16.0}, {kTinySize / 2, 1.0, -2.0}}; // at x = 0: the cut (split) is the X seam
 }
 
-void statusTiny(Scene& s) {
-    const glm::dvec3 o = s.worldOrigin().toMeters();
-    ImGui::Text("World %.0f m per axis, circular | origin %.1f, %.1f, %.1f", kTinySize, o.x, o.y, o.z);
-    int wraps = 0;
-    for (auto [e, sc] : s.registry().view<ScriptComponent>().each())
-        for (auto& script : sc.scripts)
-            if (auto* f = dynamic_cast<EdgeFlash*>(script.get())) wraps += f->wraps;
-    ImGui::Text("Seams crossed: %d", wraps);
+// The renderer's seam options (NOVA_WRAP_RENDER_MODES builds): mode, further laps, instance count.
+void wrapControls() {
 #if NOVA_WRAP_RENDER_MODES
     RenderSettings& rs = Application::get().renderer().settings();
     int mode = static_cast<int>(rs.wrapShift);
@@ -640,6 +644,33 @@ void statusTiny(Scene& s) {
     ImGui::TextDisabled("to draw across the seams and repeat the world.");
 #endif
 }
+
+void statusTiny(Scene& s) {
+    const glm::dvec3 o = s.worldOrigin().toMeters();
+    ImGui::Text("World %.0f m per axis, circular | origin %.1f, %.1f, %.1f", kTinySize, o.x, o.y, o.z);
+    int wraps = 0;
+    for (auto [e, sc] : s.registry().view<ScriptComponent>().each())
+        for (auto& script : sc.scripts)
+            if (auto* f = dynamic_cast<EdgeFlash*>(script.get())) wraps += f->wraps;
+    ImGui::Text("Seams crossed: %d", wraps);
+    // What is drawn is placed around the camera: split cuts it half a lap (24 m) from the camera.
+    if (Entity cam = s.primaryCamera()) {
+        const glm::dvec3 c = cam.transform().position.toMeters();
+        auto cut = [](f64 v) { return v + kTinySize / 2 >= kTinySize / 2 ? v - kTinySize / 2 : v + kTinySize / 2; };
+        ImGui::Text("Cut (split) at x = %.1f m, z = %.1f m: fly to slide it", cut(c.x), cut(c.z));
+    }
+    wrapControls();
+}
+
+// Opening the tiny world turns the cut on (split at the seam, no further laps).
+void enterTiny() {
+#if NOVA_WRAP_RENDER_MODES
+    RenderSettings& rs = Application::get().renderer().settings();
+    rs.wrapShift = WrapShift::Split;
+    rs.wrapRepeat = 0;
+#endif
+}
+
 
 } // namespace
 
@@ -664,8 +695,9 @@ const std::vector<Scenario>& scenarios() {
                      nullptr, nullptr, 0.0f, nullptr, false, true});
         v.push_back({"Edges: wrap", "60 x 60 m world that wraps around: balls flash cyan and come in the other side.",
                      buildEdges});
-        v.push_back({"Tiny circular world", "48 m on every axis: one floor mesh across the seam, pillars on both sides, a crate stack on the Z seam.",
-                     buildTiny, nullptr, nullptr, 0.0f, statusTiny});
+        v.push_back({"Tiny circular world", "48 m on every axis: meshes cut at the seam (split, half a lap from the camera; fly to slide it), a crate stack on the Z seam.",
+                     buildTiny, nullptr, nullptr, 0.0f, statusTiny, false, false, enterTiny});
+
         return v;
     }();
     return list;

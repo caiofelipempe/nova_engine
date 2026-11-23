@@ -545,15 +545,20 @@ Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Ba
 - **Limites:**
   - no modo `Triangle`, a sombra por ray tracing (BLAS por objeto) e o picking seguem a origem da
     malha;
-  - no modo `Split`, o ray tracing vê as cópias sem o recorte;
+  - no modo `Split`, as sombras por ray tracing usam cada objeto inteiro, como no modo `Object` (as cópias do recorte ficam fora do TLAS);
   - padrões de `s.worldPos` só são contínuos através da emenda quando o período divide L.
-- **Não verificado em GPU** (o desenvolvimento foi sem monitor): os pipelines Vulkan e a imagem dos
-  modos novos ainda precisam ser conferidos no cenário "Tiny circular world" do sandbox.
+- Conferido em GPU (AMD, validação Vulkan ligada) no cenário "Tiny circular world": os três modos e
+  as voltas extras desenham sem erro.
 
 ### Cenários
 - Sandbox: **Edges: wrap** (60 × 60 m) e **Tiny circular world**, com 48 m em todos os eixos. Este
-  tem um chão de uma malha só atravessando a emenda X, sobre ladrilhos invisíveis de colisão,
-  pilares dos dois lados das emendas, uma barra e uma pilha de caixas sobre elas. No painel (com a
-  opção ligada) escolhem-se o modo e as voltas em volta.
+  tem um chão de uma malha só atravessando a emenda X, sobre um corpo de chão invisível, pilares
+  dos dois lados das emendas e uma pilha de caixas sobre elas. É também o teste do **corte nas
+  emendas**: uma barra, uma esfera, um cubo girando e uma cápsula atravessam a emenda X. Ao abrir,
+  o cenário liga o modo `Split` sem voltas extras. Com a câmera em x = 0, o corte (a meia volta
+  dela) cai na própria emenda: a parte próxima termina num corte limpo e a outra é desenhada uma
+  volta adiante. Voando com a câmera, o corte desliza pelos objetos, e o painel mostra onde ele
+  está. No painel (com a opção ligada) escolhem-se o modo e as voltas em volta. Pela linha de
+  comando: `Sandbox --scenario "Tiny circular world" --wrap split|object|triangle --laps N`.
 - Editor (*Game/Scenarios*): Small World (Wrap-around), Torus Seam e Tiny World (48 m). Os três
   rodam sem tela nos `ScenarioTests` (o minúsculo duas vezes, comparando o hash).
