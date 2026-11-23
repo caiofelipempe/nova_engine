@@ -7,7 +7,7 @@
       "hidden": true,
       "binaryDir": "${sourceDir}/build",
       "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-      "cacheVariables": { "NOVA_WRAP_RENDER_MODES": "ON" }
+      "cacheVariables": { "NOVA_WRAP_RENDER_MODES": "ON", "NOVA_RENDER_ORIGIN_ROTATION": "ON" }
     },
     {
       "name": "windows-vs2022",
@@ -24,7 +24,7 @@
       "description": "NOVA_WRAP_RENDER_MODES=OFF: each object drawn once, at its copy nearest the camera.",
       "inherits": "windows-vs2022",
       "binaryDir": "${sourceDir}/build-nowrap",
-      "cacheVariables": { "NOVA_WRAP_RENDER_MODES": "OFF" }
+      "cacheVariables": { "NOVA_WRAP_RENDER_MODES": "OFF", "NOVA_RENDER_ORIGIN_ROTATION": "OFF" }
     },
     {
       "name": "ninja",

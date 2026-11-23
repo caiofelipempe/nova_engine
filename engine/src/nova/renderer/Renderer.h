@@ -157,6 +157,9 @@ enum class WrapShift : u32 {
 enum class WrapCrop : u32 {
     World,  ///< The world's own lap, fixed (from −L/2 to +L/2 on each circular axis): a diorama, cut at the seams.
     Camera, ///< The lap around the camera: the cut is half a lap from it and moves with it.
+    View,   ///< A box in the camera's own axes, turning with it (its front face always perpendicular to the
+            ///< view), as big as fits in the lap around the camera (from L/(2√3) to L/2 a side, by the
+            ///< angle). Only in builds with NOVA_RENDER_ORIGIN_ROTATION; otherwise as Camera.
 };
 
 /// @brief Runtime-tweakable rendering options (Renderer::settings()).

@@ -75,7 +75,10 @@ public:
         load(first, false); // GameLayer starts the simulation after onStart()
 #if NOVA_WRAP_RENDER_MODES
         if (s_wrapShift >= 0) r.settings().wrapShift = static_cast<nova::WrapShift>(s_wrapShift);
-        if (s_wrapShift == 3) r.settings().wrapCrop = s_cropCamera ? nova::WrapCrop::Camera : nova::WrapCrop::World;
+        if (s_wrapShift == 3)
+            r.settings().wrapCrop = s_crop == "camera" ? nova::WrapCrop::Camera
+                                  : s_crop == "view"   ? nova::WrapCrop::View
+                                                       : nova::WrapCrop::World;
         if (s_wrapRepeat >= 0) r.settings().wrapRepeat = static_cast<nova::u32>(s_wrapRepeat);
 #endif
         if (s_selfCheck) {
@@ -91,8 +94,8 @@ public:
 
     static inline bool s_selfCheck = false, s_checkFailed = false;
     static inline std::string s_startScenario;              // --scenario "<name>"
-    static inline int s_wrapShift = -1, s_wrapRepeat = -1; // --wrap triangle|object|split|crop|crop-camera, --laps N
-    static inline bool s_cropCamera = false;
+    static inline int s_wrapShift = -1, s_wrapRepeat = -1; // --wrap triangle|object|split|crop|crop-camera|crop-view, --laps N
+    static inline std::string s_crop;                       // "camera", "view" or "" (the world's lap)
 
     // Like GameLayer::onUpdate, plus pause, single step and time scale.
     void onUpdate(float dt) override {
@@ -433,7 +436,7 @@ int main(int argc, char** argv) {
         else if (arg == "--wrap" && hasValue) {
             const std::string_view v = argv[++i];
             PhysicsBench::s_wrapShift = v == "triangle" ? 0 : v == "object" ? 1 : v == "split" ? 2 : v.starts_with("crop") ? 3 : -1;
-            PhysicsBench::s_cropCamera = v == "crop-camera";
+            if (v.starts_with("crop-")) PhysicsBench::s_crop = std::string(v.substr(5));
         }
     }
     const int code = nova::run<PhysicsBench>({.name = "Nova Physics Bench", .width = 1280, .height = 720});

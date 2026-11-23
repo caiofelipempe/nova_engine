@@ -543,6 +543,16 @@ Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Ba
       Cada objeto vai para a cópia cuja origem está nela (onde o transform diz), e o que sobra além
       de uma emenda é cortado. O mundo aparece como uma maquete, parada no lugar.
     - **`Camera`**: a volta em volta da câmera; o corte fica a meia volta dela e anda com ela.
+    - **`View`** (só com a opção `NOVA_RENDER_ORIGIN_ROTATION`): a origem da renderização gira
+      com a câmera também. O corte é uma caixa nos eixos da própria câmera, e a face da frente fica
+      sempre perpendicular à vista, sem aparência de caixa. Uma caixa de lado L girada não ladrilha
+      o mundo: alguns pontos apareceriam duas vezes e outros nenhuma. Por isso o tamanho é o maior
+      que cabe na volta em volta da câmera naquele ângulo (`viewCropHalf`), de L/√3 de lado,
+      olhando numa diagonal, a L, olhando ao longo de um eixo. A conta é feita na CPU a cada quadro,
+      e o `forward.vert` recorta no espaço da câmera.
+    - A opção de CMake `NOVA_RENDER_ORIGIN_ROTATION` vem **desligada** por padrão; os presets (os
+      builds do sandbox) a ligam, e o `windows-vs2022-nowrap` a desliga. Ela precisa de
+      `NOVA_WRAP_RENDER_MODES`.
     No `Crop` não há voltas extras. Sem `shaderClipDistance`, o modo cai para `Object`. Limites: as
     partes cortadas continuam fazendo sombra por ray tracing (o TLAS vê o objeto inteiro), e o corte
     mostra o objeto oco (sem tampa).
@@ -572,6 +582,6 @@ Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Ba
   dela) cai na própria emenda: a parte próxima termina num corte limpo e a outra é desenhada uma
   volta adiante. Voando com a câmera, o corte desliza pelos objetos, e o painel mostra onde ele
   está. No painel (com a opção ligada) escolhem-se o modo e as voltas em volta. Pela linha de
-  comando: `Sandbox --scenario "Tiny circular world" --wrap split|object|triangle|crop|crop-camera --laps N`. O painel também tem o `Crop`, com a escolha entre a volta do mundo e a da câmera.
+  comando: `Sandbox --scenario "Tiny circular world" --wrap split|object|triangle|crop|crop-camera|crop-view --laps N`. O painel também tem o `Crop`, com a escolha entre a volta do mundo, a da câmera e a caixa que gira com a câmera (que mostra o tamanho atual dela).
 - Editor (*Game/Scenarios*): Small World (Wrap-around), Torus Seam e Tiny World (48 m). Os três
   rodam sem tela nos `ScenarioTests` (o minúsculo duas vezes, comparando o hash).

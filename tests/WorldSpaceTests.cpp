@@ -286,6 +286,29 @@ void wrapInstances() {
     expandWrapInstances({at({8, 0, -5}), at({-10, 0, -5})}, lookup, viewProj, o, out);
     CHECK(out.size() == 2 && out[0].offset == glm::vec3(-48.0f, 0.0f, 0.0f) && out[1].offset == glm::vec3(0.0f));
     CHECK(out[0].cell == glm::vec3(-20.0f, 0.0f, 0.0f) && out[1].cell == out[0].cell);
+
+    // The crop turning with the camera: the biggest box in the camera's axes that fits in the lap
+    // around it. Along an axis, half a lap; turned 45° around Y, 1/√2 of it; never below 1/√3.
+    const glm::vec3 cube(48.0f);
+    CHECK(std::abs(viewCropHalf(glm::mat3(1.0f), cube) - 24.0f) < 1e-4f);
+    const glm::mat3 yaw45 = glm::mat3_cast(glm::angleAxis(glm::radians(45.0f), glm::vec3(0, 1, 0)));
+    CHECK(std::abs(viewCropHalf(yaw45, cube) - 24.0f / std::sqrt(2.0f)) < 1e-3f);
+    bool bounded = true;
+    for (int k = 0; k < 200; ++k) { // assorted turns
+        const glm::vec3 axis = glm::normalize(glm::vec3(std::sin(k * 1.3f), std::cos(k * 0.7f), std::sin(k * 2.1f) + 0.1f));
+        const glm::mat3 r = glm::mat3_cast(glm::angleAxis(k * 0.37f, axis));
+        const f32 h = viewCropHalf(r, cube);
+        bounded &= h >= 24.0f / std::sqrt(3.0f) - 1e-3f && h <= 24.0f + 1e-3f;
+        // Its corners stay within half a lap on every world axis: nothing in it twice.
+        for (int c = 0; c < 8; ++c) {
+            const glm::vec3 tip = glm::transpose(r) * (h * glm::vec3(c & 1 ? 1 : -1, c & 2 ? 1 : -1, c & 4 ? 1 : -1));
+            bounded &= glm::all(glm::lessThanEqual(glm::abs(tip), glm::vec3(24.0f + 1e-3f)));
+        }
+    }
+    CHECK(bounded);
+    // Looking down 45° in a world circular on X and Z only: Y does not limit it.
+    const glm::mat3 pitch45 = glm::mat3_cast(glm::angleAxis(glm::radians(45.0f), glm::vec3(1, 0, 0)));
+    CHECK(std::abs(viewCropHalf(pitch45, {48.0f, 0.0f, 48.0f}) - 24.0f / std::sqrt(2.0f)) < 1e-3f);
     // Not circular: nothing changes, whatever the mode.
     WrapOptions flat = o;
     flat.size = glm::vec3(0.0f);

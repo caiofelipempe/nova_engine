@@ -42,7 +42,7 @@ struct FrameData {
     u32 pointLightCount;     ///< Number of valid entries in pointLights.
     u32 flags;               ///< kFrameFlag* bits.
     f32 shadowBias;          ///< Shadow ray origin offset along the normal.
-    f32 _pad0;               ///< Padding (std430).
+    f32 cropHalf;            ///< WrapCrop::View: half a side of the crop box, in the camera's axes (m).
     PointLight pointLights[kMaxPointLights]; ///< Point lights.
 };
 static_assert(sizeof(FrameData) == 256 + 8 * 16 + 16 + kMaxPointLights * 32);

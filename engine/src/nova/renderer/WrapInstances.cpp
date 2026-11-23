@@ -93,4 +93,17 @@ void expandWrapInstances(const std::vector<DrawItem>& draws, const MeshBoundsLoo
     }
 }
 
+// Half a side of the biggest box in the camera's axes that fits in the lap around the camera: on
+// world axis i the box reaches h · Σ_j |view[i][j]| (column i of world → view), which must stay
+// within half that lap. Axes that are not circular do not limit it.
+f32 viewCropHalf(const glm::mat3& view, const glm::vec3& size) {
+    f32 half = 1e30f;
+    for (int i = 0; i < 3; ++i) {
+        if (size[i] <= 0.0f) continue;
+        const f32 reach = std::abs(view[i][0]) + std::abs(view[i][1]) + std::abs(view[i][2]);
+        half = std::min(half, size[i] * 0.5f / std::max(reach, 1e-6f));
+    }
+    return half;
+}
+
 } // namespace nova
