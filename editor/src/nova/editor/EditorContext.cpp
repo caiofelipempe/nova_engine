@@ -11,6 +11,12 @@ namespace nova::editor {
 EditorContext::EditorContext(Scene& scene) : m_scene(&scene) {
     // Any history movement (undo, redo, History panel jumps) changes entities behind the tracker's back.
     m_undo.changed.connect([this] { m_trackValid = false; });
+    // Model animations saved by reference play again after loading (and after Stop).
+    m_scene->setAnimationSource(m_assets.animationSource());
+}
+
+EditorContext::~EditorContext() {
+    if (m_scene) m_scene->setAnimationSource({}); // it pointed at this context's assets
 }
 
 Application& EditorContext::app() { return Application::get(); }

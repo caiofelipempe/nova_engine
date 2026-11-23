@@ -184,6 +184,7 @@ for (nova::Entity c : car.children()) { /* ... */ }  // e parent(), scene.descen
 - A cena põe os filhos no lugar antes dos scripts, depois deles e depois da física (`Scene::update`), e antes de desenhar. Um filho movido por outra coisa (script, gizmo, o próprio corpo dinâmico) fica onde foi posto e passa a ter o deslocamento dali. Corpos estáticos e cinemáticos filhos seguem o pai; um dinâmico se move sozinho.
 - Apagar um pai apaga os descendentes; duplicar copia a subárvore (os filhos copiados seguem a cópia); um prefab leva os descendentes, e um pai que fica de fora é esquecido. Os filhos de um corpo interpolado são desenhados com ele.
 - Modelos glTF chegam com a árvore dos nós: uma raiz com o nome do arquivo e cada nó sob o seu pai (nós sem malha viram transforms vazios; primitivas extras de uma malha, filhas do nó). Mover a raiz move o modelo inteiro.
+- **Animação dos nós:** as animações do glTF (posição, rotação e escala por nó; passo, linear ou spline cúbica) viram `AnimationClip`s. Um modelo animado ganha um `AnimatorComponent` na raiz, que toca o primeiro clipe e escreve a pose local dos nós (`clip`, `speed`, `loop`, `playing`). Cada canal acha o nó pelo caminho de nomes a partir da raiz ("Porta/Dobradiça"), então sobrevive a salvar, duplicar e prefabs. O clipe é salvo por referência (`"asset:<guid>#<índice>"`) e resolvido pela fonte de animações da cena (`scene.setAnimationSource(assets.animationSource())`, que o editor já faz). O tempo não é salvo: uma cena aberta toca do início. Também dá para tocar um clipe próprio: `animator.data = std::make_shared<AnimationClip>(...)`.
 - No editor, a *Hierarchy* é uma árvore: arraste uma entidade para outra para torná-la filha, ou para o espaço vazio abaixo para virar raiz (com desfazer). Duplicar e apagar agem nas raízes da seleção.
 
 ## Física (Jolt Physics)
@@ -336,3 +337,4 @@ Próximos passos (a estrutura já está preparada):
 - Editor: receitas para IA / servidor MCP (fase 5).
 - Renderer: materiais com mais texturas (normal, metallic-roughness, emissive), shadow maps como fallback sem RT, render graph, culling em GPU, backend D3D12.
 - Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*; modelos glTF instanciados com a árvore dos nós, sob uma raiz com o nome do arquivo).
+- Animação: dos nós (feita: clipes glTF, `AnimatorComponent`). Próximos: skinning (personagens com esqueleto), mistura e troca de clipes, escolher o clipe no inspetor por nome.

@@ -37,6 +37,7 @@
 #include "nova/scene/Components.h"
 #include "nova/scene/Entity.h"
 #include "nova/scene/GameLayer.h"
+#include "nova/scene/Animation.h"
 #include "nova/scene/Scene.h"
 #include "nova/scene/SceneSerializer.h"
 #include "nova/scene/Script.h"

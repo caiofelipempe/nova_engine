@@ -6,6 +6,7 @@
 #include "nova/math/Time.h"
 #include "nova/math/WorldOrigin.h"
 #include "nova/renderer/Renderer.h"
+#include "nova/scene/Animation.h"
 #include "nova/scene/Entity.h"
 #include "nova/scene/Script.h"
 
@@ -101,6 +102,19 @@ public:
     ///        new pose and take their offset again). update() runs it before and after physics,
     ///        buildRenderScene() before drawing; call it after moving parents to read children's poses.
     void updateTransforms();
+    /// @}
+
+    /// @name Animation
+    /// AnimatorComponent plays clips on an entity's descendants (run by update(), after scripts).
+    /// @{
+    /// @brief Finds a clip by the reference in AnimatorComponent::clip (e.g. AssetDatabase::animationSource()).
+    using AnimationSource = std::function<std::shared_ptr<const AnimationClip>(const std::string&)>;
+    /// @brief Sets this scene's animation source (falls back to the default one when unset).
+    void setAnimationSource(AnimationSource source) { m_animationSource = std::move(source); }
+    /// @brief Default animation source of every scene.
+    static void setDefaultAnimationSource(AnimationSource source);
+    /// @brief The clip a reference names (through the animation source), or null.
+    std::shared_ptr<const AnimationClip> findAnimation(const std::string& clip) const;
     /// @}
 
     /// @brief Runs scripts, built-in systems and (if simulating) physics.
@@ -313,6 +327,9 @@ private:
     bool m_hasPhysicsFocus = false;
     Duration m_physicsAccumulator;
     std::unordered_map<u64, entt::entity> m_byUuid; // rebuilt by updateTransforms (checked before use)
+    AnimationSource m_animationSource;
+    void updateAnimations(Duration frame);
+    entt::entity findByPath(entt::entity from, const std::string& path);
     entt::entity lookup(u64 uuid) const;
     // Poses of what the physics moved, before and after the last step (interpolatePhysics).
     struct StepPoses {

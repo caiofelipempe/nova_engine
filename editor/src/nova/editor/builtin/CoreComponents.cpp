@@ -55,6 +55,7 @@ void CoreComponentsPlugin::onRegister(Registry& r) {
     r.component<MeshColliderComponent>().canAdd = oneCollider;
 
     r.component<RotatorComponent>();
+    r.component<AnimatorComponent>();
 
     // Scripts without reflection can't be edited or saved: show that they exist.
     ComponentEditor scripts;

@@ -102,6 +102,7 @@ class EditorContext {
 public:
     /// @param scene The scene being edited (must outlive the context).
     explicit EditorContext(Scene& scene);
+    ~EditorContext();
     EditorContext(const EditorContext&) = delete;
     EditorContext& operator=(const EditorContext&) = delete;
 

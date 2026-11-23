@@ -121,7 +121,8 @@ void Scene::update(Duration frame) {
         t.rotation = (TransformComponent::turn(angle, r.axis.toDouble()) * t.rotation).normalized();
     }
 
-    updateTransforms(); // children follow their parents (moved by scripts and systems)
+    updateAnimations(frame); // clips set their nodes' offsets from their parents
+    updateTransforms(); // children follow their parents (moved by scripts, systems and animations)
     if (m_physics) {
         stepPhysics(frame);
         updateTransforms(); // and their parents' bodies (a child's own dynamic body moves it on its own)

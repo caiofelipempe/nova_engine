@@ -322,8 +322,27 @@ std::vector<Entity> AssetDatabase::instantiate(AssetGuid guid, Scene& scene, con
         if (!e.has<PrefabInstanceComponent>()) e.add<PrefabInstanceComponent>();
         e.get<PrefabInstanceComponent>().asset = guid;
     }
-    if (!entities.empty() && r->type == "Model") entities[0].get<NameComponent>().name = r->path.stem().string(); // the root
+    if (!entities.empty() && r->type == "Model") {
+        entities[0].get<NameComponent>().name = r->path.stem().string(); // the root
+        if (auto* anim = entities[0].tryGet<AnimatorComponent>()) { // its clip, by reference: saved scenes find it again
+            anim->clip = makeRef(guid, 0);
+            anim->resolved = anim->clip;
+        }
+    }
     return entities;
+}
+
+Scene::AnimationSource AssetDatabase::animationSource() {
+    return [this](const std::string& ref) -> std::shared_ptr<const AnimationClip> {
+        AssetGuid guid = 0;
+        u32 index = 0;
+        if (!parseRef(ref, guid, index)) return nullptr;
+        const AssetData* data = load(guid);
+        const ModelData* model = data ? data->as<ModelData>() : nullptr;
+        const AssetRecord* r = find(guid);
+        if (!model || !r || r->type != "Model" || index >= model->animations.size()) return nullptr;
+        return model->animations[index];
+    };
 }
 
 // -------------------------------------------------------------- references --

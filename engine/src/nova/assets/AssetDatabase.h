@@ -146,6 +146,10 @@ public:
     bool canInstantiate(const AssetRecord& record) const { return record.importer && record.importer->instantiate; }
     /// @brief Loads the asset and creates its entities at `position`; each gets a PrefabInstanceComponent.
     std::vector<Entity> instantiate(AssetGuid guid, Scene& scene, const GlobalPosition& position = GlobalPosition());
+    /// @brief Finds the clips of model assets by reference ("asset:<guid>#<index>", what
+    ///        instantiate() puts in a model's AnimatorComponent::clip), loading the model if needed.
+    ///        Give it to Scene::setAnimationSource (the editor does) so saved scenes play them again.
+    Scene::AnimationSource animationSource();
     /// @}
 
     /// @name References

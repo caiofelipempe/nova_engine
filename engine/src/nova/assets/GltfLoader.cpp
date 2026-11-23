@@ -169,6 +169,10 @@ std::vector<u8> decodeImageFile(const std::filesystem::path& path, u32& width, u
 }
 
 std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::path& path, const std::string& meshPrefix) {
+    return loadModel(&renderer, path, meshPrefix);
+}
+
+std::optional<ModelData> loadModel(Renderer* renderer, const std::filesystem::path& path, const std::string& meshPrefix) {
     CgltfFile file;
     if (!parse(path, file, true)) return std::nullopt;
     const cgltf_data* data = file.data;
@@ -176,7 +180,8 @@ std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::pa
 
     ModelData model;
     model.name = path.stem().string();
-    for (cgltf_size i = 0; i < data->images_count; ++i) model.textures.push_back(loadImage(renderer, path, data->images[i], i));
+    for (cgltf_size i = 0; i < data->images_count; ++i)
+        model.textures.push_back(renderer ? loadImage(*renderer, path, data->images[i], i) : rhi::TextureHandle{});
 
     // One GPU mesh per (mesh, primitive), shared by all nodes that instance it. ~0u = unusable.
     std::vector<std::vector<u32>> meshCache(data->meshes_count);
@@ -188,9 +193,9 @@ std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::pa
                 MeshData md;
                 std::string name = prefix + (node.mesh->name ? node.mesh->name : ("mesh" + std::to_string(meshIndex)));
                 if (node.mesh->primitives_count > 1) name += "#" + std::to_string(pi);
-                if (buildMesh(node.mesh->primitives[pi], md)) {
+                if (renderer && buildMesh(node.mesh->primitives[pi], md)) {
                     cache.push_back(static_cast<u32>(model.meshes.size()));
-                    model.meshes.push_back(renderer.createMesh(md, name));
+                    model.meshes.push_back(renderer->createMesh(md, name));
                 } else {
                     cache.push_back(~0u);
                 }
@@ -201,6 +206,7 @@ std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::pa
     // Every node, depth first from the scene's roots: parents before children. A node gets its
     // mesh's first primitive; the others become children of it, at the same pose.
     std::vector<bool> visited(data->nodes_count, false);
+    std::vector<u32> nodeOf(data->nodes_count, ~0u); // glTF node -> ModelData::nodes
     std::function<void(const cgltf_node&, u32)> visit = [&](const cgltf_node& node, u32 parent) {
         const cgltf_size n = static_cast<cgltf_size>(&node - data->nodes);
         if (visited[n]) return;
@@ -229,6 +235,7 @@ std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::pa
             mn.material = buildMaterial(data, node.mesh->primitives[primitives[0].second].material, model.textures);
         }
         const u32 self = static_cast<u32>(model.nodes.size());
+        nodeOf[n] = self;
         model.nodes.push_back(mn);
         for (size_t k = 1; k < primitives.size(); ++k) {
             ModelNode extra = mn;
@@ -245,8 +252,52 @@ std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::pa
     for (cgltf_size n = 0; n < data->nodes_count; ++n) // no scene, or nodes outside it: their own roots
         if (!data->nodes[n].parent) visit(data->nodes[n], ~0u);
 
-    NOVA_CORE_INFO("glTF: loaded '{}' ({} meshes, {} textures, {} nodes)", path.string(), model.meshes.size(),
-                   model.textures.size(), model.nodes.size());
+    // Animations: each channel names its node by the path of names from the model's root (the
+    // entities instantiateModel makes), so it finds it again after saving, duplicating...
+    auto pathOf = [&](u32 node) {
+        std::string path;
+        for (u32 at = node; at != ~0u; at = model.nodes[at].parent) path = path.empty() ? model.nodes[at].name : model.nodes[at].name + "/" + path;
+        return path;
+    };
+    for (cgltf_size a = 0; a < data->animations_count; ++a) {
+        const cgltf_animation& anim = data->animations[a];
+        auto clip = std::make_shared<AnimationClip>();
+        clip->name = anim.name ? anim.name : ("animation" + std::to_string(a));
+        for (cgltf_size c = 0; c < anim.channels_count; ++c) {
+            const cgltf_animation_channel& ch = anim.channels[c];
+            if (!ch.target_node || !ch.sampler || !ch.sampler->input || !ch.sampler->output) continue;
+            AnimationChannel out;
+            switch (ch.target_path) {
+                case cgltf_animation_path_type_translation: out.path = AnimationPath::Translation; break;
+                case cgltf_animation_path_type_rotation: out.path = AnimationPath::Rotation; break;
+                case cgltf_animation_path_type_scale: out.path = AnimationPath::Scale; break;
+                default: continue; // morph weights: not supported
+            }
+            const cgltf_size node = static_cast<cgltf_size>(ch.target_node - data->nodes);
+            if (node >= nodeOf.size() || nodeOf[node] == ~0u) continue;
+            out.target = pathOf(nodeOf[node]);
+            out.interpolation = ch.sampler->interpolation == cgltf_interpolation_type_step          ? AnimationInterpolation::Step
+                                : ch.sampler->interpolation == cgltf_interpolation_type_cubic_spline ? AnimationInterpolation::CubicSpline
+                                                                                                     : AnimationInterpolation::Linear;
+            const cgltf_accessor& in = *ch.sampler->input;
+            const cgltf_accessor& values = *ch.sampler->output;
+            out.times.resize(in.count);
+            for (cgltf_size k = 0; k < in.count; ++k) cgltf_accessor_read_float(&in, k, &out.times[k], 1);
+            const cgltf_size width = out.path == AnimationPath::Rotation ? 4 : 3;
+            out.values.resize(values.count);
+            for (cgltf_size k = 0; k < values.count; ++k) {
+                f32 v[4] = {0, 0, 0, 0};
+                cgltf_accessor_read_float(&values, k, v, width);
+                out.values[k] = {v[0], v[1], v[2], v[3]};
+            }
+            if (!out.times.empty()) clip->duration = std::max(clip->duration, out.times.back());
+            clip->channels.push_back(std::move(out));
+        }
+        model.animations.push_back(std::move(clip));
+    }
+
+    NOVA_CORE_INFO("glTF: loaded '{}' ({} meshes, {} textures, {} nodes, {} animations)", path.string(), model.meshes.size(),
+                   model.textures.size(), model.nodes.size(), model.animations.size());
     return model;
 }
 
@@ -271,6 +322,7 @@ std::vector<Entity> instantiateModel(Scene& scene, const ModelData& model, const
         const u32 parent = model.nodes[i].parent;
         scene.setParent(made[i], parent < i ? made[parent] : root);
     }
+    if (!model.animations.empty()) root.add<AnimatorComponent>().data = model.animations.front();
     return out;
 }
 

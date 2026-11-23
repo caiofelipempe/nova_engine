@@ -6,6 +6,7 @@
 #include "nova/scene/Scene.h"
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -35,6 +36,8 @@ struct ModelData {
     std::vector<MeshHandle> meshes;           ///< One per (glTF mesh, primitive) actually used.
     std::vector<rhi::TextureHandle> textures; ///< One per glTF image (invalid if it failed to load).
     std::vector<ModelNode> nodes;             ///< Nodes to create, parents first.
+    /// @brief The file's animations; channel targets are paths of node names from the model's root.
+    std::vector<std::shared_ptr<const AnimationClip>> animations;
 };
 
 /// @brief Loads a glTF 2.0 file (`.gltf` or `.glb`) into GPU meshes and textures.
@@ -47,10 +50,15 @@ struct ModelData {
 /// @return The model, or `std::nullopt` on failure (logged).
 std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::path& path,
                                    const std::string& meshPrefix = {});
+/// @brief Same; without a renderer (null), only the nodes and animations are read (no meshes nor
+///        textures: headless tools and tests).
+std::optional<ModelData> loadModel(Renderer* renderer, const std::filesystem::path& path,
+                                   const std::string& meshPrefix = {});
 
 /// @brief Creates the model: a root entity at `position` (named after the model) and one entity per
 ///        node under it, children under their parents (ParentComponent): moving the root moves the
-///        whole model, each part keeping its place in it.
+///        whole model, each part keeping its place in it. A model with animations gets an
+///        AnimatorComponent on its root, playing the first one.
 /// @return The created entities: the root first, then the nodes in order.
 std::vector<Entity> instantiateModel(Scene& scene, const ModelData& model, const GlobalPosition& position = GlobalPosition());
 

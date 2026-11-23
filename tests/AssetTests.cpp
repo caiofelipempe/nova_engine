@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <vector>
 
 using namespace nova;
@@ -364,6 +365,133 @@ void modelHierarchy() {
     CHECK(glm::length((lampE.transform().position - GlobalPosition(20, 3, 0)).toMeters()) < 1e-4);
 }
 
+void animationSampling() {
+    // Linear, step and cubic channels, and rotations by slerp.
+    AnimationChannel move;
+    move.times = {0.0f, 2.0f};
+    move.values = {glm::vec4(0, 0, 0, 0), glm::vec4(4, 2, 0, 0)};
+    CHECK(move.sample(1.0f) == glm::vec4(2, 1, 0, 0) && move.sample(-1.0f) == glm::vec4(0.0f) && move.sample(9.0f) == glm::vec4(4, 2, 0, 0));
+    move.interpolation = AnimationInterpolation::Step;
+    CHECK(move.sample(1.9f) == glm::vec4(0.0f) && move.sample(2.0f) == glm::vec4(4, 2, 0, 0));
+    AnimationChannel turn;
+    turn.path = AnimationPath::Rotation;
+    turn.times = {0.0f, 1.0f};
+    const glm::quat a(1, 0, 0, 0), b = glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 1, 0));
+    turn.values = {glm::vec4(a.x, a.y, a.z, a.w), glm::vec4(b.x, b.y, b.z, b.w)};
+    const glm::vec4 half = turn.sample(0.5f);
+    const glm::quat q(half.w, half.x, half.y, half.z), want = glm::angleAxis(glm::radians(45.0f), glm::vec3(0, 1, 0));
+    CHECK(std::abs(std::abs(glm::dot(q, want)) - 1.0f) < 1e-5f);
+    // Cubic spline with flat tangents: eases in and out, through the keys.
+    AnimationChannel ease;
+    ease.interpolation = AnimationInterpolation::CubicSpline;
+    ease.times = {0.0f, 1.0f};
+    ease.values = {glm::vec4(0), glm::vec4(0), glm::vec4(0), glm::vec4(0), glm::vec4(1, 0, 0, 0), glm::vec4(0)};
+    CHECK(std::abs(ease.sample(0.5f).x - 0.5f) < 1e-6f && ease.sample(0.25f).x < 0.25f && ease.sample(1.0f).x == 1.0f);
+}
+
+void nodeAnimation() {
+    // A model with a clip: its root plays it on the nodes, as offsets from their parents.
+    ModelData model;
+    model.name = "door";
+    ModelNode frame;
+    frame.name = "Frame";
+    ModelNode hinge;
+    hinge.name = "Hinge";
+    hinge.position = {1, 0, 0};
+    hinge.parent = 0;
+    model.nodes = {frame, hinge};
+    auto clip = std::make_shared<AnimationClip>();
+    clip->name = "open";
+    clip->duration = 2.0f;
+    AnimationChannel swing;
+    swing.target = "Frame/Hinge";
+    swing.path = AnimationPath::Rotation;
+    swing.times = {0.0f, 2.0f};
+    const glm::quat closed(1, 0, 0, 0), open = glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 1, 0));
+    swing.values = {glm::vec4(closed.x, closed.y, closed.z, closed.w), glm::vec4(open.x, open.y, open.z, open.w)};
+    AnimationChannel slide; // the frame slides up
+    slide.target = "Frame";
+    slide.times = {0.0f, 2.0f};
+    slide.values = {glm::vec4(0, 0, 0, 0), glm::vec4(0, 2, 0, 0)};
+    clip->channels = {swing, slide};
+    model.animations = {clip};
+
+    Scene scene;
+    auto made = instantiateModel(scene, model, GlobalPosition(10, 0, 0));
+    Entity root = made[0], frameE = made[1], hingeE = made[2];
+    CHECK(root.has<AnimatorComponent>() && root.get<AnimatorComponent>().data == clip);
+    auto angleOf = [](Entity e) { return glm::degrees(glm::angle(e.transform().orientation())); };
+    scene.update(Duration::fromSeconds(1.0));
+    CHECK(std::abs(angleOf(hingeE) - 45.0f) < 0.01f);
+    CHECK(glm::length((frameE.transform().position - GlobalPosition(10, 1, 0)).toMeters()) < 1e-4);
+    CHECK(glm::length((hingeE.transform().position - GlobalPosition(11, 1, 0)).toMeters()) < 1e-4); // follows the frame
+    // Moving the model's root moves the animation with it.
+    root.transform().position = {20, 0, 0};
+    scene.update(Duration::fromSeconds(0.5));
+    CHECK(glm::length((frameE.transform().position - GlobalPosition(20, 1.5, 0)).toMeters()) < 1e-4);
+    // Loops; paused holds; faster.
+    scene.update(Duration::fromSeconds(1.0)); // 2.5 s ≡ 0.5 s
+    CHECK(std::abs(root.get<AnimatorComponent>().time - 0.5) < 1e-9 && std::abs(angleOf(hingeE) - 22.5f) < 0.01f);
+    root.get<AnimatorComponent>().playing = false;
+    scene.update(Duration::fromSeconds(1.0));
+    CHECK(std::abs(angleOf(hingeE) - 22.5f) < 0.01f);
+    root.get<AnimatorComponent>().playing = true;
+    root.get<AnimatorComponent>().speed = 2;
+    scene.update(Duration::fromSeconds(0.25)); // +0.5 s of clip
+    CHECK(std::abs(angleOf(hingeE) - 45.0f) < 0.01f);
+    root.get<AnimatorComponent>().loop = false;
+    scene.update(Duration::fromSeconds(5.0));
+    CHECK(std::abs(angleOf(hingeE) - 90.0f) < 0.01f); // holds the last pose
+
+    // Saved by reference: a loaded scene finds the clip through its animation source.
+    root.get<AnimatorComponent>().clip = "test:open";
+    const std::string json = serializeScene(scene);
+    Scene loaded;
+    loaded.setAnimationSource([&](const std::string& ref) { return ref == "test:open" ? clip : nullptr; });
+    CHECK(deserializeScene(loaded, json));
+    Entity root2 = loaded.findEntity("door");
+    CHECK(root2.has<AnimatorComponent>() && root2.get<AnimatorComponent>().clip == "test:open" && !root2.get<AnimatorComponent>().data);
+    CHECK(root2.get<AnimatorComponent>().speed == 2 && !root2.get<AnimatorComponent>().loop);
+    root2.get<AnimatorComponent>().loop = true;
+    root2.get<AnimatorComponent>().speed = 1;
+    loaded.update(Duration::fromSeconds(1.0)); // from the start
+    CHECK(std::abs(glm::degrees(glm::angle(loaded.findEntity("Hinge").transform().orientation())) - 45.0f) < 0.01f);
+}
+
+void gltfAnimation() {
+    // A glTF file with a node tree and an animation (read without a renderer: nodes and clips).
+    const fs::path dir = fs::temp_directory_path() / "nova_gltf_anim";
+    fs::create_directories(dir);
+    const fs::path file = dir / "door.gltf";
+    {
+        std::ofstream out(file);
+        out << R"({
+  "asset": {"version": "2.0"},
+  "scene": 0,
+  "scenes": [{"nodes": [0]}],
+  "nodes": [{"name": "Door", "translation": [0, 1, 0], "children": [1]}, {"name": "Hinge", "translation": [1, 0, 0]}],
+  "buffers": [{"byteLength": 40, "uri": "data:application/octet-stream;base64,AAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAPMENT8AAAAA8wQ1Pw=="}],
+  "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 8}, {"buffer": 0, "byteOffset": 8, "byteLength": 32}],
+  "accessors": [{"bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1]},
+                {"bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC4"}],
+  "animations": [{"name": "Open", "samplers": [{"input": 0, "output": 1, "interpolation": "LINEAR"}],
+                  "channels": [{"sampler": 0, "target": {"node": 1, "path": "rotation"}}]}]
+})";
+    }
+    auto model = loadModel(nullptr, file);
+    CHECK(model.has_value());
+    if (!model) return;
+    CHECK(model->nodes.size() == 2 && model->nodes[1].parent == 0 && model->nodes[1].mesh == ~0u);
+    CHECK(model->animations.size() == 1 && model->animations[0]->name == "Open" && model->animations[0]->duration == 1.0f);
+    CHECK(model->animations[0]->channels.size() == 1 && model->animations[0]->channels[0].target == "Door/Hinge");
+    Scene scene;
+    auto made = instantiateModel(scene, *model);
+    scene.update(Duration::fromSeconds(0.5));
+    CHECK(std::abs(glm::degrees(glm::angle(made[2].transform().orientation())) - 45.0f) < 0.01f);
+    CHECK(glm::length((made[2].transform().position - GlobalPosition(1, 1, 0)).toMeters()) < 1e-4);
+    fs::remove_all(dir);
+}
+
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // keep output if a check crashes
     Log::init();
@@ -375,6 +503,9 @@ int main() {
         {"scene references by GUID", sceneReferences},
         {"prefabs", prefabs},
         {"models keep their node tree", modelHierarchy},
+        {"animation: sampling (linear, step, cubic, slerp)", animationSampling},
+        {"animation: a model's clip plays on its nodes (loop, pause, speed, saved by reference)", nodeAnimation},
+        {"animation: read from a glTF file", gltfAnimation},
         {"import", importFiles},
     };
     for (auto& [name, fn] : tests) {

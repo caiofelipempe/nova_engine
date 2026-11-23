@@ -2,6 +2,7 @@
 // files: renaming one breaks existing files.
 #include "nova/reflect/Reflect.h"
 
+#include "nova/scene/Animation.h"
 #include "nova/scene/Components.h"
 
 namespace nova::reflect::detail {
@@ -181,6 +182,12 @@ void registerEngineTypes() {
         .field("appliedPose", &CharacterControllerComponent::appliedPose, {.transient = true})
         .component();
 
+    type<AnimatorComponent>("Animator")
+        .field("clip", &AnimatorComponent::clip, {.tooltip = "The clip, by reference (asset:<guid>#<index> for a model's animation)"})
+        .field("speed", &AnimatorComponent::speed, {.speed = 0.01f, .tooltip = "Playback rate (1 = real time)"})
+        .field("loop", &AnimatorComponent::loop)
+        .field("playing", &AnimatorComponent::playing)
+        .component();
     type<RotatorComponent>("Rotator")
         .field("axis", &RotatorComponent::axis, {.speed = 0.01f})
         .field("speed", &RotatorComponent::speed, {.speed = 0.01f, .tooltip = "Radians per second"})
