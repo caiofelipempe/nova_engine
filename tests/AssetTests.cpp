@@ -651,6 +651,79 @@ void animationMixing() {
     CHECK(std::abs(x() - 10.0) < 1e-4);
 }
 
+void boneMasks() {
+    // A body (Hips) with an arm (Hips/Arm). Walking: hips at x = 10, arm at x = 1. Waving: arm at
+    // x = 5 (and hips at x = −10, which the mask keeps out).
+    auto clip2 = [](const char* name, f32 hips, f32 arm, bool rotation = false) {
+        auto clip = std::make_shared<AnimationClip>();
+        clip->name = name;
+        clip->duration = 1.0f;
+        for (auto [target, value] : {std::pair{"Hips", hips}, std::pair{"Hips/Arm", arm}}) {
+            AnimationChannel ch;
+            ch.target = target;
+            ch.times = {0.0f, 1.0f};
+            if (rotation) {
+                ch.path = AnimationPath::Rotation;
+                const glm::quat q = glm::angleAxis(glm::radians(value), glm::vec3(0, 1, 0));
+                ch.values = {glm::vec4(q.x, q.y, q.z, q.w), glm::vec4(q.x, q.y, q.z, q.w)};
+            } else {
+                ch.values = {glm::vec4(value, 0, 0, 0), glm::vec4(value, 0, 0, 0)};
+            }
+            clip->channels.push_back(ch);
+        }
+        return clip;
+    };
+    Scene scene;
+    Entity root = scene.createEntity("Root");
+    Entity hips = scene.createEntity("Hips");
+    hips.setParent(root);
+    Entity arm = scene.createEntity("Arm");
+    arm.setParent(hips);
+    auto localX = [&](Entity e) { return scene.localTransform(e).position.x; };
+    auto walk = clip2("walk", 10.0f, 1.0f), wave = clip2("wave", -10.0f, 5.0f);
+    scene.playAnimation(root, walk);
+
+    // Override on the arm only: the arm waves, the hips walk.
+    AnimationMix upper;
+    upper.mode = AnimationBlend::Override;
+    upper.mask = {"Hips/Arm"};
+    scene.blendAnimation(root, wave, upper);
+    scene.update(Duration::fromSeconds(0.1));
+    CHECK(std::abs(localX(hips) - 10.0) < 1e-6 && std::abs(localX(arm) - 5.0) < 1e-6);
+    upper.weight = 0.5f; // half way between walking and waving
+    scene.blendAnimation(root, wave, upper);
+    scene.update(Duration::fromSeconds(0.1));
+    CHECK(std::abs(localX(arm) - 3.0) < 1e-6 && std::abs(localX(hips) - 10.0) < 1e-6);
+
+    // Averaged in with a mask: only the masked nodes take part.
+    AnimationMix averaged;
+    averaged.mask = {"Hips/Arm"};
+    scene.blendAnimation(root, wave, averaged);
+    scene.update(Duration::fromSeconds(0.1));
+    CHECK(std::abs(localX(arm) - 3.0) < 1e-6 && std::abs(localX(hips) - 10.0) < 1e-6);
+
+    // A mask covers its node and everything under it: "Hips" takes the arm along.
+    AnimationMix whole;
+    whole.mode = AnimationBlend::Override;
+    whole.mask = {"Hips"};
+    scene.blendAnimation(root, wave, whole);
+    scene.update(Duration::fromSeconds(0.1));
+    CHECK(std::abs(localX(hips) + 10.0) < 1e-6 && std::abs(localX(arm) - 5.0) < 1e-6);
+    CHECK(inMask({"Hips"}, "Hips/Arm") && !inMask({"Hips/Ar"}, "Hips/Arm") && !inMask({"Hips/Arm"}, "Hips") && inMask({}, "Any"));
+    scene.blendAnimation(root, wave, 0.0f);
+
+    // Rotations override by slerp: 0° walking, 90° waving, half way = 45°.
+    scene.playAnimation(root, clip2("ahead", 0.0f, 0.0f, true));
+    AnimationMix turn;
+    turn.mode = AnimationBlend::Override;
+    turn.weight = 0.5f;
+    turn.mask = {"Hips/Arm"};
+    scene.blendAnimation(root, clip2("aside", 90.0f, 90.0f, true), turn);
+    scene.update(Duration::fromSeconds(0.1));
+    CHECK(std::abs(glm::degrees(glm::angle(glm::quat(scene.localTransform(arm).rotation))) - 45.0f) < 0.01f);
+    CHECK(std::abs(glm::degrees(glm::angle(glm::quat(scene.localTransform(hips).rotation)))) < 0.01f);
+}
+
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // keep output if a check crashes
     Log::init();
@@ -666,6 +739,7 @@ int main() {
         {"animation: a model's clip plays on its nodes (loop, pause, speed, saved by reference)", nodeAnimation},
         {"animation: read from a glTF file", gltfAnimation},
         {"animation: cross-fades, mixing by weight, rotations, in step, by reference", animationMixing},
+        {"animation: bone masks (override and averaged, subtrees, rotations)", boneMasks},
         {"skinning: joint matrices (bend, the model moving, far out, no skeleton)", skinning},
         {"skinning: a glTF skeleton", gltfSkin},
         {"import", importFiles},

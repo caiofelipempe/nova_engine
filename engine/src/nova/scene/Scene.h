@@ -137,6 +137,10 @@ public:
     ///        which is 1 once faded in); calling it again changes the weight, 0 removes it. With
     ///        `sync`, it follows the main clip's phase (a walk and a run, feet in step).
     void blendAnimation(Entity entity, std::shared_ptr<const AnimationClip> clip, f32 weight, bool sync = true);
+    /// @brief Same, with every option: Average or Override, and a mask of the nodes it moves
+    ///        (bone masks: e.g. an Override of weight 1 on "Hips/Spine" waves the upper body while
+    ///        the main clip walks the rest).
+    void blendAnimation(Entity entity, std::shared_ptr<const AnimationClip> clip, const AnimationMix& mix);
     /// @}
 
     /// @brief Runs scripts, built-in systems and (if simulating) physics.

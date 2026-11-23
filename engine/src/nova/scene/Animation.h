@@ -55,6 +55,27 @@ struct AnimationClip {
     std::vector<AnimationChannel> channels;
 };
 
+/// @brief How a mixed-in clip combines with the others (AnimationMix::mode).
+enum class AnimationBlend : u8 {
+    Average,  ///< Averaged with the main clip and the other averaged layers by weight.
+    Override, ///< Replaces what the others made by its weight (0..1), after them, in order: with a
+              ///< mask, a part of the skeleton plays its own clip (waving while walking).
+};
+
+/// @brief How Scene::blendAnimation mixes a clip in.
+struct AnimationMix {
+    f32 weight = 1.0f;                  ///< Average: relative to the main clip's 1. Override: 0..1.
+    bool sync = true;                   ///< Follows the main clip's phase.
+    AnimationBlend mode = AnimationBlend::Average;
+    /// @brief The nodes it moves, as paths from the animated entity ("Hips/Spine"): each covers
+    ///        that node and everything under it. Empty: the whole skeleton.
+    std::vector<std::string> mask;
+};
+
+/// @brief True when channel target `path` is in `mask` (one of its paths or under one; an empty
+///        mask holds everything).
+bool inMask(const std::vector<std::string>& mask, const std::string& path);
+
 /// @brief A clip playing beside an animator's own: fading out after a change of clip, or mixed in
 ///        with a weight (Scene::playAnimation, Scene::blendAnimation). Not saved.
 struct AnimationLayer {
@@ -65,6 +86,8 @@ struct AnimationLayer {
     f32 weight = 1.0f;                         ///< Its share of the mix (relative to the others).
     f32 fade = 0.0f;                           ///< Weight change per second (negative: fading out, gone at 0).
     bool sync = false;                         ///< Follows the main clip's phase (walk and run in step).
+    AnimationBlend mode = AnimationBlend::Average; ///< Averaged in, or overriding the others.
+    std::vector<std::string> mask;             ///< The nodes it moves (AnimationMix::mask); empty: all.
     const AnimationClip* boundClip = nullptr;  ///< The clip `targets` were found for.
     std::vector<entt::entity> targets;         ///< One per channel.
 };
