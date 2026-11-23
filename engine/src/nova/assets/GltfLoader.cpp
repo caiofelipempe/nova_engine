@@ -1,5 +1,7 @@
 #include "nova/assets/GltfLoader.h"
 
+#include <functional>
+
 #include "nova/core/Log.h"
 #include "nova/renderer/Renderer.h"
 
@@ -173,16 +175,15 @@ std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::pa
     const std::string prefix = meshPrefix.empty() ? path.stem().string() + "/" : meshPrefix;
 
     ModelData model;
+    model.name = path.stem().string();
     for (cgltf_size i = 0; i < data->images_count; ++i) model.textures.push_back(loadImage(renderer, path, data->images[i], i));
 
     // One GPU mesh per (mesh, primitive), shared by all nodes that instance it. ~0u = unusable.
     std::vector<std::vector<u32>> meshCache(data->meshes_count);
-    for (cgltf_size n = 0; n < data->nodes_count; ++n) {
-        const cgltf_node& node = data->nodes[n];
-        if (!node.mesh) continue;
+    auto meshesOf = [&](const cgltf_node& node) -> const std::vector<u32>& {
         const cgltf_size meshIndex = static_cast<cgltf_size>(node.mesh - data->meshes);
         auto& cache = meshCache[meshIndex];
-        if (cache.empty()) {
+        if (cache.empty())
             for (cgltf_size pi = 0; pi < node.mesh->primitives_count; ++pi) {
                 MeshData md;
                 std::string name = prefix + (node.mesh->name ? node.mesh->name : ("mesh" + std::to_string(meshIndex)));
@@ -194,8 +195,16 @@ std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::pa
                     cache.push_back(~0u);
                 }
             }
-        }
+        return cache;
+    };
 
+    // Every node, depth first from the scene's roots: parents before children. A node gets its
+    // mesh's first primitive; the others become children of it, at the same pose.
+    std::vector<bool> visited(data->nodes_count, false);
+    std::function<void(const cgltf_node&, u32)> visit = [&](const cgltf_node& node, u32 parent) {
+        const cgltf_size n = static_cast<cgltf_size>(&node - data->nodes);
+        if (visited[n]) return;
+        visited[n] = true;
         f32 world[16];
         cgltf_node_transform_world(&node, world);
         glm::vec3 scale, translation, skew;
@@ -203,33 +212,64 @@ std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::pa
         glm::quat rotation;
         glm::decompose(glm::make_mat4(world), scale, rotation, translation, skew, perspective);
 
-        for (size_t pi = 0; pi < cache.size(); ++pi) {
-            if (cache[pi] == ~0u) continue;
-            ModelNode mn;
-            mn.name = node.name ? node.name : ("node" + std::to_string(n));
-            mn.position = translation;
-            mn.rotation = rotation;
-            mn.scale = scale;
-            mn.mesh = cache[pi];
-            mn.material = buildMaterial(data, node.mesh->primitives[pi].material, model.textures);
-            model.nodes.push_back(std::move(mn));
+        ModelNode mn;
+        mn.name = node.name ? node.name : ("node" + std::to_string(n));
+        mn.position = translation;
+        mn.rotation = rotation;
+        mn.scale = scale;
+        mn.parent = parent;
+        std::vector<std::pair<u32, cgltf_size>> primitives; // (mesh, primitive) usable
+        if (node.mesh) {
+            const std::vector<u32>& cache = meshesOf(node);
+            for (size_t pi = 0; pi < cache.size(); ++pi)
+                if (cache[pi] != ~0u) primitives.emplace_back(cache[pi], pi);
         }
-    }
-    NOVA_CORE_INFO("glTF: loaded '{}' ({} meshes, {} textures, {} instances)", path.string(), model.meshes.size(),
+        if (!primitives.empty()) {
+            mn.mesh = primitives[0].first;
+            mn.material = buildMaterial(data, node.mesh->primitives[primitives[0].second].material, model.textures);
+        }
+        const u32 self = static_cast<u32>(model.nodes.size());
+        model.nodes.push_back(mn);
+        for (size_t k = 1; k < primitives.size(); ++k) {
+            ModelNode extra = mn;
+            extra.name = mn.name + "#" + std::to_string(primitives[k].second);
+            extra.mesh = primitives[k].first;
+            extra.material = buildMaterial(data, node.mesh->primitives[primitives[k].second].material, model.textures);
+            extra.parent = self;
+            model.nodes.push_back(std::move(extra));
+        }
+        for (cgltf_size c = 0; c < node.children_count; ++c) visit(*node.children[c], self);
+    };
+    if (data->scene)
+        for (cgltf_size r = 0; r < data->scene->nodes_count; ++r) visit(*data->scene->nodes[r], ~0u);
+    for (cgltf_size n = 0; n < data->nodes_count; ++n) // no scene, or nodes outside it: their own roots
+        if (!data->nodes[n].parent) visit(data->nodes[n], ~0u);
+
+    NOVA_CORE_INFO("glTF: loaded '{}' ({} meshes, {} textures, {} nodes)", path.string(), model.meshes.size(),
                    model.textures.size(), model.nodes.size());
     return model;
 }
 
 std::vector<Entity> instantiateModel(Scene& scene, const ModelData& model, const GlobalPosition& position) {
     std::vector<Entity> out;
+    Entity root = scene.createEntity(model.name.empty() ? "Model" : model.name);
+    root.transform().position = position;
+    out.push_back(root);
+    std::vector<Entity> made;
+    made.reserve(model.nodes.size());
     for (const ModelNode& n : model.nodes) {
         Entity e = scene.createEntity(n.name);
         auto& t = e.transform();
-        t.position = position + n.position;
+        t.position = position + n.position; // its pose in the world: parenting keeps it
         t.setRotation(n.rotation);
         t.scale = n.scale;
-        e.add<MeshComponent>(model.meshes[n.mesh], n.material, true);
+        if (n.mesh < model.meshes.size()) e.add<MeshComponent>(model.meshes[n.mesh], n.material, true);
+        made.push_back(e);
         out.push_back(e);
+    }
+    for (size_t i = 0; i < model.nodes.size(); ++i) {
+        const u32 parent = model.nodes[i].parent;
+        scene.setParent(made[i], parent < i ? made[parent] : root);
     }
     return out;
 }
@@ -250,7 +290,7 @@ std::optional<Entity> loadGltf(Scene& scene, Renderer& renderer, const std::file
     if (!model) return std::nullopt;
     auto entities = instantiateModel(scene, *model);
     if (entities.empty()) return std::nullopt;
-    return entities.front();
+    return entities.front(); // the root
 }
 
 } // namespace nova

@@ -14,23 +14,27 @@ namespace nova {
 
 class Renderer;
 
-/// @brief One mesh instance of a model: a glTF node × primitive, with its baked world transform.
+/// @brief One node of a model: a glTF node (a transform, maybe with a mesh), or one more primitive
+///        of a node's mesh (a child of that node, at the same pose).
 struct ModelNode {
-    std::string name;                ///< Node name (or "node<N>").
-    glm::vec3 position{0.0f};        ///< World position inside the model.
-    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; ///< Node rotation (glTF stores quaternions).
-    glm::vec3 scale{1.0f};           ///< Scale.
-    u32 mesh = 0;                    ///< Index into ModelData::meshes.
+    std::string name;                ///< Node name (or "node<N>"; "<name>#<primitive>" for extra primitives).
+    glm::vec3 position{0.0f};        ///< Position inside the model (the node's whole transform baked).
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; ///< Rotation inside the model (glTF stores quaternions).
+    glm::vec3 scale{1.0f};           ///< Scale inside the model.
+    u32 mesh = ~0u;                  ///< Index into ModelData::meshes; ~0u: none (a transform only).
     Material material;               ///< Material (textures already resolved).
+    u32 parent = ~0u;                ///< Index of the parent in ModelData::nodes (always earlier); ~0u: top level.
 };
 
-/// @brief A loaded model: GPU meshes and textures plus the instances that place them.
+/// @brief A loaded model: GPU meshes and textures plus the nodes that place them.
 ///
-/// Meshes shared by several nodes are uploaded once. The transform hierarchy is flattened.
+/// Meshes shared by several nodes are uploaded once. The node hierarchy is kept (parents before
+/// children); each node also carries its pose inside the whole model.
 struct ModelData {
+    std::string name;                         ///< The file's stem (the root entity's name).
     std::vector<MeshHandle> meshes;           ///< One per (glTF mesh, primitive) actually used.
     std::vector<rhi::TextureHandle> textures; ///< One per glTF image (invalid if it failed to load).
-    std::vector<ModelNode> nodes;             ///< Instances to create.
+    std::vector<ModelNode> nodes;             ///< Nodes to create, parents first.
 };
 
 /// @brief Loads a glTF 2.0 file (`.gltf` or `.glb`) into GPU meshes and textures.
@@ -44,15 +48,17 @@ struct ModelData {
 std::optional<ModelData> loadModel(Renderer& renderer, const std::filesystem::path& path,
                                    const std::string& meshPrefix = {});
 
-/// @brief Creates one entity per model node, offset by `position`.
-/// @return The created entities (first = first node).
+/// @brief Creates the model: a root entity at `position` (named after the model) and one entity per
+///        node under it, children under their parents (ParentComponent): moving the root moves the
+///        whole model, each part keeping its place in it.
+/// @return The created entities: the root first, then the nodes in order.
 std::vector<Entity> instantiateModel(Scene& scene, const ModelData& model, const GlobalPosition& position = GlobalPosition());
 
 /// @brief Files a glTF depends on (external `.bin` buffers and images), resolved next to `path`.
 std::vector<std::filesystem::path> gltfDependencies(const std::filesystem::path& path);
 
 /// @brief Loads a model and instantiates it at the origin (loadModel + instantiateModel).
-/// @return The first created entity, or `std::nullopt` on failure.
+/// @return The model's root entity, or `std::nullopt` on failure.
 /// @note Meshes created this way are not tracked by an AssetDatabase: prefer
 ///       AssetDatabase::instantiate() when scenes will be saved.
 std::optional<Entity> loadGltf(Scene& scene, Renderer& renderer, const std::filesystem::path& path);

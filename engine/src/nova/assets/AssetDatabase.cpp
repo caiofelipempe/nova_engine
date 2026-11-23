@@ -322,7 +322,7 @@ std::vector<Entity> AssetDatabase::instantiate(AssetGuid guid, Scene& scene, con
         if (!e.has<PrefabInstanceComponent>()) e.add<PrefabInstanceComponent>();
         e.get<PrefabInstanceComponent>().asset = guid;
     }
-    if (entities.size() == 1 && r->type == "Model") entities[0].get<NameComponent>().name = r->path.stem().string();
+    if (!entities.empty() && r->type == "Model") entities[0].get<NameComponent>().name = r->path.stem().string(); // the root
     return entities;
 }
 

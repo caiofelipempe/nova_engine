@@ -1,6 +1,7 @@
 // Headless tests of the asset database: GUID sidecars, importers, references, prefabs, import.
 #include <nova/Nova.h>
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -322,6 +323,47 @@ void importFiles() {
 
 } // namespace
 
+void modelHierarchy() {
+    // A model keeps its node tree: a root named after it, each node under its parent, each part at
+    // its pose inside the model; moving the root moves it all.
+    ModelData model;
+    model.name = "cart";
+    model.meshes = {MeshHandle{1}, MeshHandle{2}};
+    ModelNode body;
+    body.name = "Body";
+    body.position = {0, 1, 0};
+    body.mesh = 0;
+    ModelNode axle; // a transform only
+    axle.name = "Axle";
+    axle.position = {0, 0.5f, 1};
+    axle.parent = 0;
+    ModelNode wheel;
+    wheel.name = "Wheel";
+    wheel.position = {1, 0.5f, 1};
+    wheel.rotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1));
+    wheel.mesh = 1;
+    wheel.parent = 1;
+    ModelNode lamp; // another top-level node
+    lamp.name = "Lamp";
+    lamp.position = {0, 3, 0};
+    lamp.mesh = 1;
+    model.nodes = {body, axle, wheel, lamp};
+
+    Scene scene;
+    auto made = instantiateModel(scene, model, GlobalPosition(10, 0, 0));
+    CHECK(made.size() == 5 && made[0].name() == "cart" && !made[0].parent().valid());
+    Entity root = made[0], bodyE = made[1], axleE = made[2], wheelE = made[3], lampE = made[4];
+    CHECK(bodyE.parent() == root && axleE.parent() == bodyE && wheelE.parent() == axleE && lampE.parent() == root);
+    CHECK(bodyE.has<MeshComponent>() && !axleE.has<MeshComponent>() && wheelE.get<MeshComponent>().mesh.id == 2);
+    CHECK(wheelE.transform().position == GlobalPosition(11, 0.5, 1)); // its pose in the model, at the root
+    CHECK(std::abs(std::abs(glm::dot(wheelE.transform().orientation(), wheel.rotation)) - 1.0f) < 1e-5f);
+    root.transform().position = {20, 0, 0};
+    root.transform().setRotation(glm::angleAxis(glm::radians(180.0f), glm::vec3(0, 1, 0)));
+    scene.updateTransforms();
+    CHECK(glm::length((wheelE.transform().position - GlobalPosition(19, 0.5, -1)).toMeters()) < 1e-4);
+    CHECK(glm::length((lampE.transform().position - GlobalPosition(20, 3, 0)).toMeters()) < 1e-4);
+}
+
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // keep output if a check crashes
     Log::init();
@@ -332,6 +374,7 @@ int main() {
         {"importers and loading", importersAndLoading},
         {"scene references by GUID", sceneReferences},
         {"prefabs", prefabs},
+        {"models keep their node tree", modelHierarchy},
         {"import", importFiles},
     };
     for (auto& [name, fn] : tests) {
