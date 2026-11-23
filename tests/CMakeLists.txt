@@ -80,3 +80,9 @@ set_tests_properties(physics input scene assets shaders worldspace time scenario
 if(TARGET NovaEditorTests)
     set_tests_properties(editor PROPERTIES TIMEOUT 60)
 endif()
+
+# The render graph's compilation (no GPU): dropped passes, dependencies, transients sharing textures.
+add_executable(NovaRenderGraphTests RenderGraphTests.cpp)
+target_link_libraries(NovaRenderGraphTests PRIVATE Nova::Engine)
+set_target_properties(NovaRenderGraphTests PROPERTIES FOLDER "Tests")
+add_test(NAME rendergraph COMMAND NovaRenderGraphTests)

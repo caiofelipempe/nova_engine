@@ -5,12 +5,15 @@
 
 #include "nova/renderer/DebugDraw.h"
 #include "nova/renderer/Mesh.h"
+#include "nova/renderer/RenderGraph.h"
 #include "nova/renderer/ShaderLibrary.h"
 #include "nova/rhi/Device.h"
 
 #include <glm/glm.hpp>
 
 #include <array>
+#include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -215,7 +218,33 @@ struct RenderStats {
     u32 tlasInstances = 0; ///< Instances in the ray tracing scene.
     u32 wrapCopies = 0;    ///< Extra instances drawn for the circular world (seams, further laps).
     u32 postProcessPasses = 0; ///< Post-process passes run.
+    u32 graphPasses = 0;       ///< Render graph passes run (all views).
+    u32 graphCulled = 0;       ///< Render graph passes dropped: nothing needed them.
+    u32 transientTextures = 0; ///< Transient textures of the graphs (shadow atlas, post-process images...).
+    u32 pooledTextures = 0;    ///< Textures held behind them (transients that do not overlap share one).
 };
+
+/// @brief Where in the frame Renderer::addRenderPasses adds passes.
+enum class RenderStage : u32 {
+    AfterOpaque,   ///< After the forward pass (sky, opaque and see-through), before post-processing (HDR).
+    BeforeTonemap, ///< After RenderSettings::postProcess, before the tonemap (HDR).
+    AfterTonemap,  ///< After the tonemap, on the output (display format): overlays. Draw with LoadOp::Load.
+};
+
+/// @brief What a render pass callback gets: the frame's graph and its textures.
+struct RenderGraphFrame {
+    RenderGraph& graph;       ///< Add passes and transient textures to it.
+    const RenderScene& scene; ///< The scene being drawn.
+    Extent2D extent;          ///< Size of the view.
+    /// @brief The image so far: HDR before the tonemap, the output after. Set it to a texture your
+    ///        passes wrote to hand that one on (to the next passes and the tonemap).
+    RGTexture color;
+    RGTexture depth;          ///< The forward pass's depth (Renderer::kDepthFormat).
+    u64 frameData = 0;        ///< Device address of the frame's FrameData (`nova/common.glsl`).
+};
+
+/// @brief Adds passes to each frame's graph (Renderer::addRenderPasses).
+using RenderGraphCallback = std::function<void(RenderGraphFrame&)>;
 
 class Renderer;
 
@@ -246,14 +275,16 @@ private:
     Extent2D m_size;
     bool m_withOutput;
     rhi::TextureHandle m_hdr;
-    rhi::TextureHandle m_hdrPing; // second HDR target for post-process ping-pong
     rhi::TextureHandle m_depth;
     rhi::TextureHandle m_output;
 };
 
 /// @brief Hybrid forward renderer: rasterized PBR shading with ray-queried shadows.
 ///
-/// Frame graph: `[TLAS build] → sky → opaque forward (HDR) → post-process passes (HDR) → tonemap (LDR output)`.
+/// Each frame is a RenderGraph: `[skinned shapes] → [TLAS build] → [shadow maps] → forward (sky,
+/// opaque, see-through; HDR) → post-process passes (HDR) → tonemap (output) → [debug lines]`, with
+/// the game's passes (addRenderPasses) at three stages. The graph moves textures between states,
+/// drops passes nothing needs and makes the transient textures (shadow atlas, post-process images).
 ///
 /// Game shaders plug in without engine changes: Material::shader selects a material fragment
 /// shader (`nova/material.glsl`), RenderSettings::postProcess adds fullscreen passes
@@ -317,6 +348,10 @@ public:
     /// @return Invalid handle while the shader is not ready (e.g. its first compile failed).
     /// @note Handles change after a reload: fetch it every time you dispatch.
     rhi::PipelineHandle computePipeline(ShaderHandle shader);
+    /// @brief Fullscreen pipeline (HDR target) for a `nova/postprocess.glsl` fragment shader, cached
+    ///        and rebuilt after the shader reloads: for passes added with addRenderPasses().
+    /// @return Invalid handle while the shader is not ready. Fetch it every frame.
+    rhi::PipelineHandle postProcessPipeline(ShaderHandle shader);
     /// @brief True if `shader` currently has a working material pipeline (false: drawn with the default).
     bool materialReady(ShaderHandle shader) const { return m_shaders.ready(shader); }
     /// @}
@@ -333,6 +368,18 @@ public:
     void render(rhi::CommandList& cmd, const RenderScene& scene, RenderView& view);
     /// @brief Renders `scene` straight into the swapchain image (games without an editor).
     void renderToBackbuffer(rhi::CommandList& cmd, const RenderScene& scene);
+    /// @}
+
+    /// @name Render graph
+    /// @{
+    /// @brief Adds passes to every frame's graph at `stage`: `callback` declares them (and any
+    ///        transient textures) each frame. Passes whose results nothing uses are dropped.
+    /// @return An id for removeRenderPasses().
+    u32 addRenderPasses(RenderStage stage, RenderGraphCallback callback);
+    /// @brief Stops adding the passes of addRenderPasses(id).
+    void removeRenderPasses(u32 id);
+    /// @brief The last frame's graph, one line per pass (RenderGraph::describe()).
+    const std::string& lastGraph() const { return m_lastGraph; }
     /// @}
 
     /// @brief Debug lines for this frame (drawn by every render call, cleared by beginFrame()).
@@ -391,13 +438,12 @@ private:
     void createPipelines();
     rhi::PipelineHandle tonemapPipeline(rhi::Format format);
     rhi::PipelineHandle linePipeline(rhi::Format format, bool onTop);
-    void drawDebugLines(rhi::CommandList& cmd, u64 frameAddress, const GlobalPosition& origin, rhi::TextureHandle depth,
-                        rhi::TextureHandle output);
+    void drawDebugLines(rhi::CommandList& cmd, u64 frameAddress, const GlobalPosition& origin);
     FrameAllocation allocate(u64 size, u64 alignment = 256);
-    void renderInternal(rhi::CommandList& cmd, const RenderScene& scene, RenderView& view, rhi::TextureHandle output);
+    void renderInternal(rhi::CommandList& cmd, const RenderScene& scene, RenderView& view, rhi::TextureHandle output,
+                        std::optional<rhi::ResourceState> outputState);
     rhi::PipelineHandle materialPipeline(ShaderHandle shader, bool rayQuery, u32 state = 0);
     rhi::PipelineHandle defaultPipeline(bool rayQuery, u32 state);
-    rhi::PipelineHandle postProcessPipeline(ShaderHandle shader);
     bool rebuild(VersionedPipeline& vp, ShaderHandle shader, const rhi::GraphicsPipelineDesc* graphics);
 
     rhi::Device& m_device;
@@ -418,9 +464,19 @@ private:
     rhi::PipelineHandle m_skinPipeline; // skin.comp: deformed vertices for ray tracing
     rhi::PipelineHandle m_shadowPipeline;     // depth only, for the shadow maps
     rhi::PipelineHandle m_shadowMaskPipeline; // the same, alpha-tested (cut-out casters)
-    rhi::TextureHandle m_shadowAtlas;     // the cascades, 2 × 2
-    u32 m_shadowAtlasSize = 0;
-    void renderShadowMaps(rhi::CommandList& cmd, const RenderScene& scene, gpu::FrameData& fd, u64 instances, u64 joints);
+    // Adds the shadow map pass (the cascades, 2 × 2 in a transient atlas) and returns the atlas.
+    RGTexture addShadowMapPass(RenderGraph& graph, const RenderScene& scene, gpu::FrameData& fd, u64 instances, u64 joints);
+    RenderGraph m_graph;               // rebuilt every render call
+    Scope<RenderGraphPool> m_graphPool; // the textures behind transients
+    std::string m_lastGraph;
+    struct GraphCallback {
+        u32 id;
+        RenderStage stage;
+        RenderGraphCallback callback;
+    };
+    std::vector<GraphCallback> m_graphCallbacks;
+    u32 m_nextGraphCallback = 1;
+    void runGraphCallbacks(RenderStage stage, RenderGraphFrame& frame);
     // Skinned draws in the ray tracing scene: their deformed vertices and a BLAS refitted to them.
     struct SkinnedShape {
         rhi::BufferHandle vertices;

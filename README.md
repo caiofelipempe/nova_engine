@@ -329,6 +329,41 @@ Detalhes:
 - Cache em `<exe>/shader_cache`, validado por hash do conteúdo da fonte e de cada include.
 - Shaders são assets (`.vert`, `.frag`, `.comp` e as formas `.glsl`/`.spv`): cenas guardam `Material::shader` por GUID. No editor: campo **Shader** no inspetor (combo ou arrastar do painel Assets), soltar o shader sobre um objeto no viewport, ações *Apply to Selection* / *Reload*, e o painel **Renderer** lista os shaders (origem, versão, erros) e os passes de pós.
 
+## Render graph
+
+Cada frame é um `RenderGraph` (`nova/renderer/RenderGraph.h`). Os passes declaram as texturas que leem e escrevem, e são executados na ordem em que foram adicionados:
+
+`[skinned shapes] → [TLAS build] → [shadow maps] → Forward (céu, opacos, transparentes; HDR) → pós-processos (HDR) → Tonemap (saída) → [debug lines]`
+
+Com base no que cada passe declara, o graph:
+- **descarta os passes de que nada precisa:** fica só o que alimenta uma saída (uma textura importada com estado final, ou marcada com `markOutput`) ou tem efeito colateral (`sideEffect()`: buffers, estruturas de aceleração);
+- **faz as transições:** attachments, `sample` (ShaderRead), `storage` (UnorderedAccess) e o estado final das importadas;
+- **cria as texturas transitórias** (`create`) a partir de um pool mantido entre frames. Transitórias do mesmo tamanho e formato cujos tempos de vida não se sobrepõem dividem a mesma textura. Por isso uma cadeia de pós-processos usa só duas, e o atlas de sombras não existe quando não é usado.
+
+O jogo adiciona passes em três pontos (`RenderStage::AfterOpaque`, `BeforeTonemap`, `AfterTonemap`):
+
+```cpp
+#include <nova/renderer/GpuTypes.h> // gpu::PostProcessPush
+
+auto blur = renderer().shaders().load("assets/shaders/blur.frag"); // nova/postprocess.glsl
+renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFrame& f) {
+    rhi::PipelineHandle p = renderer().postProcessPipeline(blur);
+    if (!p) return;
+    const RGTexture src = f.color;
+    const RGTexture out = f.graph.create({f.extent.width, f.extent.height, Renderer::kHdrFormat, "blur"});
+    const u64 frame = f.frameData;
+    f.graph.addPass("Blur").sample(src).color(out, rhi::LoadOp::DontCare).execute([=](RenderPassContext& ctx) {
+        ctx.cmd.bindPipeline(p);
+        gpu::PostProcessPush push{frame, ctx.bindlessIndex(src)}; // o push de nova/postprocess.glsl
+        ctx.cmd.pushConstants(push);
+        ctx.cmd.draw(3);
+    });
+    f.color = out; // os passes seguintes e o tonemap leem o resultado
+});
+```
+
+`RenderStats` traz os passes executados e descartados e as texturas transitórias, e `Renderer::lastGraph()` descreve o último frame, um passe por linha. O painel **Renderer** do editor e o sandbox mostram as duas coisas. A compilação do graph não precisa de GPU e tem testes próprios (`tests/RenderGraphTests.cpp`).
+
 ## Ray tracing
 
 Já implementado:
@@ -358,6 +393,6 @@ Próximos passos (a estrutura já está preparada):
 - **Renderização circular**: feita como opção de compilação (`NOVA_WRAP_RENDER_MODES`, `RenderSettings::wrapShift` / `wrapRepeat`). Falta conferir em GPU e fazer o picking ciente das cópias.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
-- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT (feito). Próximos: render graph, culling em GPU, backend D3D12.
+- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT e render graph (feitos). Próximos: culling em GPU, backend D3D12.
 - Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*; modelos glTF instanciados com a árvore dos nós, sob uma raiz com o nome do arquivo).
 - Animação: dos nós, skinning (com sombras e picking na pose atual), troca e mistura de clipes, máscaras por osso, eventos e escolha do clipe pelo nome no inspetor (feitos).

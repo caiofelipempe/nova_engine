@@ -414,6 +414,12 @@ void RendererPanel::onImGui(EditorContext& ctx) {
                         caps.rayTracingPipeline ? " + pipeline" : "");
     ImGui::Text("Draws %u | Tris %llu | TLAS inst %u", st.drawCalls, static_cast<unsigned long long>(st.triangles),
                 st.tlasInstances);
+    ImGui::Text("Graph: %u passes (%u dropped) | %u transients in %u textures", st.graphPasses, st.graphCulled,
+                st.transientTextures, st.pooledTextures);
+    if (ImGui::TreeNode("Render graph")) {
+        ImGui::TextUnformatted(ctx.renderer().lastGraph().c_str());
+        ImGui::TreePop();
+    }
     ImGui::Text("Physics: %s (%u bodies)", ctx.scene().isSimulating() ? "Jolt, running" : "stopped",
                 ctx.scene().physicsBodyCount());
     ImGui::Separator();
@@ -421,6 +427,8 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     ImGui::BeginDisabled(!caps.rayQuery);
     ImGui::Checkbox("Ray-traced shadows", &s.rayTracedShadows);
     ImGui::EndDisabled();
+    ImGui::Checkbox("Shadow maps (without RT)", &s.shadowMaps);
+    if (s.shadowMaps) ImGui::SliderFloat("Shadow distance", &s.shadowDistance, 10.0f, 500.0f, "%.0f m");
     ImGui::BeginDisabled(!caps.wireframe);
     ImGui::Checkbox("Wireframe", &s.wireframe);
     ImGui::EndDisabled();

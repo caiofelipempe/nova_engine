@@ -176,6 +176,14 @@ public:
         ImGui::Text("%.0f FPS | %u bodies | step %.1f ms | %s", app().fps(), scene().physicsBodyCount(),
                     scene().fixedTimeStep.seconds() * 1000.0, m_paused ? "PAUSED" : "running");
         ImGui::Text("State hash: %016llx", static_cast<unsigned long long>(scene().stateHash()));
+        {
+            const nova::RenderStats& st = renderer().stats();
+            if (ImGui::TreeNode("graph", "Render graph: %u passes (%u dropped), %u transients in %u textures", st.graphPasses,
+                                st.graphCulled, st.transientTextures, st.pooledTextures)) {
+                ImGui::TextUnformatted(renderer().lastGraph().c_str());
+                ImGui::TreePop();
+            }
+        }
         if (ImGui::Button("Check determinism")) m_determinism = checkDeterminism(sc);
         if (!m_determinism.empty()) ImGui::TextWrapped("%s", m_determinism.c_str());
         if (!sc.character) {

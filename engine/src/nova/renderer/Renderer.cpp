@@ -113,8 +113,6 @@ void RenderView::create() {
     m_size.height = std::max(1u, m_size.height);
     m_hdr = d.createTexture({m_size.width, m_size.height, 1, Renderer::kHdrFormat,
                              TextureUsage::RenderTarget | TextureUsage::Sampled, "view.hdr"});
-    m_hdrPing = d.createTexture({m_size.width, m_size.height, 1, Renderer::kHdrFormat,
-                                 TextureUsage::RenderTarget | TextureUsage::Sampled, "view.hdr.ping"});
     m_depth = d.createTexture(
         {m_size.width, m_size.height, 1, Renderer::kDepthFormat, TextureUsage::DepthStencil, "view.depth"});
     if (m_withOutput)
@@ -125,14 +123,13 @@ void RenderView::create() {
 void RenderView::destroy() {
     Device& d = m_renderer.device();
     d.destroyTexture(m_hdr);
-    d.destroyTexture(m_hdrPing);
     d.destroyTexture(m_depth);
     if (m_output) d.destroyTexture(m_output);
-    m_hdr = m_hdrPing = m_depth = m_output = {};
+    m_hdr = m_depth = m_output = {};
 }
 
 // ---------------------------------------------------------------- Renderer --
-Renderer::Renderer(Device& device) : m_device(device) {
+Renderer::Renderer(Device& device) : m_device(device), m_graphPool(makeScope<RenderGraphPool>(device)) {
     createPipelines();
 
     const u32 frames = device.caps().framesInFlight;
@@ -153,6 +150,8 @@ Renderer::Renderer(Device& device) : m_device(device) {
 Renderer::~Renderer() {
     m_device.waitIdle();
     m_backbufferView.reset();
+    m_graph.clear();
+    m_graphPool.reset();
     for (u32 i = 0; i < m_meshes.size(); ++i)
         if (m_meshes[i].alive) destroyMesh({i});
     for (TextureHandle t : m_textures) m_device.destroyTexture(t);
@@ -163,7 +162,6 @@ Renderer::~Renderer() {
     for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline,
                              m_shadowPipeline, m_shadowMaskPipeline})
         if (p) m_device.destroyPipeline(p);
-    if (m_shadowAtlas) m_device.destroyTexture(m_shadowAtlas);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
     for (auto& [id, mp] : m_materialPipelines)
@@ -452,6 +450,7 @@ PipelineHandle Renderer::computePipeline(ShaderHandle shader) {
 void Renderer::beginFrame() {
     m_shaders.update(); // hot reload: pipelines notice the new version when next used
     m_frameOffset = 0;
+    m_graphPool->endFrame(); // transient textures no graph used for a while are released
     m_lastStats = m_stats; // UI code runs before rendering, so expose the previous frame's numbers
     m_stats = {};
     m_debugDraw.clear();
@@ -467,15 +466,14 @@ Renderer::FrameAllocation Renderer::allocate(u64 size, u64 alignment) {
 }
 
 void Renderer::render(CommandList& cmd, const RenderScene& scene, RenderView& view) {
-    renderInternal(cmd, scene, view, view.m_output);
-    cmd.transition(view.m_output, ResourceState::ShaderRead);
+    renderInternal(cmd, scene, view, view.m_output, ResourceState::ShaderRead);
 }
 
 void Renderer::renderToBackbuffer(CommandList& cmd, const RenderScene& scene) {
     Extent2D size = m_device.backbufferExtent();
     if (!m_backbufferView) m_backbufferView.reset(new RenderView(*this, size, false));
     else m_backbufferView->resize(size);
-    renderInternal(cmd, scene, *m_backbufferView, m_device.backbuffer());
+    renderInternal(cmd, scene, *m_backbufferView, m_device.backbuffer(), std::nullopt);
 }
 
 // ------------------------------------------------------------- instances --
@@ -512,15 +510,11 @@ void Renderer::expandDraws(const RenderScene& scene, const glm::mat4& viewProj) 
 // Cascaded shadow maps of the sun: the view up to shadowDistance in 4 slices, each fitted with a
 // sphere and seen by an orthographic camera along the light, snapped to whole texels in the world
 // (no shimmer as the camera moves), rendered into one quarter of the atlas.
-void Renderer::renderShadowMaps(CommandList& cmd, const RenderScene& scene, gpu::FrameData& fd, u64 instances, u64 joints) {
+RGTexture Renderer::addShadowMapPass(RenderGraph& graph, const RenderScene& scene, gpu::FrameData& fd, u64 instances,
+                                     u64 joints) {
     const RenderSettings& s = m_settings;
     const u32 res = std::clamp(s.shadowMapSize, 256u, 4096u);
-    if (!m_shadowAtlas || m_shadowAtlasSize != res) {
-        if (m_shadowAtlas) m_device.destroyTexture(m_shadowAtlas);
-        m_shadowAtlas = m_device.createTexture(
-            {res * 2, res * 2, 1, kDepthFormat, TextureUsage::DepthStencil | TextureUsage::Sampled, "shadow atlas"});
-        m_shadowAtlasSize = res;
-    }
+    const RGTexture atlas = graph.create({res * 2, res * 2, kDepthFormat, "shadow atlas"}); // a transient
 
     // The view's slices: practical split (log and linear mixed).
     const glm::mat4& proj = scene.camera.projection;
@@ -567,61 +561,63 @@ void Renderer::renderShadowMaps(CommandList& cmd, const RenderScene& scene, gpu:
         fd.shadowSplits[c] = d1;
         fd.shadowTexels[c] = static_cast<f32>(texel);
     }
-    fd.shadowParams = glm::vec4(static_cast<f32>(m_device.bindlessIndex(m_shadowAtlas)), 0.0015f, static_cast<f32>(res), 0.0f);
+    fd.shadowParams = glm::vec4(-1.0f, 0.0015f, static_cast<f32>(res), 0.0f); // x: the atlas, set when it exists
     fd.cameraForward = glm::vec4(forward, 0.0f);
     fd.flags |= gpu::kFrameFlagShadowMaps;
 
     // Each cascade: the scene's casters into its quarter, through a copy of the frame data seen
     // from the light (the forward vertex shader reads viewProj).
-    cmd.beginDebugLabel("Shadow maps");
-    RenderingDesc pass;
-    pass.depth = DepthAttachment{m_shadowAtlas, LoadOp::Clear, StoreOp::Store, 1.0f};
-    cmd.beginRendering(pass);
-    for (u32 c = 0; c < gpu::kShadowCascades; ++c) {
-        FrameAllocation cascade = allocate(sizeof(gpu::FrameData));
-        if (!cascade.cpu) break;
-        auto& cf = *static_cast<gpu::FrameData*>(cascade.cpu);
-        cf = fd;
-        cf.viewProj = fd.shadowMatrices[c];
-        const f32 x = static_cast<f32>((c & 1u) * res), y = static_cast<f32>((c >> 1) * res);
-        cmd.setViewport(x, y, static_cast<f32>(res), static_cast<f32>(res));
-        cmd.setScissor(static_cast<i32>(x), static_cast<i32>(y), res, res);
-        gpu::DrawPush push{};
-        push.frame = cascade.gpu;
-        push.instances = instances;
-        BufferHandle boundIndex{};
-        PipelineHandle bound{};
-        for (u32 i = 0; i < m_instances.size(); ++i) {
-            const WrapInstance& di = m_instances[i];
-            const DrawItem& d = scene.draws[di.draw];
-            if (!d.castShadows || d.material.alphaMode == AlphaMode::Blend) continue;
-            const PipelineHandle want = d.material.alphaMode == AlphaMode::Mask && m_shadowMaskPipeline ? m_shadowMaskPipeline : m_shadowPipeline;
-            if (!(want == bound)) {
-                cmd.bindPipeline(want);
-                bound = want;
+    gpu::FrameData* frame = &fd;
+    graph.addPass("Shadow maps").depth(atlas).execute([this, &scene, frame, atlas, res, instances, joints](RenderPassContext& ctx) {
+        CommandList& cmd = ctx.cmd;
+        frame->shadowParams.x = static_cast<f32>(ctx.bindlessIndex(atlas)); // mapped memory, read when the GPU runs
+        for (u32 c = 0; c < gpu::kShadowCascades; ++c) {
+            FrameAllocation cascade = allocate(sizeof(gpu::FrameData));
+            if (!cascade.cpu) break;
+            auto& cf = *static_cast<gpu::FrameData*>(cascade.cpu);
+            cf = *frame;
+            cf.viewProj = frame->shadowMatrices[c];
+            const f32 x = static_cast<f32>((c & 1u) * res), y = static_cast<f32>((c >> 1) * res);
+            cmd.setViewport(x, y, static_cast<f32>(res), static_cast<f32>(res));
+            cmd.setScissor(static_cast<i32>(x), static_cast<i32>(y), res, res);
+            gpu::DrawPush push{};
+            push.frame = cascade.gpu;
+            push.instances = instances;
+            BufferHandle boundIndex{};
+            PipelineHandle bound{};
+            for (u32 i = 0; i < m_instances.size(); ++i) {
+                const WrapInstance& di = m_instances[i];
+                const DrawItem& d = scene.draws[di.draw];
+                if (!d.castShadows || d.material.alphaMode == AlphaMode::Blend) continue;
+                const PipelineHandle want =
+                    d.material.alphaMode == AlphaMode::Mask && m_shadowMaskPipeline ? m_shadowMaskPipeline : m_shadowPipeline;
+                if (!(want == bound)) {
+                    cmd.bindPipeline(want);
+                    bound = want;
+                }
+                const GpuMesh& mesh = m_meshes[d.mesh.id];
+                if (!(mesh.indexBuffer == boundIndex)) {
+                    cmd.bindIndexBuffer(mesh.indexBuffer);
+                    boundIndex = mesh.indexBuffer;
+                }
+                push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
+                push.instanceIndex = i;
+                push.indices = di.triangles ? m_device.deviceAddress(mesh.indexBuffer) : 0;
+                const bool skinned =
+                    d.jointCount > 0 && mesh.skinBuffer && joints && d.jointOffset + d.jointCount <= scene.joints.size();
+                push.skin = skinned ? m_device.deviceAddress(mesh.skinBuffer) : 0;
+                push.joints = skinned ? joints + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
+                cmd.pushConstants(push);
+                if (di.triangles) cmd.draw(mesh.indexCount);
+                else cmd.drawIndexed(mesh.indexCount);
             }
-            const GpuMesh& mesh = m_meshes[d.mesh.id];
-            if (!(mesh.indexBuffer == boundIndex)) {
-                cmd.bindIndexBuffer(mesh.indexBuffer);
-                boundIndex = mesh.indexBuffer;
-            }
-            push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
-            push.instanceIndex = i;
-            push.indices = di.triangles ? m_device.deviceAddress(mesh.indexBuffer) : 0;
-            const bool skinned = d.jointCount > 0 && mesh.skinBuffer && joints && d.jointOffset + d.jointCount <= scene.joints.size();
-            push.skin = skinned ? m_device.deviceAddress(mesh.skinBuffer) : 0;
-            push.joints = skinned ? joints + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
-            cmd.pushConstants(push);
-            if (di.triangles) cmd.draw(mesh.indexCount);
-            else cmd.drawIndexed(mesh.indexCount);
         }
-    }
-    cmd.endRendering();
-    cmd.transition(m_shadowAtlas, ResourceState::ShaderRead);
-    cmd.endDebugLabel();
+    });
+    return atlas;
 }
 
-void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, RenderView& view, TextureHandle output) {
+void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, RenderView& view, TextureHandle output,
+                              std::optional<ResourceState> outputState) {
     const TextureHandle hdr = view.m_hdr;
     const TextureHandle depth = view.m_depth;
     const Extent2D extent = m_device.textureExtent(hdr);
@@ -677,12 +673,25 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         }
     }
 
+    // ---- the frame as a render graph: what each pass reads and writes; transitions, unneeded
+    // passes and transient textures (shadow atlas, post-process images) are the graph's.
+    RenderGraph& graph = m_graph;
+    graph.clear();
+    const RGTexture hdrTex = graph.import("hdr", hdr, extent, kHdrFormat);
+    const RGTexture depthTex = graph.import("depth", depth, extent, kDepthFormat);
+    const RGTexture outputTex = graph.import("output", output, extent, m_device.backbufferFormat(), outputState);
+    if (!outputState) graph.markOutput(outputTex);
+
     // ---- skinned shapes for ray tracing: deform each skinned draw's vertices (skin.comp) into
     // a buffer of its own and refit its BLAS, so the rays see the pose, not the bind pose.
     ++m_frameNumber;
     std::unordered_map<u32, AccelStructHandle> skinnedBlas; // draw index -> its refitted BLAS
+    struct SkinJob {
+        u64 source, skin, joints, target;
+        u32 count, _pad[3];
+    };
+    std::vector<std::pair<SkinJob, AccelStructHandle>> skinJobs;
     if (useRt && m_skinPipeline && jointsAddress) {
-        bool bound = false;
         for (u32 di = 0; di < scene.draws.size(); ++di) {
             const DrawItem& d = scene.draws[di];
             if (!d.skinKey || d.jointCount == 0 || !d.castShadows || d.mesh.id >= m_meshes.size()) continue;
@@ -707,24 +716,22 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
                 shape.mesh = d.mesh.id;
             }
             shape.lastFrame = m_frameNumber;
-            if (!bound) {
-                cmd.beginDebugLabel("Skinned shapes");
-                cmd.bindPipeline(m_skinPipeline);
-                bound = true;
-            }
-            struct SkinPush {
-                u64 source, skin, joints, target;
-                u32 count, _pad[3];
-            } push{m_device.deviceAddress(mesh.vertexBuffer), m_device.deviceAddress(mesh.skinBuffer),
-                   jointsAddress + u64(d.jointOffset) * sizeof(glm::mat4), m_device.deviceAddress(shape.vertices),
-                   mesh.vertexCount, {0, 0, 0}};
-            cmd.pushConstants(push);
-            cmd.dispatch((mesh.vertexCount + 63) / 64);
-            cmd.updateBLAS(shape.blas); // waits for the shader's writes
+            skinJobs.push_back({SkinJob{m_device.deviceAddress(mesh.vertexBuffer), m_device.deviceAddress(mesh.skinBuffer),
+                                        jointsAddress + u64(d.jointOffset) * sizeof(glm::mat4),
+                                        m_device.deviceAddress(shape.vertices), mesh.vertexCount, {0, 0, 0}},
+                                shape.blas});
             skinnedBlas[di] = shape.blas;
         }
-        if (bound) cmd.endDebugLabel();
     }
+    if (!skinJobs.empty())
+        graph.addPass("Skinned shapes").sideEffect().execute([this, &skinJobs](RenderPassContext& ctx) {
+            ctx.cmd.bindPipeline(m_skinPipeline);
+            for (const auto& [job, blas] : skinJobs) {
+                ctx.cmd.pushConstants(job);
+                ctx.cmd.dispatch((job.count + 63) / 64);
+                ctx.cmd.updateBLAS(blas); // waits for the shader's writes
+            }
+        });
     // Shapes of skinned objects not drawn for a while (gone, or culled): released.
     for (auto it = m_skinnedShapes.begin(); it != m_skinnedShapes.end();)
         if (m_frameNumber - it->second.lastFrame > 120) {
@@ -802,29 +809,20 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     u64 tlasAddress = 0;
     if (useRt) {
         AccelStructHandle tlas = m_tlas[m_device.frameIndex()];
-        cmd.beginDebugLabel("TLAS build");
-        cmd.buildTLAS(tlas, tlasAlloc.gpu, tlasCount);
-        cmd.endDebugLabel();
+        const u64 records = tlasAlloc.gpu;
+        graph.addPass("TLAS build").sideEffect().execute([tlas, records, tlasCount](RenderPassContext& ctx) {
+            ctx.cmd.buildTLAS(tlas, records, tlasCount);
+        });
         tlasAddress = m_device.accelStructAddress(tlas);
         m_stats.tlasInstances += tlasCount;
     }
 
     // ---- shadow maps (the sun), when rays do not draw the shadows
+    RGTexture shadowAtlas;
     if (!useRt && s.shadowMaps && s.shadowDistance > 0.0f && m_shadowPipeline)
-        renderShadowMaps(cmd, scene, fd, instAlloc.gpu, jointsAddress);
+        shadowAtlas = addShadowMapPass(graph, scene, fd, instAlloc.gpu, jointsAddress);
 
-    // ---- sky + opaque
-    cmd.beginDebugLabel("Forward");
-    RenderingDesc pass;
-    pass.colors.push_back({hdr, LoadOp::DontCare, StoreOp::Store});
-    // Depth is kept for the debug line pass (depth-tested lines after tonemapping).
-    pass.depth = DepthAttachment{depth, LoadOp::Clear, StoreOp::Store, 1.0f};
-    cmd.beginRendering(pass);
-
-    cmd.bindPipeline(m_skyPipeline);
-    cmd.pushConstants(gpu::SkyPush{frameAlloc.gpu});
-    cmd.draw(3);
-
+    // ---- sky + opaque + see-through
     const bool wireframe = s.wireframe && m_wireframePipeline;
 
     // The opaque draws grouped by pipeline (the default material's variants, then each game
@@ -850,41 +848,54 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     std::stable_sort(seeThrough.begin(), seeThrough.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
     for (const auto& [distance, i] : seeThrough) m_drawOrder.emplace_back(~0ull, i); // bound per draw
 
-    gpu::DrawPush push{};
-    push.frame = frameAlloc.gpu;
-    push.instances = instAlloc.gpu;
-    push.tlas = tlasAddress;
-    push.debugView = static_cast<u32>(s.debugView);
-    BufferHandle boundIndex{};
-    u64 boundPipeline = ~0ull;
-    for (const auto& [pipelineKey, i] : m_drawOrder) {
-        const WrapInstance& di = m_instances[i];
-        const DrawItem& d = scene.draws[di.draw];
-        if (pipelineKey != boundPipeline || pipelineKey == ~0ull) {
-            const u32 state = pipelineState(d.material);
-            PipelineHandle p = wireframe ? m_wireframePipeline : PipelineHandle{};
-            if (!p && d.material.shader) p = materialPipeline(d.material.shader, useRt, state);
-            if (!p) p = defaultPipeline(useRt, state);
-            if (p.key() != boundPipeline) cmd.bindPipeline(p);
-            boundPipeline = p.key();
-        }
-        const GpuMesh& mesh = m_meshes[d.mesh.id];
-        if (!(mesh.indexBuffer == boundIndex)) {
-            cmd.bindIndexBuffer(mesh.indexBuffer);
-            boundIndex = mesh.indexBuffer;
-        }
-        push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
-        push.instanceIndex = i;
-        push.indices = di.triangles ? m_device.deviceAddress(mesh.indexBuffer) : 0; // per-triangle wrap: non-indexed
-        const bool skinned = d.jointCount > 0 && mesh.skinBuffer && jointsAddress &&
-                             d.jointOffset + d.jointCount <= scene.joints.size();
-        push.skin = skinned ? m_device.deviceAddress(mesh.skinBuffer) : 0;
-        push.joints = skinned ? jointsAddress + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
-        cmd.pushConstants(push);
-        if (di.triangles) cmd.draw(mesh.indexCount);
-        else cmd.drawIndexed(mesh.indexCount);
-        ++m_stats.drawCalls;
-        m_stats.triangles += mesh.indexCount / 3;
+    const u64 frameAddress = frameAlloc.gpu, instancesAddress = instAlloc.gpu;
+    {
+        RenderPassBuilder forward = graph.addPass("Forward");
+        forward.color(hdrTex, LoadOp::DontCare).depth(depthTex); // depth is kept for the debug lines
+        if (shadowAtlas) forward.sample(shadowAtlas);
+        forward.execute([&, frameAddress, instancesAddress, tlasAddress, jointsAddress, wireframe](RenderPassContext& ctx) {
+            CommandList& cmd = ctx.cmd;
+            cmd.bindPipeline(m_skyPipeline);
+            cmd.pushConstants(gpu::SkyPush{frameAddress});
+            cmd.draw(3);
+
+            gpu::DrawPush push{};
+            push.frame = frameAddress;
+            push.instances = instancesAddress;
+            push.tlas = tlasAddress;
+            push.debugView = static_cast<u32>(s.debugView);
+            BufferHandle boundIndex{};
+            u64 boundPipeline = ~0ull;
+            for (const auto& [pipelineKey, i] : m_drawOrder) {
+                const WrapInstance& di = m_instances[i];
+                const DrawItem& d = scene.draws[di.draw];
+                if (pipelineKey != boundPipeline || pipelineKey == ~0ull) {
+                    const u32 state = pipelineState(d.material);
+                    PipelineHandle p = wireframe ? m_wireframePipeline : PipelineHandle{};
+                    if (!p && d.material.shader) p = materialPipeline(d.material.shader, useRt, state);
+                    if (!p) p = defaultPipeline(useRt, state);
+                    if (p.key() != boundPipeline) cmd.bindPipeline(p);
+                    boundPipeline = p.key();
+                }
+                const GpuMesh& mesh = m_meshes[d.mesh.id];
+                if (!(mesh.indexBuffer == boundIndex)) {
+                    cmd.bindIndexBuffer(mesh.indexBuffer);
+                    boundIndex = mesh.indexBuffer;
+                }
+                push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
+                push.instanceIndex = i;
+                push.indices = di.triangles ? m_device.deviceAddress(mesh.indexBuffer) : 0; // per-triangle wrap: non-indexed
+                const bool skinned = d.jointCount > 0 && mesh.skinBuffer && jointsAddress &&
+                                     d.jointOffset + d.jointCount <= scene.joints.size();
+                push.skin = skinned ? m_device.deviceAddress(mesh.skinBuffer) : 0;
+                push.joints = skinned ? jointsAddress + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
+                cmd.pushConstants(push);
+                if (di.triangles) cmd.draw(mesh.indexCount);
+                else cmd.drawIndexed(mesh.indexCount);
+                ++m_stats.drawCalls;
+                m_stats.triangles += mesh.indexCount / 3;
+            }
+        });
     }
     m_stats.instances += drawCount;
     {
@@ -892,48 +903,68 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         for (const WrapInstance& di : m_instances) sources += di.draw != last, last = di.draw;
         m_stats.wrapCopies += drawCount - sources;
     }
-    cmd.endRendering();
-    cmd.endDebugLabel();
 
-    // ---- post-process (HDR ping-pong)
-    TextureHandle sceneColor = hdr;
+    RenderGraphFrame frame{graph, scene, extent, hdrTex, depthTex, frameAddress};
+    runGraphCallbacks(RenderStage::AfterOpaque, frame);
+
+    // ---- post-process: each pass reads the image so far and writes a new transient one (the
+    // graph alternates two textures)
     for (const PostProcessDesc& fx : s.postProcess) {
         if (!fx.enabled) continue;
         PipelineHandle p = postProcessPipeline(fx.shader);
         if (!p) continue;
-        const TextureHandle target = sceneColor == hdr ? view.m_hdrPing : hdr;
-        cmd.beginDebugLabel(fx.name.empty() ? "Post-process" : fx.name.c_str());
-        cmd.transition(sceneColor, ResourceState::ShaderRead);
-        RenderingDesc pp;
-        pp.colors.push_back({target, LoadOp::DontCare, StoreOp::Store});
-        cmd.beginRendering(pp);
-        cmd.bindPipeline(p);
-        gpu::PostProcessPush pushPost{};
-        pushPost.frame = frameAlloc.gpu;
-        pushPost.inputTexture = m_device.bindlessIndex(sceneColor);
-        pushPost.texelSize = glm::vec2(1.0f / f32(extent.width), 1.0f / f32(extent.height));
-        pushPost.params = fx.params;
-        cmd.pushConstants(pushPost);
-        cmd.draw(3);
-        cmd.endRendering();
-        cmd.endDebugLabel();
-        sceneColor = target;
+        const RGTexture source = frame.color;
+        const RGTexture target = graph.create({extent.width, extent.height, kHdrFormat, "post-process"});
+        const glm::vec4 params = fx.params;
+        graph.addPass(fx.name.empty() ? "Post-process" : fx.name)
+            .sample(source)
+            .color(target, LoadOp::DontCare)
+            .execute([p, source, frameAddress, extent, params](RenderPassContext& ctx) {
+                ctx.cmd.bindPipeline(p);
+                gpu::PostProcessPush pushPost{};
+                pushPost.frame = frameAddress;
+                pushPost.inputTexture = ctx.bindlessIndex(source);
+                pushPost.texelSize = glm::vec2(1.0f / f32(extent.width), 1.0f / f32(extent.height));
+                pushPost.params = params;
+                ctx.cmd.pushConstants(pushPost);
+                ctx.cmd.draw(3);
+            });
+        frame.color = target;
         ++m_stats.postProcessPasses;
     }
+    runGraphCallbacks(RenderStage::BeforeTonemap, frame);
 
     // ---- tonemap
-    cmd.beginDebugLabel("Tonemap");
-    cmd.transition(sceneColor, ResourceState::ShaderRead);
-    RenderingDesc tm;
-    tm.colors.push_back({output, LoadOp::DontCare, StoreOp::Store});
-    cmd.beginRendering(tm);
-    cmd.bindPipeline(tonemapPipeline(m_device.backbufferFormat()));
-    cmd.pushConstants(gpu::TonemapPush{m_device.bindlessIndex(sceneColor), s.exposure, static_cast<u32>(s.tonemapper)});
-    cmd.draw(3);
-    cmd.endRendering();
-    cmd.endDebugLabel();
+    {
+        const RGTexture source = frame.color;
+        const PipelineHandle tonemap = tonemapPipeline(m_device.backbufferFormat());
+        const f32 exposure = s.exposure;
+        const u32 op = static_cast<u32>(s.tonemapper);
+        graph.addPass("Tonemap").sample(source).color(outputTex, LoadOp::DontCare).execute(
+            [tonemap, source, exposure, op](RenderPassContext& ctx) {
+                ctx.cmd.bindPipeline(tonemap);
+                ctx.cmd.pushConstants(gpu::TonemapPush{ctx.bindlessIndex(source), exposure, op});
+                ctx.cmd.draw(3);
+            });
+    }
+    frame.color = outputTex;
+    runGraphCallbacks(RenderStage::AfterTonemap, frame);
 
-    if (m_debugDraw.lineCount() > 0) drawDebugLines(cmd, frameAlloc.gpu, scene.camera.origin, depth, output);
+    if (m_debugDraw.lineCount() > 0) {
+        const GlobalPosition origin = scene.camera.origin;
+        graph.addPass("Debug lines")
+            .color(outputTex, LoadOp::Load)
+            .depth(depthTex, LoadOp::Load, StoreOp::DontCare)
+            .execute([this, frameAddress, origin](RenderPassContext& ctx) { drawDebugLines(ctx.cmd, frameAddress, origin); });
+    }
+
+    graph.compile();
+    graph.execute(cmd, *m_graphPool);
+    m_stats.graphPasses += static_cast<u32>(graph.passes().size()) - graph.culledCount();
+    m_stats.graphCulled += graph.culledCount();
+    m_stats.transientTextures += graph.transientCount();
+    m_stats.pooledTextures = m_graphPool->size();
+    m_lastGraph = graph.describe();
 }
 
 PipelineHandle Renderer::linePipeline(Format format, bool onTop) {
@@ -957,19 +988,13 @@ PipelineHandle Renderer::linePipeline(Format format, bool onTop) {
     return p;
 }
 
-void Renderer::drawDebugLines(CommandList& cmd, u64 frameAddress, const GlobalPosition& origin, TextureHandle depth,
-                              TextureHandle output) {
+void Renderer::drawDebugLines(CommandList& cmd, u64 frameAddress, const GlobalPosition& origin) {
     struct LinePush {
         u64 frame;
         u64 vertices;
         glm::vec4 offset; // DebugDraw origin − frame origin (lines are recorded relative to the former)
     };
     const glm::vec4 offset(glm::vec3((m_debugDraw.origin() - origin).toMeters()), 0.0f);
-    cmd.beginDebugLabel("Debug lines");
-    RenderingDesc pass;
-    pass.colors.push_back({output, LoadOp::Load, StoreOp::Store});
-    pass.depth = DepthAttachment{depth, LoadOp::Load, StoreOp::DontCare, 1.0f};
-    cmd.beginRendering(pass);
     for (bool onTop : {false, true}) {
         const auto& verts = m_debugDraw.vertices(onTop);
         if (verts.empty()) continue;
@@ -984,8 +1009,22 @@ void Renderer::drawDebugLines(CommandList& cmd, u64 frameAddress, const GlobalPo
         cmd.pushConstants(LinePush{frameAddress, alloc.gpu, offset});
         cmd.draw(static_cast<u32>(verts.size()));
     }
-    cmd.endRendering();
-    cmd.endDebugLabel();
+}
+
+// ------------------------------------------------------------ graph hooks --
+u32 Renderer::addRenderPasses(RenderStage stage, RenderGraphCallback callback) {
+    const u32 id = m_nextGraphCallback++;
+    m_graphCallbacks.push_back({id, stage, std::move(callback)});
+    return id;
+}
+
+void Renderer::removeRenderPasses(u32 id) {
+    std::erase_if(m_graphCallbacks, [id](const GraphCallback& c) { return c.id == id; });
+}
+
+void Renderer::runGraphCallbacks(RenderStage stage, RenderGraphFrame& frame) {
+    for (const GraphCallback& c : m_graphCallbacks)
+        if (c.stage == stage && c.callback) c.callback(frame);
 }
 
 } // namespace nova
