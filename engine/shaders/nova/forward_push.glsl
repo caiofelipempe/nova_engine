@@ -14,6 +14,7 @@ layout(push_constant) uniform DrawPush {
     SkinBuffer skin;      // 0 = rigid; else the mesh's skin weights
     JointBuffer joints;   // the draw's joint matrices (mesh space)
     IndexBuffer visible;  // 0 = one instance (instanceIndex); else GPU culled: the instance is visible[gl_InstanceIndex]
+    JointBuffer prevJoints; // skinned: last frame's joint matrices (motion vectors; 0 = the same as joints)
 } pc;
 
 #endif // NOVA_FORWARD_PUSH_GLSL

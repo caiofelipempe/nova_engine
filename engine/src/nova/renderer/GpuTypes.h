@@ -92,7 +92,9 @@ struct DrawPush {
     u64 skin;          ///< 0: rigid. Otherwise the mesh's SkinVertex array (skinned draw).
     u64 joints;        ///< The draw's joint matrices (mat4 each, mesh space), when `skin` is set.
     u64 visible;       ///< 0: one instance (instanceIndex). Otherwise a GPU-culled group: instance = visible[gl_InstanceIndex].
+    u64 prevJoints;    ///< Skinned draws: last frame's joint matrices (motion vectors; 0: the same as `joints`).
 };
+static_assert(sizeof(DrawPush) == 80);
 
 /// @brief One instance to cull on the GPU (cull.comp).
 struct CullItem {
@@ -194,7 +196,7 @@ struct SsaoPush {
     u32 colorTexture;     ///< Modes 1, 2: the HDR image.
     u32 ambientTexture;   ///< Modes 1, 2: the ambient light's share of it.
     u32 aoTexture;        ///< Modes 1, 2: the occlusion.
-    u32 _pad0;
+    u32 noiseFrame;       ///< Turns the sampling pattern each frame (TAA averages it out); 0 = fixed.
     glm::vec2 texel;      ///< 1 / the image's size.
     f32 radius;           ///< Sampling radius (m).
     f32 intensity;        ///< The occlusion raised to this power.

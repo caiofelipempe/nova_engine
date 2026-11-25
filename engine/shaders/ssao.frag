@@ -2,7 +2,7 @@
 // Screen-space ambient occlusion, from the depth buffer alone (the forward renderer keeps no
 // normals): positions and normals are rebuilt from depth.
 //  mode 0: the occlusion (R8): 16 samples in the normal's hemisphere, within `radius` (m),
-//          rotated per pixel (interleaved gradient noise); 1 = open.
+//          rotated per pixel (interleaved gradient noise; with TAA also per frame); 1 = open.
 //  mode 1: applies it (HDR): the occlusion blurred over 5 × 5 pixels of similar depth, then the
 //          ambient light's share of the image (the forward pass's second output) darkened by it.
 //  mode 2: the blurred occlusion as gray (DebugView::AmbientOcclusion).
@@ -15,7 +15,7 @@ layout(push_constant) uniform SsaoPush {
     uint colorTexture;   // modes 1, 2: the HDR image
     uint ambientTexture; // modes 1, 2: the ambient's share of it
     uint aoTexture;      // modes 1, 2: the occlusion
-    uint _pad0;
+    uint noiseFrame;     // turns the pattern each frame (TAA averages it); 0 = fixed
     vec2 texel;          // 1 / the image's size
     float radius;        // sampling radius (m)
     float intensity;     // the occlusion raised to this power
@@ -51,7 +51,8 @@ float occlusion(ivec2 pixel) {
     vec3 N = normalize(cross(dx, dy));
     if (dot(N, P) > 0.0) N = -N; // facing the camera
 
-    const float noise = fract(52.9829189 * fract(dot(vec2(pixel), vec2(0.06711056, 0.00583715))));
+    const float noise = fract(52.9829189 * fract(dot(vec2(pixel), vec2(0.06711056, 0.00583715))) +
+                              float(pc.noiseFrame % 64u) * 0.61803399);
     const vec3 helper = abs(N.y) < 0.99 ? vec3(0, 1, 0) : vec3(1, 0, 0);
     const vec3 T = normalize(cross(helper, N)), B = cross(N, T);
     const mat4 proj = pc.frame.data.proj;

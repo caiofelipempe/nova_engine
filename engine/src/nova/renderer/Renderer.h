@@ -366,6 +366,7 @@ private:
     u64 m_motionFrame = ~0ull;
     glm::mat4 m_prevViewProjNoJitter{1.0f};
     std::unordered_map<u64, glm::mat4> m_prevModels, m_models;
+    std::unordered_map<u64, std::vector<glm::mat4>> m_prevJoints, m_joints; // skinned: the joint matrices (TAA)
 };
 
 /// @brief Hybrid forward renderer: rasterized PBR shading with ray-queried shadows.

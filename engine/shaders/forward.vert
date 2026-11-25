@@ -41,6 +41,16 @@ Vertex nova_skinned(uint index, Vertex v) {
     return v;
 }
 
+// A skinned vertex's position last frame (pc.prevJoints), from its bind pose; `now` when there is none.
+vec3 nova_skinnedPrevious(uint index, vec3 bindPosition, vec3 now) {
+    if (uint64_t(pc.skin) == 0ul || uint64_t(pc.prevJoints) == 0ul) return now;
+    const SkinVertex s = pc.skin.items[index];
+    const uint j[4] = uint[4](s.joints.x & 0xFFFFu, s.joints.x >> 16, s.joints.y & 0xFFFFu, s.joints.y >> 16);
+    mat4 m = mat4(0.0);
+    for (int k = 0; k < 4; ++k) m += s.weights[k] * pc.prevJoints.items[j[k]];
+    return (m * vec4(bindPosition, 1.0)).xyz;
+}
+
 void main() {
     // A draw of one instance, or of a group culled on the GPU (its visible instances, in a list).
     const uint instanceIndex = uint64_t(pc.visible) != 0ul ? pc.visible.items[gl_InstanceIndex] : pc.instanceIndex;
@@ -60,11 +70,12 @@ void main() {
         vec3 prevCorner = vec3(0.0);
         for (uint k = 0u; k < 3u; ++k) {
             const uint index = pc.indices.items[triangle * 3u + k];
-            Vertex vk = nova_skinned(index, pc.vertices.items[index]);
+            const Vertex bind = pc.vertices.items[index];
+            Vertex vk = nova_skinned(index, bind);
             p[k] = (inst.model * vec4(vk.position, 1.0)).xyz;
             if (k == corner) {
                 v = vk;
-                prevCorner = (inst.prevModel * vec4(vk.position, 1.0)).xyz;
+                prevCorner = (inst.prevModel * vec4(nova_skinnedPrevious(index, bind.position, vk.position), 1.0)).xyz;
             }
         }
         const vec3 middle = (p[0] + p[1] + p[2]) / 3.0; // the centroid
@@ -72,18 +83,20 @@ void main() {
         world = vec4(p[corner] + shift, 1.0);
         prevWorld = vec4(prevCorner + shift, 1.0); // the same lap as now
     } else {
-        v = nova_skinned(gl_VertexIndex, pc.vertices.items[gl_VertexIndex]);
+        const Vertex bind = pc.vertices.items[gl_VertexIndex];
+        v = nova_skinned(gl_VertexIndex, bind);
         world = inst.model * vec4(v.position, 1.0);
-        prevWorld = inst.prevModel * vec4(v.position, 1.0);
+        prevWorld = inst.prevModel * vec4(nova_skinnedPrevious(gl_VertexIndex, bind.position, v.position), 1.0);
     }
     // Split and crop: every copy is cut at the edges of its lap (the planes half a lap from its center).
     const bool clipped = mode == NOVA_WRAP_SPLIT || mode == NOVA_WRAP_CROP;
     for (int i = 0; i < 3; ++i)
         gl_ClipDistance[i] = (clipped && size[i] > 0.0) ? size[i] * 0.5 - abs(world[i] - cell[i]) : 1.0;
 #else
-    Vertex v = nova_skinned(gl_VertexIndex, pc.vertices.items[gl_VertexIndex]); // vertex pulling through a buffer address
+    const Vertex bind = pc.vertices.items[gl_VertexIndex]; // vertex pulling through a buffer address
+    Vertex v = nova_skinned(gl_VertexIndex, bind);
     vec4 world = inst.model * vec4(v.position, 1.0);
-    vec4 prevWorld = inst.prevModel * vec4(v.position, 1.0);
+    vec4 prevWorld = inst.prevModel * vec4(nova_skinnedPrevious(gl_VertexIndex, bind.position, v.position), 1.0);
 #endif
     vWorldPos = world.xyz;
     vNormal = mat3(inst.normalMatrix) * v.normal;

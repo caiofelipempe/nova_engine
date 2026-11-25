@@ -381,11 +381,11 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 
 **TAA** (`AntiAliasing::TAA`; o padrão continua FXAA): anti-aliasing temporal.
 - A cada frame, a projeção se desloca uma fração de pixel (sequência Halton 2, 3 com 8 posições, `FrameData::jitter`). As linhas de debug descontam o deslocamento e não tremem.
-- O passe forward ganha uma terceira saída, os **vetores de movimento** (`outMotion` em `nova/material.glsl`). Cada instância leva o transform do frame anterior (`InstanceData::prevModel`), que a view guarda por `DrawItem::objectKey` (a Scene usa o UUID da entidade), e a câmera leva a view-projection anterior sem jitter, já vista da origem atual. O céu se move só com a rotação da câmera. Nas malhas com esqueleto, só o movimento do objeto entra, não o dos ossos.
+- O passe forward ganha uma terceira saída, os **vetores de movimento** (`outMotion` em `nova/material.glsl`). Cada instância leva o transform do frame anterior (`InstanceData::prevModel`), que a view guarda por `DrawItem::objectKey` (a Scene usa o UUID da entidade), e a câmera leva a view-projection anterior sem jitter, já vista da origem atual. O céu se move só com a rotação da câmera. Nas malhas com esqueleto, os ossos também contam: a view guarda as matrizes deles por objeto, e o vertex shader refaz a pose do frame anterior (`DrawPush::prevJoints`).
 - O resolve (`taa.frag`, logo depois do SSAO, em HDR) lê o histórico onde o pixel estava no frame anterior, com filtro Catmull-Rom. O movimento vem da superfície mais próxima na vizinhança 3 × 3, para que as bordas de objetos em movimento o acompanhem. O histórico é recortado pela faixa de cores da vizinhança atual (média ± desvio padrão em YCoCg), o que elimina rastros e o que reaparece atrás de objetos, e é misturado após um tonemap reversível. `taaFeedback` (0,1) é o peso de cada frame novo e cresce com a velocidade.
 - O histórico fica em duas texturas por view, usadas em alternância, e recomeça quando a view muda de tamanho ou não é desenhada num frame.
 - `DebugView::Motion` mostra os vetores de movimento. `Sandbox --taa` liga, e `--debug-view 5` mostra o movimento.
-- Sem TAA, a terceira saída fica sem textura, como a do SSAO.
+- Com TAA, o padrão de amostras do SSAO gira a cada frame, e o acúmulo dilui o ruído.
 , ligado por padrão), como no Call of Duty: Advanced Warfare (Jimenez):
 - uma cadeia de imagens de metade do tamanho (`bloomLevels`, 6), cada uma com um filtro de 13 amostras da anterior; a primeira usa a média de Karis, para que pixels isolados muito brilhantes não pisquem;
 - a volta para cima soma, em cada nível, um filtro tenda 3×3 do nível menor (`bloomRadius`);

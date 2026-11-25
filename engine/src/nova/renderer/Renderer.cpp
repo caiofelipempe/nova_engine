@@ -916,6 +916,26 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             jointsAddress = jointAlloc.gpu;
         }
     }
+    // With TAA, last frame's joint matrices too (in the same layout): the motion of the bones.
+    u64 prevJointsAddress = 0;
+    if (taa && jointsAddress) {
+        std::vector<glm::mat4> previous = scene.joints; // unknown: as now (no motion of the bones)
+        for (const DrawItem& d : scene.draws) {
+            if (!d.objectKey || d.jointCount == 0 || d.jointOffset + d.jointCount > scene.joints.size()) continue;
+            const auto first = scene.joints.begin() + d.jointOffset;
+            if (motionKnown)
+                if (auto it = view.m_prevJoints.find(d.objectKey); it != view.m_prevJoints.end() && it->second.size() == d.jointCount)
+                    std::copy(it->second.begin(), it->second.end(), previous.begin() + d.jointOffset);
+            view.m_joints[d.objectKey].assign(first, first + d.jointCount);
+        }
+        FrameAllocation prevAlloc = allocate(previous.size() * sizeof(glm::mat4), 64);
+        if (prevAlloc.cpu) {
+            std::memcpy(prevAlloc.cpu, previous.data(), previous.size() * sizeof(glm::mat4));
+            prevJointsAddress = prevAlloc.gpu;
+        }
+    }
+    std::swap(view.m_prevJoints, view.m_joints);
+    view.m_joints.clear();
 
     // ---- the frame as a render graph: what each pass reads and writes; transitions, unneeded
     // passes and transient textures (shadow atlas, post-process images) are the graph's.
@@ -1298,7 +1318,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             }
             push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
             push.instanceIndex = 0;
-            push.indices = push.skin = push.joints = 0;
+            push.indices = push.skin = push.joints = push.prevJoints = 0;
             push.visible = cullBase + (late ? offVisibleLate : offVisible);
             cmd.pushConstants(push);
             cmd.drawIndexedIndirect(cullBuffer, commands + g * sizeof(gpu::DrawIndexedCommand), 1,
@@ -1332,6 +1352,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
                                  d.jointOffset + d.jointCount <= scene.joints.size();
             push.skin = skinned ? m_device.deviceAddress(mesh.skinBuffer) : 0;
             push.joints = skinned ? jointsAddress + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
+            push.prevJoints = skinned && prevJointsAddress ? prevJointsAddress + u64(d.jointOffset) * sizeof(glm::mat4) : 0;
             cmd.pushConstants(push);
             if (di.triangles) cmd.draw(mesh.indexCount);
             else cmd.drawIndexed(mesh.indexCount);
@@ -1415,6 +1436,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         push.texel = glm::vec2(1.0f / f32(extent.width), 1.0f / f32(extent.height));
         push.radius = s.ssaoRadius;
         push.intensity = std::max(s.ssaoIntensity, 0.0f);
+        push.noiseFrame = taa ? static_cast<u32>(frameCounter) : 0u; // TAA averages a pattern that turns
         const PipelineHandle occlusionPipeline = m_ssaoPipeline, applyPipeline = m_ssaoApplyPipeline;
         graph.addPass("SSAO").sample(depthTex).color(aoTex, LoadOp::DontCare).execute([=](RenderPassContext& ctx) {
             gpu::SsaoPush p = push;
