@@ -191,7 +191,7 @@ Renderer::~Renderer() {
     m_skinnedShapes.clear();
     for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline,
                              m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline, m_hizPipeline, m_bloomPipeline, m_exposurePipeline,
-                             m_ssaoPipeline, m_ssaoApplyPipeline, m_taaPipeline})
+                             m_ssaoPipeline, m_ssaoApplyPipeline, m_taaPipeline, m_rtPipeline})
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_fxaaPipelines) m_device.destroyPipeline(p);
@@ -306,6 +306,17 @@ void Renderer::createPipelines() {
         skin.compute = loadShader("skin.comp");
         skin.debugName = "pipeline.skin";
         m_skinPipeline = m_device.createComputePipeline(skin);
+    }
+
+    if (m_device.caps().rayTracingPipeline) { // the ray traced reference view
+        RayTracingPipelineDesc rt;
+        rt.rayGen = loadShader("rt_reference.rgen");
+        rt.miss = {loadShader("rt_reference.rmiss"), loadShader("rt_shadow.rmiss")}; // by ray type
+        const ShaderDesc alpha = loadShader("rt_alpha.rahit");
+        rt.hitGroups = {{loadShader("rt_reference.rchit"), alpha}, {ShaderDesc{}, alpha}}; // primary, shadow
+        rt.maxRecursionDepth = 2; // shadow rays from the closest hit
+        rt.debugName = "pipeline.rt.reference";
+        m_rtPipeline = m_device.createRayTracingPipeline(rt);
     }
 
     if (m_device.caps().rayQuery) {
@@ -843,6 +854,9 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     }
 
     const bool useRt = s.rayTracedShadows && m_device.caps().rayQuery && !m_tlas.empty();
+    // The ray traced reference view traces the TLAS too (built for it even without ray-traced shadows).
+    const bool rtView = s.debugView == DebugView::RayTraced && m_rtPipeline && !m_tlas.empty();
+    const bool buildTlas = useRt || rtView;
 
     // GPU culling statistics, counted by the GPU the last time this frame slot ran (it has finished).
     if (!m_cullCountersRead && !m_cullCounters.empty()) {
@@ -950,12 +964,13 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     // a buffer of its own and refit its BLAS, so the rays see the pose, not the bind pose.
     ++m_frameNumber;
     std::unordered_map<u32, AccelStructHandle> skinnedBlas; // draw index -> its refitted BLAS
+    std::unordered_map<u32, u64> skinnedVertices;           // draw index -> its deformed vertices (the pose)
     struct SkinJob {
         u64 source, skin, joints, target;
         u32 count, _pad[3];
     };
     std::vector<std::pair<SkinJob, AccelStructHandle>> skinJobs;
-    if (useRt && m_skinPipeline && jointsAddress) {
+    if (buildTlas && m_skinPipeline && jointsAddress) {
         for (u32 di = 0; di < scene.draws.size(); ++di) {
             const DrawItem& d = scene.draws[di];
             if (!d.skinKey || d.jointCount == 0 || !d.castShadows || d.mesh.id >= m_meshes.size()) continue;
@@ -985,6 +1000,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
                                         m_device.deviceAddress(shape.vertices), mesh.vertexCount, {0, 0, 0}},
                                 shape.blas});
             skinnedBlas[di] = shape.blas;
+            skinnedVertices[di] = m_device.deviceAddress(shape.vertices);
         }
     }
     if (!skinJobs.empty())
@@ -1009,7 +1025,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     auto* instances = static_cast<gpu::InstanceData*>(instAlloc.cpu);
     AccelStructInstance* tlasRecords = nullptr;
     FrameAllocation tlasAlloc;
-    if (useRt) {
+    if (buildTlas) {
         tlasAlloc = allocate(std::max<u64>(1, drawCount) * sizeof(AccelStructInstance), 16);
         tlasRecords = static_cast<AccelStructInstance*>(tlasAlloc.cpu);
     }
@@ -1057,7 +1073,10 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             inst.uvMatrix = glm::vec4(cosine * k.x, sine * k.x, -sine * k.y, cosine * k.y);
             inst.uvOffset = glm::vec4(d.material.uvOffset, 0.0f, 0.0f);
             const GpuMesh& gm = m_meshes[d.mesh.id];
-            const u64 v = m_device.deviceAddress(gm.vertexBuffer), ix = m_device.deviceAddress(gm.indexBuffer);
+            // Rays read the triangle they hit from here: skinned draws in the ray tracing scene, their pose.
+            const auto deformed = skinnedVertices.find(di.draw);
+            const u64 v = deformed != skinnedVertices.end() ? deformed->second : m_device.deviceAddress(gm.vertexBuffer);
+            const u64 ix = m_device.deviceAddress(gm.indexBuffer);
             inst.mesh = glm::uvec4(u32(v), u32(v >> 32), u32(ix), u32(ix >> 32));
         }
 
@@ -1089,14 +1108,15 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     view.m_prevViewProjNoJitter = viewProjNoJitter;
     view.m_motionFrame = frameCounter;
 
-    u64 tlasAddress = 0;
-    if (useRt) {
+    u64 tlasAddress = 0, builtTlas = 0; // tlasAddress: for the forward pass's ray-traced shadows
+    if (buildTlas) {
         AccelStructHandle tlas = m_tlas[m_device.frameIndex()];
         const u64 records = tlasAlloc.gpu;
         graph.addPass("TLAS build").sideEffect().execute([tlas, records, tlasCount](RenderPassContext& ctx) {
             ctx.cmd.buildTLAS(tlas, records, tlasCount);
         });
-        tlasAddress = m_device.accelStructAddress(tlas);
+        builtTlas = m_device.accelStructAddress(tlas);
+        if (useRt) tlasAddress = builtTlas;
         m_stats.tlasInstances += tlasCount;
     }
 
@@ -1465,6 +1485,23 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
                 ctx.cmd.draw(3);
             });
         sceneColor = applied;
+    }
+
+    // ---- the ray traced reference view: the image traced instead (a ray tracing pipeline, one
+    // ray generation per pixel into a storage image); the passes after it take it as the image
+    if (rtView) {
+        const RGTexture traced = graph.create({extent.width, extent.height, kHdrFormat, "ray traced"});
+        const gpu::RtPush push{frameAddress, instAlloc.gpu, builtTlas, 0u, std::max(s.shadowBias, 1e-3f)};
+        const PipelineHandle pipeline = m_rtPipeline;
+        const Extent2D size = extent;
+        graph.addPass("Ray traced").storage(traced).execute([=, this](RenderPassContext& ctx) {
+            gpu::RtPush p = push;
+            p.outputImage = m_device.storageIndex(ctx.texture(traced));
+            ctx.cmd.bindPipeline(pipeline);
+            ctx.cmd.pushConstants(p);
+            ctx.cmd.traceRays(size.width, size.height);
+        });
+        sceneColor = traced;
     }
 
     // ---- TAA: this frame blended into the view's history (two images, written in turn); the

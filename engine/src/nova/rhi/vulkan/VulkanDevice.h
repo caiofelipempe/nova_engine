@@ -46,7 +46,10 @@ struct VulkanTexture {
 /// @brief Backend storage behind a PipelineHandle.
 struct VulkanPipeline {
     VkPipeline pipeline = VK_NULL_HANDLE;                            ///< Vulkan pipeline.
-    VkPipelineBindPoint bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; ///< Graphics or compute.
+    VkPipelineBindPoint bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; ///< Graphics, compute or ray tracing.
+    // Ray tracing: the shader binding table and its regions (ray generation, miss, hit, callable).
+    BufferHandle sbt;
+    VkStridedDeviceAddressRegionKHR rayGen{}, miss{}, hit{}, callable{};
 };
 
 /// @brief Backend storage behind an AccelStructHandle.
@@ -108,6 +111,7 @@ public:
     void drawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset, u32 firstInstance) override;
     void drawIndexedIndirect(BufferHandle args, u64 offset, u32 drawCount, u32 stride) override;
     void dispatch(u32 x, u32 y, u32 z) override;
+    void traceRays(u32 width, u32 height, u32 depth) override;
     void transition(TextureHandle texture, ResourceState state) override;
     void globalBarrier() override;
     void copyBuffer(BufferHandle src, BufferHandle dst, u64 size, u64 srcOffset, u64 dstOffset) override;
@@ -120,6 +124,7 @@ public:
 private:
     VulkanDevice& m_device;
     VkCommandBuffer m_cmd = VK_NULL_HANDLE;
+    PipelineHandle m_bound; // traceRays uses its shader binding table
 };
 
 /// @brief rhi::Device implemented with Vulkan 1.3.
@@ -150,9 +155,11 @@ public:
     Extent2D textureExtent(TextureHandle texture) override;
     ResourceState textureState(TextureHandle texture) override;
     u32 bindlessIndex(TextureHandle texture) override;
+    u32 storageIndex(TextureHandle texture) override;
 
     PipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc) override;
     PipelineHandle createComputePipeline(const ComputePipelineDesc& desc) override;
+    PipelineHandle createRayTracingPipeline(const RayTracingPipelineDesc& desc) override;
     void destroyPipeline(PipelineHandle pipeline) override;
 
     AccelStructHandle createBLAS(const BLASDesc& desc) override;
@@ -249,6 +256,8 @@ private:
     VmaAllocator m_allocator = nullptr;
     ExtFunctions m_ext;
     u64 m_asScratchAlignment = 256;
+    // Ray tracing pipelines: shader group handle size and the SBT's alignments, recursion limit.
+    u32 m_sbtHandleSize = 32, m_sbtHandleAlignment = 32, m_sbtBaseAlignment = 64, m_maxRayRecursion = 1;
 
     VkDescriptorSetLayout m_bindlessLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_bindlessPool = VK_NULL_HANDLE;

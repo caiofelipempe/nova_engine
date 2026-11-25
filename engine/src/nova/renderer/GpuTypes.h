@@ -203,6 +203,16 @@ struct SsaoPush {
 };
 static_assert(sizeof(SsaoPush) == 48);
 
+/// @brief Push constants of the ray tracing pipeline shaders (`nova/raytracing.glsl`).
+struct RtPush {
+    u64 frame;        ///< Address of FrameData.
+    u64 instances;    ///< Address of the InstanceData array (TLAS instanceCustomIndex indexes it).
+    u64 tlas;         ///< The frame's TLAS.
+    u32 outputImage;  ///< Storage image index of the result.
+    f32 bias;         ///< Secondary rays start this far off the surface (m).
+};
+static_assert(sizeof(RtPush) == 32);
+
 /// @brief Push constants of taa.frag.
 struct TaaPush {
     u32 color;       ///< Bindless index of this frame's HDR image.

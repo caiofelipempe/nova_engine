@@ -200,6 +200,24 @@ struct ComputePipelineDesc {
     const char* debugName = nullptr; ///< Name for graphics debuggers.
 };
 
+/// @brief What a ray that meets a triangle runs: its closest hit and/or any hit shader (either
+///        may be left empty).
+struct HitGroupDesc {
+    ShaderDesc closestHit; ///< Run once for the nearest accepted hit.
+    ShaderDesc anyHit;     ///< Run for each candidate hit on non-opaque geometry (accept or ignore it).
+};
+
+/// @brief A ray tracing pipeline (needs DeviceCaps::rayTracingPipeline). The shader binding table
+///        is built with it: `traceRayEXT`'s miss index picks from `miss`, and its SBT record offset
+///        (plus the TLAS instance's sbtRecordOffset) from `hitGroups`.
+struct RayTracingPipelineDesc {
+    ShaderDesc rayGen;                  ///< Ray generation shader (one per launch).
+    std::vector<ShaderDesc> miss;       ///< Miss shaders, by index.
+    std::vector<HitGroupDesc> hitGroups; ///< Hit groups, by index.
+    u32 maxRecursionDepth = 1;          ///< Deepest nesting of traceRayEXT (1: only from ray generation).
+    const char* debugName = nullptr;    ///< Name for graphics debuggers.
+};
+
 // ---------------------------------------------------------------- rendering --
 
 /// @brief What happens to an attachment's contents at the start of a pass.

@@ -141,6 +141,10 @@ enum class DebugView : u32 {
     Albedo,  ///< Base color only.
     AmbientOcclusion, ///< Screen-space ambient occlusion (RenderSettings::ssao; white = open).
     Motion,           ///< Motion vectors on screen (AntiAliasing::TAA; black = still).
+    /// @brief The whole image ray traced (a ray tracing pipeline): primary rays from the camera,
+    ///        shadow rays to every light. A reference for the rasterized image; needs
+    ///        Renderer::rayTracingPipelineAvailable() (otherwise the normal image).
+    RayTraced,
 };
 
 /// @brief HDR → display mapping.
@@ -486,6 +490,8 @@ public:
     const RenderStats& stats() const { return m_lastStats; }
     /// @brief True if ray-traced shadows can be used on this GPU.
     bool rayTracingAvailable() const { return m_device.caps().rayQuery; }
+    /// @brief True if ray tracing pipelines work on this GPU (DebugView::RayTraced).
+    bool rayTracingPipelineAvailable() const { return static_cast<bool>(m_rtPipeline); }
     /// @brief The device the renderer draws with.
     rhi::Device& device() { return m_device; }
     /// @brief Origin of the last frame rendered (DebugDraw records lines relative to it).
@@ -568,6 +574,7 @@ private:
     rhi::PipelineHandle m_ssaoPipeline;       // ssao.frag: the occlusion (R8)
     rhi::PipelineHandle m_ssaoApplyPipeline;  // ssao.frag: applied to the image (HDR)
     rhi::PipelineHandle m_taaPipeline;        // taa.frag: the temporal resolve (HDR)
+    rhi::PipelineHandle m_rtPipeline;         // rt_*: the ray traced reference view (ray tracing pipeline)
     std::vector<rhi::BufferHandle> m_exposureReadback; // per frame in flight: the exposure chosen, read back later
     std::vector<rhi::BufferHandle> m_cullCounters; // per frame in flight: GPU culling statistics, read back later
     // Per frame in flight: what GPU culling writes (draw commands, visible lists, states, counters),

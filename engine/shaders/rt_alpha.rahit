@@ -1,0 +1,10 @@
+#version 460
+// Any hit of both ray types: cut-out materials (alpha Mask, non-opaque in the TLAS) let rays
+// through where they are transparent.
+#include "nova/raytracing.glsl"
+
+hitAttributeEXT vec2 bary;
+
+void main() {
+    if (!nova_alphaPasses(pc.instances.items[gl_InstanceCustomIndexEXT], gl_PrimitiveID, bary)) ignoreIntersectionEXT;
+}

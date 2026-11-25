@@ -1,0 +1,19 @@
+#version 460
+// Reference view (DebugView::RayTraced): one primary ray per pixel from the camera; what it hits is
+// shaded by rt_reference.rchit (shadow rays for every light) and what it misses shows the sky.
+#include "nova/raytracing.glsl"
+
+layout(location = 0) rayPayloadEXT NovaPrimaryPayload payload;
+
+void main() {
+    const vec2 pixel = vec2(gl_LaunchIDEXT.xy) + 0.5;
+    const vec2 ndc = pixel / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
+    const vec4 far = pc.frame.data.invViewProj * vec4(ndc, 1.0, 1.0);
+    const vec3 origin = pc.frame.data.cameraPos.xyz;
+    const vec3 dir = normalize(far.xyz / far.w - origin);
+    payload.color = vec3(0.0);
+    payload.hitT = -1.0;
+    traceRayEXT(accelerationStructureEXT(pc.tlas), gl_RayFlagsNoneEXT, 0xFF, NOVA_RAY_PRIMARY, NOVA_RAY_TYPES,
+                NOVA_RAY_PRIMARY, origin, 0.0, dir, 1e5, 0);
+    imageStore(g_images[nonuniformEXT(pc.outputImage)], ivec2(gl_LaunchIDEXT.xy), vec4(payload.color, 1.0));
+}

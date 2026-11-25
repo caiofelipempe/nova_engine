@@ -1,0 +1,67 @@
+// Ray tracing pipeline shaders (ray generation, miss, closest hit, any hit). C++: gpu::RtPush.
+// The frame's TLAS has one instance per drawn object (instanceCustomIndex = its InstanceData);
+// the pipelines have two ray types: 0 = primary (hit group 0, miss 0), 1 = shadow (hit group 1,
+// miss 1): traceRayEXT(..., sbtRecordOffset = ray type, sbtRecordStride = 2, missIndex = ray type).
+#ifndef NOVA_RAYTRACING_GLSL
+#define NOVA_RAYTRACING_GLSL
+#extension GL_EXT_ray_tracing : require
+#include "nova/common.glsl"
+
+layout(push_constant) uniform RtPush {
+    FrameBuffer frame;
+    InstanceBuffer instances;
+    uint64_t tlas;
+    uint outputImage; // storage image (set 0, binding 1)
+    float bias;       // offset of secondary rays along the normal (m)
+} pc;
+
+// Bindless storage images (set 0, binding 1).
+layout(set = 0, binding = 1, rgba16f) uniform image2D g_images[];
+
+#define NOVA_RAY_PRIMARY 0u
+#define NOVA_RAY_SHADOW 1u
+#define NOVA_RAY_TYPES 2u
+
+struct NovaPrimaryPayload {
+    vec3 color; // radiance along the ray
+    float hitT; // distance to the hit, < 0 = missed
+};
+
+// What a ray hit: the triangle's interpolated attributes, through the instance's transform.
+struct NovaHit {
+    vec3 position;  // world (camera relative)
+    vec3 normal;    // world, unit, facing the ray
+    vec2 uv;        // through the material's UV transform
+};
+
+NovaHit nova_hitSurface(InstanceData inst, uint primitive, vec2 bary, vec3 rayOrigin, vec3 rayDir, float t) {
+    VertexBuffer vertices = VertexBuffer(packUint2x32(inst.mesh.xy));
+    IndexBuffer indices = IndexBuffer(packUint2x32(inst.mesh.zw));
+    Vertex a = vertices.items[indices.items[primitive * 3u + 0u]];
+    Vertex b = vertices.items[indices.items[primitive * 3u + 1u]];
+    Vertex c = vertices.items[indices.items[primitive * 3u + 2u]];
+    const vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
+    NovaHit h;
+    h.position = rayOrigin + rayDir * t;
+    h.normal = normalize(mat3(inst.normalMatrix) * (a.normal * w.x + b.normal * w.y + c.normal * w.z));
+    if (dot(h.normal, rayDir) > 0.0) h.normal = -h.normal;
+    h.uv = nova_materialUv(inst, vec2(a.u, a.v) * w.x + vec2(b.u, b.v) * w.y + vec2(c.u, c.v) * w.z);
+    return h;
+}
+
+// Cut-out materials (alpha Mask): false where the surface is transparent (the any hit ignores it).
+bool nova_alphaPasses(InstanceData inst, uint primitive, vec2 bary) {
+    if (uint(inst.surface.w + 0.5) != 1u) return true;
+    VertexBuffer vertices = VertexBuffer(packUint2x32(inst.mesh.xy));
+    IndexBuffer indices = IndexBuffer(packUint2x32(inst.mesh.zw));
+    Vertex a = vertices.items[indices.items[primitive * 3u + 0u]];
+    Vertex b = vertices.items[indices.items[primitive * 3u + 1u]];
+    Vertex c = vertices.items[indices.items[primitive * 3u + 2u]];
+    vec2 uv = vec2(a.u, a.v) * (1.0 - bary.x - bary.y) + vec2(b.u, b.v) * bary.x + vec2(c.u, c.v) * bary.y;
+    uv = nova_materialUv(inst, uv);
+    const int tex = int(inst.params.w);
+    const float alpha = inst.baseColor.a * (tex >= 0 ? textureLod(g_textures[nonuniformEXT(tex)], uv, 0.0).a : 1.0);
+    return alpha >= inst.surface.z;
+}
+
+#endif // NOVA_RAYTRACING_GLSL

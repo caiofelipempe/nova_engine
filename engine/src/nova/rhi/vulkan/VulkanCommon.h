@@ -64,6 +64,8 @@ struct StateInfo {
 };
 /// @brief Maps a ResourceState to its synchronization2 description.
 StateInfo stateInfo(ResourceState state, bool depth);
+/// @brief Makes stateInfo's shader stages include ray tracing shaders (set by the device when it enables them).
+void setRayTracingShaderStages(bool enabled);
 
 /// @brief Extension entry points that are not exported by the loader library (loaded with vkGet*ProcAddr).
 struct ExtFunctions {

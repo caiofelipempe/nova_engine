@@ -62,6 +62,9 @@ public:
     virtual void drawIndexedIndirect(BufferHandle args, u64 offset, u32 drawCount = 1, u32 stride = 20) = 0;
     /// @brief Compute dispatch, in work groups.
     virtual void dispatch(u32 x, u32 y = 1, u32 z = 1) = 0;
+    /// @brief Launches the bound ray tracing pipeline's ray generation shader once per
+    ///        `width × height × depth` (gl_LaunchIDEXT), with its shader binding table.
+    virtual void traceRays(u32 width, u32 height, u32 depth = 1) = 0;
 
     /// @brief Moves a texture to a new logical state, emitting the needed barrier (no-op if already there).
     virtual void transition(TextureHandle texture, ResourceState state) = 0;
@@ -158,6 +161,8 @@ public:
     virtual ResourceState textureState(TextureHandle texture) = 0;
     /// @brief Slot in the global sampled-texture array (`g_textures[]` in shaders).
     virtual u32 bindlessIndex(TextureHandle texture) = 0;
+    /// @brief Slot in the global storage-image array (set 0, binding 1) of a TextureUsage::Storage texture.
+    virtual u32 storageIndex(TextureHandle texture) = 0;
     /// @}
 
     /// @name Pipelines
@@ -166,6 +171,8 @@ public:
     virtual PipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc) = 0;
     /// @brief Creates a compute pipeline.
     virtual PipelineHandle createComputePipeline(const ComputePipelineDesc& desc) = 0;
+    /// @brief Creates a ray tracing pipeline and its shader binding table (needs DeviceCaps::rayTracingPipeline).
+    virtual PipelineHandle createRayTracingPipeline(const RayTracingPipelineDesc& desc) = 0;
     /// @brief Destroys a pipeline (deferred).
     virtual void destroyPipeline(PipelineHandle pipeline) = 0;
     /// @}

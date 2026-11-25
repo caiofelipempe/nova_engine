@@ -58,6 +58,7 @@ void VulkanCommandList::bindPipeline(PipelineHandle h) {
     VulkanPipeline* p = m_device.pipeline(h);
     NOVA_ASSERT(p, "bindPipeline: invalid pipeline");
     vkCmdBindPipeline(m_cmd, p->bindPoint, p->pipeline);
+    m_bound = h;
     VkDescriptorSet set = m_device.bindlessSet();
     vkCmdBindDescriptorSets(m_cmd, p->bindPoint, m_device.pipelineLayout(), 0, 1, &set, 0, nullptr);
 }
@@ -99,6 +100,12 @@ void VulkanCommandList::drawIndexedIndirect(BufferHandle args, u64 offset, u32 d
 }
 
 void VulkanCommandList::dispatch(u32 x, u32 y, u32 z) { vkCmdDispatch(m_cmd, x, y, z); }
+
+void VulkanCommandList::traceRays(u32 width, u32 height, u32 depth) {
+    VulkanPipeline* p = m_device.pipeline(m_bound);
+    NOVA_ASSERT(p && p->bindPoint == VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, "traceRays: no ray tracing pipeline bound");
+    m_device.ext().vkCmdTraceRaysKHR(m_cmd, &p->rayGen, &p->miss, &p->hit, &p->callable, width, height, depth);
+}
 
 void VulkanCommandList::transition(TextureHandle h, ResourceState state) {
     VulkanTexture* t = m_device.texture(h);
@@ -143,8 +150,10 @@ void VulkanCommandList::buildTLAS(AccelStructHandle h, u64 instanceAddress, u32 
     NOVA_ASSERT(as && as->topLevel, "buildTLAS: invalid TLAS");
     NOVA_ASSERT(instanceCount <= as->maxInstances, "buildTLAS: too many instances");
 
-    constexpr VkPipelineStageFlags2 kTraceStages =
-        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    // Shaders that trace against acceleration structures (ray tracing pipelines too, when enabled).
+    const VkPipelineStageFlags2 kTraceStages =
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+        (m_device.caps().rayTracingPipeline ? VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR : VkPipelineStageFlags2(0));
 
     // WAR: earlier traces against this TLAS in the same command buffer must finish first.
     VkMemoryBarrier2 pre{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
@@ -188,8 +197,10 @@ void VulkanCommandList::buildTLAS(AccelStructHandle h, u64 instanceAddress, u32 
 void VulkanCommandList::updateBLAS(AccelStructHandle h) {
     VulkanAccelStruct* as = m_device.accelStruct(h);
     NOVA_ASSERT(as && !as->topLevel && as->allowUpdate, "updateBLAS: not an updatable BLAS");
-    constexpr VkPipelineStageFlags2 kTraceStages =
-        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    // Shaders that trace against acceleration structures (ray tracing pipelines too, when enabled).
+    const VkPipelineStageFlags2 kTraceStages =
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+        (m_device.caps().rayTracingPipeline ? VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR : VkPipelineStageFlags2(0));
 
     // The vertices written by shaders before, and earlier traces / TLAS builds of this BLAS done.
     VkMemoryBarrier2 pre{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};

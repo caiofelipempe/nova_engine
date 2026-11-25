@@ -420,9 +420,19 @@ Já implementado:
 - **shadow maps em cascata** do sol quando não há ray tracing (ou com `RenderSettings::rayTracedShadows` desligado): 4 cascatas num atlas de profundidade (`shadowMapSize`, padrão 2048 por cascata) até `shadowDistance` (padrão 120 m), divisões práticas entre log e linear, cada cascata numa esfera estável (sem tremer ao girar a câmera) com o centro preso aos texels em coordenadas de mundo, PCF 3×3 e deslocamento pela normal contra acne. Projetam sombra as malhas com esqueleto (mesmo vertex shader) e as recortadas respeitam o alfa (`shadow.frag`); as transparentes (`Blend`) não projetam. No fim de cada cascata (`shadowCascadeBlend`, padrão 15% do comprimento dela) a sombra se mistura com a seguinte, e a última some aos poucos até `shadowDistance`: não aparece a borda onde uma cascata termina. Desligue com `RenderSettings::shadowMaps = false`. `Sandbox --no-rt` força esse caminho.
 - **sombras das point lights sem ray tracing:** shadow maps de cubo para as luzes mais próximas da câmera (`maxPointShadows`, padrão 4; `pointShadowMapSize`, padrão 512 por face). Cada luz ocupa uma linha de um atlas transitório, com 6 faces de 90°, e desenha só os objetos dentro do seu raio. O shader escolhe a face e a profundidade analiticamente, com PCF 3×3 e deslocamento pela normal. `PointLightComponent::castShadows` desliga a sombra de uma luz (também no ray tracing). O sandbox tem o cenário **Point lights** (três luzes coloridas girando entre pilares).
 
-Próximos passos (a estrutura já está preparada):
-1. `rhi::RayTracingPipelineDesc` + `CommandList::traceRays` + shader binding table — os entry points (`vkCreateRayTracingPipelinesKHR`, `vkCmdTraceRaysKHR`) já são carregados quando há suporte.
-2. Um path tracer de referência (raygen escrevendo num storage image bindless — o binding 1 já existe).
+- **pipeline de ray tracing** (`DeviceCaps::rayTracingPipeline`):
+  - `rhi::RayTracingPipelineDesc` tem um raygen, os misses (por índice) e os hit groups (`HitGroupDesc`: closest hit e/ou any hit). `Device::createRayTracingPipeline` monta junto a shader binding table, com cada região no alinhamento de base, e `CommandList::traceRays(w, h)` dispara o pipeline ligado;
+  - `Device::storageIndex` dá o índice dos storage images bindless (set 0, binding 1);
+  - as barreiras de estruturas de aceleração e de imagens incluem os shaders de RT;
+  - `nova/raytracing.glsl` traz o push (`gpu::RtPush`), os payloads, os dois tipos de raio (primário e sombra: `sbtRecordOffset` = tipo, stride 2), a superfície atingida (`nova_hitSurface`) e o teste de alfa dos recortados;
+  - a BRDF e o céu ficaram em `nova/brdf.glsl` e `nova/sky.glsl`, usados pela rasterização e pelos raios.
+- **visualização traçada** (`DebugView::RayTraced`, ou "Ray traced (reference)" no painel Renderer; `Sandbox --debug-view 6`): a imagem inteira sai do pipeline de RT, como referência para a rasterizada.
+  - Cada pixel dispara um raio primário. O closest hit lê o triângulo e o material (cor base e textura, xadrez, metálico/rugosidade, emissivo) e lança raios de sombra para o sol e para cada point light. O any hit deixa passar o que é transparente nos materiais recortados, e o miss mostra o céu.
+  - A TLAS é construída também sem as sombras por ray query. As malhas com esqueleto aparecem na pose, porque a instância aponta para os vértices deformados.
+
+Próximos passos:
+1. Um path tracer de referência (vários quiques, acumulação entre frames) sobre o pipeline de RT.
+2. Shaders de RT do jogo (raygen/miss/hit pela `ShaderLibrary`).
 3. Reflexos e AO por ray query no mesmo pass forward.
 4. Compactação de BLAS e refit da TLAS para cenas grandes.
 
@@ -438,7 +448,7 @@ Próximos passos (a estrutura já está preparada):
 - **Mundo grande contínuo por blocos** (planejado): blocos de 4096 m, dormência e carregamento com histerese (carrega no 5×5, descarrega fora do 7×7) e eventos de bloco para o jogo. As posições já são `int64`.
 - Modelo anterior (substituído): **Mundos grandes** com posições globais inteiras (ponto fixo em `int64`, escala ajustável, bordas com volta ou barreira). O histórico está em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md).
 - **Renderização circular**: feita como opção de compilação (`NOVA_WRAP_RENDER_MODES`, `RenderSettings::wrapShift` / `wrapRepeat`). Falta conferir em GPU e fazer o picking ciente das cópias.
-- Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
+- Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit; o pipeline de RT já existe no RHI).
 - Editor: receitas para IA / servidor MCP (fase 5).
 - Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT, render graph, culling na GPU por frustum e oclusão (Hi-Z em duas fases), sombras de point lights, bloom, mistura entre cascatas, exposição automática, SSAO, FXAA e TAA (feitos). Próximo: backend D3D12.
 - Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*; modelos glTF instanciados com a árvore dos nós, sob uma raiz com o nome do arquivo).

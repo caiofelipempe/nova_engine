@@ -106,10 +106,18 @@ VkAttachmentStoreOp toVk(StoreOp op) {
     return op == StoreOp::Store ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
 }
 
+namespace {
+VkPipelineStageFlags2 g_extraShaderStages = 0; // ray tracing shaders, when the device enables them
+} // namespace
+
+void setRayTracingShaderStages(bool enabled) {
+    g_extraShaderStages = enabled ? VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR : 0;
+}
+
 StateInfo stateInfo(ResourceState state, bool depth) {
-    constexpr VkPipelineStageFlags2 kShaderStages =
-        VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
-        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    const VkPipelineStageFlags2 kShaderStages = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+                                                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | g_extraShaderStages;
 
     switch (state) {
         case ResourceState::Undefined:

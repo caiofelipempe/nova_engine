@@ -450,9 +450,10 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     bool vsync = dev.vsync();
     if (ImGui::Checkbox("VSync", &vsync)) dev.setVSync(vsync);
 
-    const char* views[] = {"Lit", "Normals", "Sun shadows", "Albedo", "Ambient occlusion", "Motion (TAA)"};
+    const char* views[] = {"Lit", "Normals", "Sun shadows", "Albedo", "Ambient occlusion", "Motion (TAA)", "Ray traced (reference)"};
+    const int viewCount = ctx.renderer().rayTracingPipelineAvailable() ? 7 : 6; // the last needs RT pipelines
     int dv = static_cast<int>(s.debugView);
-    if (ImGui::Combo("Debug view", &dv, views, 6)) s.debugView = static_cast<DebugView>(dv);
+    if (ImGui::Combo("Debug view", &dv, views, viewCount)) s.debugView = static_cast<DebugView>(dv);
     if (ImGui::TreeNode("Ambient occlusion (SSAO)")) {
         ImGui::Checkbox("Enabled", &s.ssao);
         ImGui::SliderFloat("Radius", &s.ssaoRadius, 0.05f, 3.0f, "%.2f m");

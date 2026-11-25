@@ -395,6 +395,16 @@ void VulkanDevice::createLogicalDevice() {
         NOVA_LOAD_DEVICE(vkCreateRayTracingPipelinesKHR);
         NOVA_LOAD_DEVICE(vkGetRayTracingShaderGroupHandlesKHR);
         NOVA_LOAD_DEVICE(vkCmdTraceRaysKHR);
+
+        VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtProps{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
+        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        p2.pNext = &rtProps;
+        vkGetPhysicalDeviceProperties2(m_physicalDevice, &p2);
+        m_sbtHandleSize = rtProps.shaderGroupHandleSize;
+        m_sbtHandleAlignment = std::max(rtProps.shaderGroupHandleAlignment, 1u);
+        m_sbtBaseAlignment = std::max(rtProps.shaderGroupBaseAlignment, 1u);
+        m_maxRayRecursion = std::max(rtProps.maxRayRecursionDepth, 1u);
     }
 #undef NOVA_LOAD_DEVICE
 
@@ -405,6 +415,7 @@ void VulkanDevice::createLogicalDevice() {
     m_caps.accelerationStructures = rt;
     m_caps.rayQuery = rt;
     m_caps.rayTracingPipeline = rtPipeline;
+    setRayTracingShaderStages(rtPipeline);
     m_caps.wireframe = enable.f2.features.fillModeNonSolid == VK_TRUE;
     m_caps.clipDistance = enable.f2.features.shaderClipDistance == VK_TRUE;
     m_caps.drawIndirectFirstInstance = enable.f2.features.drawIndirectFirstInstance == VK_TRUE;
@@ -983,6 +994,11 @@ u32 VulkanDevice::bindlessIndex(TextureHandle h) {
     return t ? t->sampledIndex : kInvalidIndex;
 }
 
+u32 VulkanDevice::storageIndex(TextureHandle h) {
+    VulkanTexture* t = m_textures.get(h);
+    return t ? t->storageIndex : kInvalidIndex;
+}
+
 // --------------------------------------------------------------- pipelines --
 VkShaderModule VulkanDevice::createShaderModule(const ShaderDesc& desc) {
     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -1100,10 +1116,87 @@ PipelineHandle VulkanDevice::createComputePipeline(const ComputePipelineDesc& de
     return m_pipelines.insert(p);
 }
 
+// Groups in order: ray generation, the misses, the hit groups. The shader binding table holds
+// their handles in three regions, each starting on the base alignment.
+PipelineHandle VulkanDevice::createRayTracingPipeline(const RayTracingPipelineDesc& desc) {
+    NOVA_VERIFY(m_caps.rayTracingPipeline, "createRayTracingPipeline: ray tracing pipelines not supported/enabled");
+    NOVA_VERIFY(desc.rayGen.valid(), "createRayTracingPipeline: no ray generation shader");
+    std::vector<VkPipelineShaderStageCreateInfo> stages;
+    std::vector<VkRayTracingShaderGroupCreateInfoKHR> groups;
+    std::vector<VkShaderModule> modules;
+    auto addStage = [&](const ShaderDesc& s, VkShaderStageFlagBits stage) -> u32 {
+        if (!s.valid()) return VK_SHADER_UNUSED_KHR;
+        VkShaderModule m = createShaderModule(s);
+        modules.push_back(m);
+        stages.push_back({VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, stage, m, s.entryPoint.c_str(), nullptr});
+        return static_cast<u32>(stages.size() - 1);
+    };
+    auto general = [&](u32 stage) {
+        VkRayTracingShaderGroupCreateInfoKHR g{VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
+        g.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+        g.generalShader = stage;
+        g.closestHitShader = g.anyHitShader = g.intersectionShader = VK_SHADER_UNUSED_KHR;
+        groups.push_back(g);
+    };
+    general(addStage(desc.rayGen, VK_SHADER_STAGE_RAYGEN_BIT_KHR));
+    for (const ShaderDesc& m : desc.miss) general(addStage(m, VK_SHADER_STAGE_MISS_BIT_KHR));
+    for (const HitGroupDesc& h : desc.hitGroups) {
+        VkRayTracingShaderGroupCreateInfoKHR g{VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
+        g.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+        g.generalShader = g.intersectionShader = VK_SHADER_UNUSED_KHR;
+        g.closestHitShader = addStage(h.closestHit, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR);
+        g.anyHitShader = addStage(h.anyHit, VK_SHADER_STAGE_ANY_HIT_BIT_KHR);
+        groups.push_back(g);
+    }
+
+    VkRayTracingPipelineCreateInfoKHR ci{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
+    ci.stageCount = static_cast<u32>(stages.size());
+    ci.pStages = stages.data();
+    ci.groupCount = static_cast<u32>(groups.size());
+    ci.pGroups = groups.data();
+    ci.maxPipelineRayRecursionDepth = std::clamp(desc.maxRecursionDepth, 1u, m_maxRayRecursion);
+    ci.layout = m_pipelineLayout;
+    VulkanPipeline p;
+    p.bindPoint = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR;
+    VK_CHECK(m_ext.vkCreateRayTracingPipelinesKHR(m_device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &ci, nullptr, &p.pipeline));
+    for (VkShaderModule m : modules) vkDestroyShaderModule(m_device, m, nullptr);
+    setDebugName(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<u64>(p.pipeline), desc.debugName);
+
+    // The shader binding table.
+    const u32 groupCount = static_cast<u32>(groups.size());
+    std::vector<u8> handles(size_t(groupCount) * m_sbtHandleSize);
+    VK_CHECK(m_ext.vkGetRayTracingShaderGroupHandlesKHR(m_device, p.pipeline, 0, groupCount, handles.size(), handles.data()));
+    auto alignUp = [](u64 v, u64 a) { return (v + a - 1) / a * a; };
+    const u64 stride = alignUp(m_sbtHandleSize, m_sbtHandleAlignment);
+    const u64 missCount = desc.miss.size(), hitCount = desc.hitGroups.size();
+    const u64 rayGenSize = alignUp(stride, m_sbtBaseAlignment);
+    const u64 missSize = alignUp(stride * std::max<u64>(missCount, 1), m_sbtBaseAlignment);
+    const u64 hitSize = alignUp(stride * std::max<u64>(hitCount, 1), m_sbtBaseAlignment);
+    const u64 total = rayGenSize + missSize + hitSize;
+    // Room to align its start to the base alignment.
+    p.sbt = createBuffer({total + m_sbtBaseAlignment, BufferUsage::ShaderBindingTable, MemoryUsage::CpuToGpu,
+                          desc.debugName ? desc.debugName : "sbt"});
+    VulkanBuffer* sbt = m_buffers.get(p.sbt);
+    const VkDeviceAddress base = alignUp(sbt->address, m_sbtBaseAlignment);
+    u8* dst = static_cast<u8*>(sbt->mapped) + (base - sbt->address);
+    std::memset(dst, 0, total);
+    std::memcpy(dst, handles.data(), m_sbtHandleSize);
+    for (u64 k = 0; k < missCount; ++k)
+        std::memcpy(dst + rayGenSize + k * stride, handles.data() + (1 + k) * m_sbtHandleSize, m_sbtHandleSize);
+    for (u64 k = 0; k < hitCount; ++k)
+        std::memcpy(dst + rayGenSize + missSize + k * stride, handles.data() + (1 + missCount + k) * m_sbtHandleSize,
+                    m_sbtHandleSize);
+    p.rayGen = {base, rayGenSize, rayGenSize}; // ray generation: stride = size
+    p.miss = {missCount ? base + rayGenSize : 0, stride, missCount ? stride * missCount : 0};
+    p.hit = {hitCount ? base + rayGenSize + missSize : 0, stride, hitCount ? stride * hitCount : 0};
+    return m_pipelines.insert(p);
+}
+
 void VulkanDevice::destroyPipeline(PipelineHandle h) {
     VulkanPipeline* p = m_pipelines.get(h);
     if (!p) return;
     VkPipeline pipe = p->pipeline;
+    if (p->sbt) destroyBuffer(p->sbt); // deferred as well
     m_pipelines.remove(h);
     deferRelease([this, pipe]() { vkDestroyPipeline(m_device, pipe, nullptr); });
 }

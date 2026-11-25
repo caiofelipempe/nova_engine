@@ -157,6 +157,10 @@ nova_add_shader(NovaShaders ${SH}/exposure.comp   DEPENDS ${NOVA_SHADER_INCLUDES
 nova_add_shader(NovaShaders ${SH}/ssao.frag       DEPENDS ${NOVA_SHADER_INCLUDES}) # screen-space ambient occlusion
 nova_add_shader(NovaShaders ${SH}/fxaa.frag       DEPENDS ${NOVA_SHADER_INCLUDES}) # anti-aliasing
 nova_add_shader(NovaShaders ${SH}/taa.frag        DEPENDS ${NOVA_SHADER_INCLUDES}) # temporal anti-aliasing
+# Ray tracing pipeline: the ray traced reference view (DebugView::RayTraced)
+foreach(_rt rt_reference.rgen rt_reference.rmiss rt_shadow.rmiss rt_reference.rchit rt_alpha.rahit)
+    nova_add_shader(NovaShaders ${SH}/${_rt} DEPENDS ${NOVA_SHADER_INCLUDES})
+endforeach()
 nova_add_shader(NovaShaders ${SH}/cull.comp       DEPENDS ${NOVA_SHADER_INCLUDES}) # GPU frustum culling
 nova_add_shader(NovaShaders ${SH}/shadow.frag     DEPENDS ${NOVA_SHADER_INCLUDES}) # cut-out shadow casters
 nova_add_shader(NovaShaders ${SH}/skin.comp       DEPENDS ${NOVA_SHADER_INCLUDES}) # skinned meshes for ray tracing
