@@ -418,8 +418,8 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 
 Já implementado:
 - detecção das capacidades (`DeviceCaps::rayQuery`, `rayTracingPipeline`) e ativação automática das extensões;
-- uma **BLAS** por mesh, criada junto com a mesh;
-- uma **TLAS** por frame em voo, reconstruída a cada frame a partir das instâncias da cena;
+- uma **BLAS** por mesh, criada junto com a mesh e **compactada** (construída com `ALLOW_COMPACTION`, copiada para uma estrutura do tamanho compactado; nas malhas do Sandbox, 2,0 MB viram 0,7 MB). As BLAS das malhas com esqueleto continuam atualizáveis (refit);
+- uma **TLAS** por frame em voo, refeita a cada frame a partir das instâncias da cena: com o mesmo número de instâncias do último build, ela é **atualizada** (refit, bem mais barato), com um build completo a cada 16 frames para a árvore não degradar com o movimento. Na cena Occlusion (1802 instâncias), o frame a 1080p caiu de 1,22 para 0,97 ms;
 - **sombras por ray query** no fragment shader (sol e point lights), num pipeline-variante (`forward_rq.frag`, e a variante `rq` de cada material do jogo). Em GPUs sem RT, o pipeline raster normal é usado sem nenhuma mudança no código do jogo.
 - **shadow maps em cascata** do sol quando não há ray tracing (ou com `RenderSettings::rayTracedShadows` desligado): 4 cascatas num atlas de profundidade (`shadowMapSize`, padrão 2048 por cascata) até `shadowDistance` (padrão 120 m), divisões práticas entre log e linear, cada cascata numa esfera estável (sem tremer ao girar a câmera) com o centro preso aos texels em coordenadas de mundo, PCF 3×3 e deslocamento pela normal contra acne. Cada cascata desenha só os objetos cuja esfera envolvente alcança o volume dela. Projetam sombra as malhas com esqueleto (mesmo vertex shader) e as recortadas respeitam o alfa (`shadow.frag`); as transparentes (`Blend`) não projetam. No fim de cada cascata (`shadowCascadeBlend`, padrão 15% do comprimento dela) a sombra se mistura com a seguinte, e a última some aos poucos até `shadowDistance`: não aparece a borda onde uma cascata termina. Desligue com `RenderSettings::shadowMaps = false`. `Sandbox --no-rt` força esse caminho.
 - **sombras das point lights sem ray tracing:** shadow maps de cubo para as luzes mais próximas da câmera (`maxPointShadows`, padrão 4; `pointShadowMapSize`, padrão 512 por face). Cada luz ocupa uma linha de um atlas transitório, com 6 faces de 90°, e desenha só os objetos dentro do seu raio. O shader escolhe a face e a profundidade analiticamente, com PCF 3×3 e deslocamento pela normal. `PointLightComponent::castShadows` desliga a sombra de uma luz (também no ray tracing). O sandbox tem o cenário **Point lights** (três luzes coloridas girando entre pilares).
@@ -464,8 +464,6 @@ renderer().addRenderPasses(nova::RenderStage::BeforeTonemap, [&](nova::RenderGra
   - `RenderSettings::rayTracedAo` (desligado por padrão) troca o SSAO por `rayTracedAoRays` raios curtos (2, até `rayTracedAoRadius`) no hemisfério. Com TAA, o padrão gira a cada frame.
   - Ficam no painel Renderer; no Sandbox, `--no-reflections` e `--rq-ao`. O cenário **Surfaces** tem a bola de metal com faixas de rugosidade, do espelho ao áspero.
 
-Próximos passos:
-1. Compactação de BLAS e refit da TLAS para cenas grandes.
 
 ## Roadmap geral
 

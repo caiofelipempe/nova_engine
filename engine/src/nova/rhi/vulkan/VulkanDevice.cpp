@@ -162,6 +162,8 @@ VulkanDevice::~VulkanDevice() {
     if (leaks) NOVA_CORE_WARN("RHI: {} GPU resources were not destroyed before device shutdown", leaks);
 
     savePipelineCache();
+    if (m_blasBytesBuilt)
+        NOVA_CORE_INFO("RHI: BLAS compaction kept {:.1f} of {:.1f} MB", m_blasBytesKept / 1048576.0, m_blasBytesBuilt / 1048576.0);
     vkDestroyPipelineCache(m_device, m_pipelineCache, nullptr);
     vkDestroyCommandPool(m_device, m_uploadPool, nullptr);
     vkDestroyFence(m_device, m_uploadFence, nullptr);
@@ -388,6 +390,8 @@ void VulkanDevice::createLogicalDevice() {
         NOVA_LOAD_DEVICE(vkGetAccelerationStructureBuildSizesKHR);
         NOVA_LOAD_DEVICE(vkGetAccelerationStructureDeviceAddressKHR);
         NOVA_LOAD_DEVICE(vkCmdBuildAccelerationStructuresKHR);
+        NOVA_LOAD_DEVICE(vkCmdWriteAccelerationStructuresPropertiesKHR);
+        NOVA_LOAD_DEVICE(vkCmdCopyAccelerationStructureKHR);
 
         VkPhysicalDeviceAccelerationStructurePropertiesKHR asProps{
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
@@ -1260,7 +1264,9 @@ AccelStructHandle VulkanDevice::createBLAS(const BLASDesc& desc) {
     VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
     build.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
     build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-    if (desc.allowUpdate) build.flags |= VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    // Updatable BLAS are refitted in place; the others are compacted after their build.
+    build.flags |= desc.allowUpdate ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR
+                                    : VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
     build.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     build.geometryCount = 1;
     build.pGeometries = &geom;
@@ -1289,7 +1295,65 @@ AccelStructHandle VulkanDevice::createBLAS(const BLASDesc& desc) {
 
     VkAccelerationStructureBuildRangeInfoKHR range{primitiveCount, 0, 0, 0};
     const VkAccelerationStructureBuildRangeInfoKHR* ranges = &range;
-    immediateSubmit([&](VkCommandBuffer cmd) { m_ext.vkCmdBuildAccelerationStructuresKHR(cmd, 1, &build, &ranges); });
+    // Static BLAS: the build also writes its compacted size (a query read once the build is done).
+    VkQueryPool sizeQuery = VK_NULL_HANDLE;
+    if (!desc.allowUpdate) {
+        VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        qi.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+        qi.queryCount = 1;
+        if (vkCreateQueryPool(m_device, &qi, nullptr, &sizeQuery) != VK_SUCCESS) sizeQuery = VK_NULL_HANDLE;
+    }
+    immediateSubmit([&](VkCommandBuffer cmd) {
+        if (sizeQuery) vkCmdResetQueryPool(cmd, sizeQuery, 0, 1);
+        m_ext.vkCmdBuildAccelerationStructuresKHR(cmd, 1, &build, &ranges);
+        if (sizeQuery) {
+            VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+            b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+            b.srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+            b.dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+            VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            dep.memoryBarrierCount = 1;
+            dep.pMemoryBarriers = &b;
+            vkCmdPipelineBarrier2(cmd, &dep);
+            m_ext.vkCmdWriteAccelerationStructuresPropertiesKHR(cmd, 1, &as.handle,
+                                                                 VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+                                                                 sizeQuery, 0);
+        }
+    });
+
+    // Compaction: a copy into a structure of the compacted size, the original dropped (nothing has
+    // used it yet: the GPU is idle after the immediate submit).
+    if (sizeQuery) {
+        VkDeviceSize compacted = 0;
+        const VkResult got = vkGetQueryPoolResults(m_device, sizeQuery, 0, 1, sizeof(compacted), &compacted,
+                                                   sizeof(compacted), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+        vkDestroyQueryPool(m_device, sizeQuery, nullptr);
+        if (got == VK_SUCCESS && compacted > 0 && compacted < sizes.accelerationStructureSize) {
+            VulkanAccelStruct small;
+            small.storage = createBuffer({compacted, BufferUsage::AccelStructStorage, MemoryUsage::GpuOnly, desc.debugName});
+            VkAccelerationStructureCreateInfoKHR sci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+            sci.buffer = m_buffers.get(small.storage)->buffer;
+            sci.size = compacted;
+            sci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            VK_CHECK(m_ext.vkCreateAccelerationStructureKHR(m_device, &sci, nullptr, &small.handle));
+            setDebugName(VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR, reinterpret_cast<u64>(small.handle), desc.debugName);
+            immediateSubmit([&](VkCommandBuffer cmd) {
+                VkCopyAccelerationStructureInfoKHR copy{VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR};
+                copy.src = as.handle;
+                copy.dst = small.handle;
+                copy.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+                m_ext.vkCmdCopyAccelerationStructureKHR(cmd, &copy);
+            });
+            m_ext.vkDestroyAccelerationStructureKHR(m_device, as.handle, nullptr);
+            VulkanBuffer original = *m_buffers.get(as.storage);
+            m_buffers.remove(as.storage);
+            destroyBufferNow(original);
+            m_blasBytesBuilt += sizes.accelerationStructureSize;
+            m_blasBytesKept += compacted;
+            as.handle = small.handle;
+            as.storage = small.storage;
+        }
+    }
 
     if (desc.allowUpdate) {
         as.allowUpdate = true;
@@ -1318,7 +1382,8 @@ AccelStructHandle VulkanDevice::createTLAS(const TLASDesc& desc) {
 
     VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
     build.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    // Updatable: frames with the same instance count refit it (CommandList::buildTLAS).
+    build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
     build.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     build.geometryCount = 1;
     build.pGeometries = &geom;
@@ -1332,8 +1397,8 @@ AccelStructHandle VulkanDevice::createTLAS(const TLASDesc& desc) {
     as.maxInstances = desc.maxInstances;
     as.storage = createBuffer({sizes.accelerationStructureSize, BufferUsage::AccelStructStorage,
                                MemoryUsage::GpuOnly, desc.debugName});
-    as.scratch = createBuffer(
-        {sizes.buildScratchSize + m_asScratchAlignment, BufferUsage::Storage, MemoryUsage::GpuOnly, "tlas scratch"});
+    as.scratch = createBuffer({std::max(sizes.buildScratchSize, sizes.updateScratchSize) + m_asScratchAlignment,
+                               BufferUsage::Storage, MemoryUsage::GpuOnly, "tlas scratch"});
     as.scratchAddress = alignUp(m_buffers.get(as.scratch)->address, m_asScratchAlignment);
 
     VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};

@@ -65,6 +65,10 @@ struct VulkanAccelStruct {
     bool allowUpdate = false;
     VkAccelerationStructureGeometryKHR geometry{};
     u32 primitiveCount = 0;
+    // TLAS: instances of its last full build and refits since (CommandList::buildTLAS refits when the
+    // count is the same, rebuilding every kTlasRefits so the quality does not drift).
+    u32 builtInstances = ~0u;
+    u32 refits = 0;
 };
 
 /// @brief Emits an image barrier from the texture's tracked state to `state` and updates the tracking.
@@ -259,6 +263,7 @@ private:
     ExtFunctions m_ext;
     u64 m_asScratchAlignment = 256;
     // Ray tracing pipelines: shader group handle size and the SBT's alignments, recursion limit.
+    u64 m_blasBytesBuilt = 0, m_blasBytesKept = 0; // static BLAS before and after compaction
     u32 m_sbtHandleSize = 32, m_sbtHandleAlignment = 32, m_sbtBaseAlignment = 64, m_maxRayRecursion = 1;
 
     VkDescriptorSetLayout m_bindlessLayout = VK_NULL_HANDLE;

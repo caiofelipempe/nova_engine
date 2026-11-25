@@ -174,8 +174,15 @@ void VulkanCommandList::buildTLAS(AccelStructHandle h, u64 instanceAddress, u32 
 
     VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
     build.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-    build.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    // The same instance count as its last build: refit in place (much cheaper), with a full rebuild
+    // every kTlasRefits frames of it so moving instances do not degrade the tree for long.
+    constexpr u32 kTlasRefits = 16;
+    const bool refit = as->builtInstances == instanceCount && as->refits < kTlasRefits;
+    build.mode = refit ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    if (refit) build.srcAccelerationStructure = as->handle;
+    as->refits = refit ? as->refits + 1 : 0;
+    as->builtInstances = instanceCount;
     build.dstAccelerationStructure = as->handle;
     build.geometryCount = 1;
     build.pGeometries = &geom;
