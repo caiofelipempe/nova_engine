@@ -12,7 +12,8 @@
 >
 > As seções de "Modelo" a "Fases" descrevem um modelo anterior (unidade e bordas configuráveis) e
 > ficam como histórico. A de "Próxima reformulação" descreve as etapas 1–6 (ponto fixo, Jolt
-> determinístico), que estão feitas. Os blocos de 4096 m da etapa 7 continuam como trabalho futuro.
+> determinístico), que estão feitas. Os blocos de 4096 m da etapa 7 foram adiados: com posições
+> `int64`, mundo circular e `WorldOrigin`, não foram necessários até agora.
 
 Objetivo: mundos grandes sem perda de precisão, com escala ajustável e bordas que dão a volta ou
 são barreiras.
@@ -163,7 +164,7 @@ scene.setWorldSpace(nova::WorldSpaceDesc::withMaxSize(10, nova::LengthUnit::Kilo
   (o port do vcpkg fixa `OFF`; um overlay port resolve, com algum custo de desempenho). A parte da
   engine já é inteira/IEEE estrita; não há `fast-math`.
 
-## Futuro: renderização circular (mundos que dão a volta)
+## Renderização circular (mundos que dão a volta): plano original, depois feito (veja Renderização na emenda)
 
 > Feito em boa parte, com a opção `NOVA_WRAP_RENDER_MODES` (`wrapShift`, `wrapRepeat`): veja
 > [Renderização na emenda](#renderização-na-emenda-nova_wrap_render_modes). Texto original abaixo.
@@ -327,7 +328,7 @@ Status: **Fases 1 a 6 concluídas.** (`engine/src/nova/math/`, testes em `tests/
    - O que falta para o motor próprio: o próprio motor (envoltória/half-edge, colisão por par em
      referencial local, solver em ponto fixo).
 
-## Próxima reformulação: ponto fixo e mundo de 16 km (planejado)
+## Reformulação: ponto fixo e mundo de 16 km (etapas 1–6 feitas; blocos adiados)
 
 Ainda não implementado. Substitui o modelo atual (posição `int64` com unidade configurável, origem
 flutuante, regiões e dormência) por um mais simples e determinístico.

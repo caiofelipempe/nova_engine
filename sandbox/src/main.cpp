@@ -84,6 +84,7 @@ public:
         if (s_taa) r.settings().antiAliasing = nova::AntiAliasing::TAA;
         if (s_paused) m_paused = true;
         if (s_rqAo) r.settings().rayTracedAo = true;
+        if (s_noVsync) app().device().setVSync(false);
         if (s_noReflections) r.settings().rayTracedReflections = false;
         setupRayTracedAo();
         if (s_debugView >= 0) r.settings().debugView = static_cast<nova::DebugView>(s_debugView);
@@ -114,6 +115,7 @@ public:
     static inline bool s_taa = false;
     static inline bool s_paused = false; // --paused: the simulation starts paused
     static inline bool s_rtao = false;   // --rtao: ray traced AO from the game's shaders
+    static inline bool s_noVsync = false; // --no-vsync: frames as fast as they go (measuring cost)
     static inline bool s_rqAo = false, s_noReflections = false; // --rq-ao, --no-reflections (ray query in the forward pass)
     static inline int s_debugView = -1; // --debug-view N (nova::DebugView)
     static inline int s_quitAfterFrames = -1; // --frames N: quit after N frames (smoke tests)
@@ -126,7 +128,10 @@ public:
     void onUpdate(float dt) override {
         if (s_quitAfterFrames == 1 && !s_screenshot.empty()) renderer().captureNextFrame(s_screenshot);
         if (s_quitAfterFrames >= 0) { // frame pacing over the run (the first frames, loading, left out)
-            if (++m_paceFrames > 10) m_frameTimes.push_back(dt * 1000.0f);
+            if (++m_paceFrames > 10) {
+                m_frameTimes.push_back(dt * 1000.0f);
+                m_renderCpu += renderer().stats().cpuMs; // the previous frame's
+            }
         }
         if (s_quitAfterFrames >= 0 && s_quitAfterFrames-- == 0) {
             if (!m_frameTimes.empty()) {
@@ -137,8 +142,16 @@ public:
                 const float mean = sum / static_cast<float>(t.size());
                 int uneven = 0; // frames off the mean by more than half of it
                 for (float v : m_frameTimes) uneven += std::abs(v - mean) > 0.5f * mean;
-                NOVA_INFO("[frames] frame time ms: mean {:.2f} | min {:.2f} | median {:.2f} | p99 {:.2f} | max {:.2f} | uneven {} of {}",
-                          mean, t.front(), t[t.size() / 2], t[t.size() * 99 / 100], t.back(), uneven, t.size());
+                NOVA_INFO("[frames] frame time ms: mean {:.2f} | min {:.2f} | median {:.2f} | p99 {:.2f} | max {:.2f} | uneven {} of {} | render cpu {:.3f}",
+                          mean, t.front(), t[t.size() / 2], t[t.size() * 99 / 100], t.back(), uneven, t.size(),
+                          m_renderCpu / static_cast<double>(t.size()));
+                std::string spikes; // frames over twice the median (index after the first 10), the first few
+                for (size_t i = 0, n = 0; i < m_frameTimes.size() && n < 8; ++i)
+                    if (m_frameTimes[i] > 2.0f * t[t.size() / 2]) {
+                        spikes += std::to_string(i + 10) + ":" + std::to_string(static_cast<int>(m_frameTimes[i])) + "ms ";
+                        ++n;
+                    }
+                if (!spikes.empty()) NOVA_INFO("[frames] spikes (frame:time): {}", spikes);
             }
             const nova::RenderStats& st = renderer().stats();
             NOVA_INFO("[frames] draws {} | graph passes {} ({} dropped) | auto exposure {:.3f} | path samples {}", st.drawCalls,
@@ -535,6 +548,7 @@ private:
     nova::RayTracingShaders m_rtaoShaders;
     int m_paceFrames = 0;                          // --frames: frame times, logged at the end
     std::vector<float> m_frameTimes;
+    double m_renderCpu = 0.0; // sum of RenderStats::cpuMs over the run
     float m_orbitYaw = 0.0f, m_orbitPitch = -0.35f; // character camera
     std::vector<nova::Entity> m_spawned;      // scenario actions (bullets, dropped boxes)
     std::vector<nova::Entity> m_projectiles;  // shots
@@ -559,6 +573,7 @@ int main(int argc, char** argv) {
         else if (arg == "--paused") PhysicsBench::s_paused = true;
         else if (arg == "--rtao") PhysicsBench::s_rtao = true;
         else if (arg == "--rq-ao") PhysicsBench::s_rqAo = true;
+        else if (arg == "--no-vsync") PhysicsBench::s_noVsync = true;
         else if (arg == "--no-reflections") PhysicsBench::s_noReflections = true;
         else if (arg == "--debug-view" && hasValue) PhysicsBench::s_debugView = std::atoi(argv[++i]);
         else if (arg == "--frames" && hasValue) PhysicsBench::s_quitAfterFrames = std::atoi(argv[++i]);

@@ -1,6 +1,6 @@
 # Nova Engine
 
-Engine 3D em C++20, distribuída como **biblioteca** (`Nova::Engine`). Usa Vulkan 1.3 e GLFW, ambos atrás de interfaces abstratas (backends), ECS com EnTT, Dear ImGui (docking) e um renderer híbrido com sombras por **ray tracing** (ray query) e, sem RT, sombras do sol por **shadow maps** em cascata.
+Engine 3D em C++20, distribuída como **biblioteca** (`Nova::Engine`). Usa Vulkan 1.3 e GLFW, ambos atrás de interfaces abstratas (backends), ECS com EnTT, Dear ImGui (docking), física Jolt determinística e um renderer híbrido. Com **ray tracing**, as sombras, os reflexos e o AO saem por ray query, e há um pipeline de RT com path tracer de referência. Sem RT, as sombras vêm de **shadow maps** (em cascata para o sol, de cubo para as point lights).
 
 ## Usando a engine no seu `main`
 
@@ -56,7 +56,7 @@ Requisitos: Visual Studio 2022, CMake ≥ 3.25, Vulkan SDK (glslc), vcpkg com `V
 cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
-build\bin\Debug\Sandbox.exe       # bancada de física (--check: determinismo de todos os cenários; --frames N: sai após N frames e grava no nova.log as estatísticas de render e os tempos de frame (média, mínimo, mediana, p99, máximo, frames irregulares); --paused: começa com a simulação pausada)
+build\bin\Debug\Sandbox.exe       # bancada de física (--check: determinismo de todos os cenários; --frames N: sai após N frames e grava no nova.log as estatísticas de render e os tempos de frame (média, mínimo, mediana, p99, máximo, frames irregulares); --paused: começa com a simulação pausada; --no-vsync: frames sem esperar o monitor, para medir custo)
 ctest --preset debug              # testes headless (física, cenas, assets, shaders, espaço do mundo, tempo, cenários, input, editor, hot reload)
 doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
@@ -69,7 +69,7 @@ Engine e editor são compilados como DLLs (`NOVA_SHARED=ON`, padrão) para que o
 
 A API pública é documentada no estilo Doxygen nos headers de `engine/src/nova/`. Com o Doxygen instalado, o CMake também cria o target `NovaDocs`.
 
-As dependências (manifest [vcpkg.json](vcpkg.json)) são instaladas automaticamente no configure: GLFW, Vulkan Memory Allocator, glm, EnTT, spdlog, Dear ImGui (docking), ImGuizmo, cgltf, stb_image, Jolt Physics, nlohmann-json. O Jolt vem de um *overlay port* ([cmake/vcpkg-ports/joltphysics](cmake/vcpkg-ports/joltphysics), ligado em [vcpkg-configuration.json](vcpkg-configuration.json)): a mesma versão, compilada com `CROSS_PLATFORM_DETERMINISTIC=ON`; o configure recusa um Jolt sem isso.
+As dependências (manifest [vcpkg.json](vcpkg.json)) são instaladas automaticamente no configure: GLFW, Vulkan Memory Allocator, glm, EnTT, spdlog, Dear ImGui (docking), ImGuizmo, cgltf, stb (imagens: leitura e PNG das capturas), Jolt Physics, nlohmann-json, miniaudio. O Jolt vem de um *overlay port* ([cmake/vcpkg-ports/joltphysics](cmake/vcpkg-ports/joltphysics), ligado em [vcpkg-configuration.json](vcpkg-configuration.json)): a mesma versão, compilada com `CROSS_PLATFORM_DETERMINISTIC=ON`; o configure recusa um Jolt sem isso.
 Em Debug, as validation layers do Vulkan ficam ligadas e as mensagens vão para o console e para `nova.log`.
 
 ## Arquitetura
@@ -79,6 +79,7 @@ engine/src/nova/
   core/       Application (loop), Layer, Log (spdlog)
   math/       WorldSpace, GlobalPosition / GlobalOffset (posições inteiras exatas), TimePoint / Duration (tempo exato em flicks), rotações (quaternion + Euler em 6 ordens), unidades
   platform/   Window (interface) + Input        → glfw/  (backend GLFW)
+  audio/      Audio (miniaudio), clipes, fontes e ouvinte
   rhi/        Device, CommandList (interfaces)  → vulkan/ (backend Vulkan)
   renderer/   Renderer, RenderView, Mesh (+ raycast CPU), DebugDraw, ShaderLibrary — só fala com o RHI
   scene/      Scene (EnTT), Entity, Components, Script, GameLayer, SceneSerializer (JSON)
@@ -93,18 +94,18 @@ editor/game/     NovaEditorGame — código do jogo de exemplo numa DLL recarreg
 sandbox/         bancada de testes de física usando só a API pública
 ```
 
-**Backends.** `platform::Window` e `rhi::Device` são interfaces criadas por fábricas (`Window::create(WindowBackend::Glfw)`, `Device::create(Backend::Vulkan)`). Cada backend vive na sua pasta e é ligado por opções do CMake (`NOVA_RHI_VULKAN`, `NOVA_PLATFORM_GLFW`). A janela não depende de nenhuma API gráfica (a ponte WSI do Vulkan é type-erased), então dá para adicionar SDL3 ou D3D12 sem mexer nas camadas de cima.
+**Backends.** `platform::Window` e `rhi::Device` são interfaces criadas por fábricas (`Window::create(WindowBackend::Glfw)`, `Device::create(Backend::Vulkan)`). Cada backend vive na sua pasta e é ligado por opções do CMake (`NOVA_RHI_VULKAN`, `NOVA_PLATFORM_GLFW`). A janela não depende de nenhuma API gráfica (a ponte WSI do Vulkan é type-erased), então dá para adicionar SDL3 sem mexer nas camadas de cima. Um backend D3D12 exige mais (veja o modelo de binding abaixo).
 
 **Modelo de binding (bindless).** Todos os backends seguem o mesmo contrato:
 - buffers são acessados no shader por *device address* (64 bits, via push constants) — vértices são lidos por "vertex pulling";
-- texturas ficam num array global de descritores (`Device::bindlessIndex`);
+- texturas ficam num array global de descritores (`Device::bindlessIndex`), e storage images em outro (`Device::storageIndex`);
 - acceleration structures também são referenciadas por endereço.
 
-Isso mapeia direto para Vulkan (BDA + descriptor indexing) e para D3D12 (SM 6.6 `ResourceDescriptorHeap`), e é o mesmo modelo de que o ray tracing precisa (o hit shader tem de enxergar a geometria de qualquer objeto).
+Isso mapeia direto para Vulkan (BDA + descriptor indexing) e é o modelo de que o ray tracing precisa (o hit shader tem de enxergar a geometria de qualquer objeto). As texturas mapeariam para o D3D12 (SM 6.6 `ResourceDescriptorHeap`), mas os **buffers por endereço não**: o HLSL não tem ponteiros em shader. Um backend D3D12 exige antes trocar, nos shaders (`GL_EXT_buffer_reference`) e no RHI, os endereços por buffers indexados num heap de descritores.
 
 **Recursos.** São handles geracionais (`BufferHandle`, `TextureHandle`, …): handles obsoletos são detectados em vez de apontarem para outro recurso. A destruição é adiada até a GPU terminar os frames em voo. O estado das texturas é rastreado e as barreiras (sync2) são emitidas automaticamente.
 
-**Frame.** Relativo à câmera (a GPU só vê posições medidas a partir dela; veja [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md)). `[TLAS build] → sky → forward PBR (HDR, RGBA16F) → pós-processamento do jogo (HDR) → tonemap (ACES) → UI`. Os dados por frame vêm de um alocador linear num buffer de upload por frame em voo.
+**Frame.** Relativo à câmera (a GPU só vê posições medidas a partir dela; veja [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md)). Cada frame é um render graph (a sequência completa está em [Render graph](#render-graph)): céu e forward PBR em HDR (RGBA16F), refinamentos (SSAO, TAA), pós-processamento, bloom, tonemap (ACES), anti-aliasing e UI. Os dados por frame vêm de um alocador linear num buffer de upload por frame em voo.
 
 ## Input e players
 
@@ -272,7 +273,7 @@ Som com a [miniaudio](https://miniaud.io) (vcpkg), atrás de uma classe `Audio` 
 
 ## Shaders do jogo
 
-O jogo traz os próprios shaders — **materiais**, **pós-processamento** e **compute** — e escolhe, por shader, de onde vem o SPIR-V:
+O jogo traz os próprios shaders — **materiais**, **pós-processamento**, **compute** e **ray tracing** (veja [Ray tracing](#ray-tracing)) — e escolhe, por shader, de onde vem o SPIR-V:
 
 | Origem | Como | Quando usar |
 |---|---|---|
@@ -325,23 +326,23 @@ nova_add_game_shaders(MyGame
 
 Detalhes:
 - Os headers `nova/*.glsl` vão para `<exe>/shaders/include`; `#include "x.glsl"` também resolve ao lado do arquivo que inclui.
-- O renderer compila sozinho a **variante ray query** de cada material (`NOVA_RAY_QUERY`) na primeira vez que ela é usada; sem ela (ou sem RT na GPU) o material é desenhado sem sombras traçadas.
+- O renderer compila sozinho a **variante ray query** de cada material (`NOVA_RAY_QUERY`) na primeira vez que ela é usada; ela traz as sombras, os reflexos e o AO traçados. Sem ela (ou sem RT na GPU), o material é desenhado com shadow maps e a aproximação especular da luz ambiente.
 - Um erro de compilação mantém o SPIR-V anterior e registra o erro (`ShaderLibrary::error`); se o *primeiro* compile falhar, o objeto usa o material padrão até o arquivo ser corrigido. Pipelines são recriados quando `version()` muda.
 - Cache em `<exe>/shader_cache`, validado por hash do conteúdo da fonte e de cada include.
-- Shaders são assets (`.vert`, `.frag`, `.comp` e as formas `.glsl`/`.spv`): cenas guardam `Material::shader` por GUID. No editor: campo **Shader** no inspetor (combo ou arrastar do painel Assets), soltar o shader sobre um objeto no viewport, ações *Apply to Selection* / *Reload*, e o painel **Renderer** lista os shaders (origem, versão, erros) e os passes de pós.
+- Shaders são assets (`.vert`, `.frag`, `.comp`, `.rgen`, `.rmiss`, `.rchit`, `.rahit` e as formas `.glsl`/`.spv`; só fragment shaders entram como material): cenas guardam `Material::shader` por GUID. No editor: campo **Shader** no inspetor (combo ou arrastar do painel Assets), soltar o shader sobre um objeto no viewport, ações *Apply to Selection* / *Reload*, e o painel **Renderer** lista os shaders (origem, versão, erros) e os passes de pós.
 
 ## Render graph
 
 Cada frame é um `RenderGraph` (`nova/renderer/RenderGraph.h`). Os passes declaram as texturas que leem e escrevem, e são executados na ordem em que foram adicionados:
 
-`[skinned shapes] → [TLAS build] → [shadow maps] → Forward (céu, opacos, transparentes; HDR + parte ambiente + movimento) → [SSAO] → [TAA] → pós-processos (HDR) → [bloom] → [exposição automática] → Tonemap → [FXAA] (saída) → [debug lines]`
+`[skinned shapes] → [TLAS build] → [shadow maps] → Forward (céu, opacos, transparentes; HDR + parte ambiente + movimento) → [SSAO] → [visualização traçada ou path tracer] → [TAA] → passes AfterOpaque → pós-processos (HDR) → passes BeforeTonemap → [bloom] → [exposição automática] → Tonemap → [FXAA] (saída) → passes AfterTonemap → [debug lines]`
 
 Com base no que cada passe declara, o graph:
 - **descarta os passes de que nada precisa:** fica só o que alimenta uma saída (uma textura importada com estado final, ou marcada com `markOutput`) ou tem efeito colateral (`sideEffect()`: buffers, estruturas de aceleração);
 - **faz as transições:** attachments, `sample` (ShaderRead), `storage` (UnorderedAccess) e o estado final das importadas;
 - **cria as texturas transitórias** (`create`) a partir de um pool mantido entre frames. Transitórias do mesmo tamanho e formato cujos tempos de vida não se sobrepõem dividem a mesma textura. Por isso uma cadeia de pós-processos usa só duas, e o atlas de sombras não existe quando não é usado.
 
-O jogo adiciona passes em três pontos (`RenderStage::AfterOpaque`, `BeforeTonemap`, `AfterTonemap`):
+O jogo adiciona passes em três pontos (`RenderStage::AfterOpaque`, `BeforeTonemap`, `AfterTonemap`). Todos vêm depois do TAA, que não suaviza o que eles desenham: um passe do jogo com ruído deve usar um padrão fixo.
 
 ```cpp
 #include <nova/renderer/GpuTypes.h> // gpu::PostProcessPush
@@ -387,7 +388,8 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 - O histórico fica em duas texturas por view, usadas em alternância, e recomeça quando a view muda de tamanho ou não é desenhada num frame.
 - `DebugView::Motion` mostra os vetores de movimento. `Sandbox --taa` liga, e `--debug-view 5` mostra o movimento.
 - Com TAA, o padrão de amostras do SSAO gira a cada frame, e o acúmulo dilui o ruído.
-, ligado por padrão), como no Call of Duty: Advanced Warfare (Jimenez):
+
+**Bloom** (`RenderSettings::bloom`, ligado por padrão), como no Call of Duty: Advanced Warfare (Jimenez):
 - uma cadeia de imagens de metade do tamanho (`bloomLevels`, 6), cada uma com um filtro de 13 amostras da anterior; a primeira usa a média de Karis, para que pixels isolados muito brilhantes não pisquem;
 - a volta para cima soma, em cada nível, um filtro tenda 3×3 do nível menor (`bloomRadius`);
 - o resultado é misturado ao HDR no tonemap (`bloomStrength`, padrão 0,04). Sem limiar, tudo brilha um pouco, como numa lente real; `bloomThreshold` > 0 limita o efeito ao que passa desse brilho, com transição suave;
@@ -409,7 +411,7 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 - o estado fica num buffer da view, e o tonemap o lê direto na GPU, sem esperar a CPU. `exposure` continua valendo, como compensação por cima;
 - `RenderStats::autoExposure` traz o valor escolhido (lido de volta alguns frames depois), e o painel Renderer mostra os controles. `Sandbox --auto-exposure` liga a opção.
 
-`RenderStats` traz os passes executados e descartados e as texturas transitórias, e `Renderer::lastGraph()` descreve o último frame, um passe por linha. O painel **Renderer** do editor e o sandbox mostram as duas coisas. A compilação do graph não precisa de GPU e tem testes próprios (`tests/RenderGraphTests.cpp`).
+`RenderStats` traz os passes executados e descartados, as texturas transitórias e o tempo de CPU gasto montando e gravando o frame (`cpuMs`), e `Renderer::lastGraph()` descreve o último frame, um passe por linha. O painel **Renderer** do editor e o sandbox mostram as duas coisas. A compilação do graph não precisa de GPU e tem testes próprios (`tests/RenderGraphTests.cpp`).
 
 ## Ray tracing
 
@@ -418,7 +420,7 @@ Já implementado:
 - uma **BLAS** por mesh, criada junto com a mesh;
 - uma **TLAS** por frame em voo, reconstruída a cada frame a partir das instâncias da cena;
 - **sombras por ray query** no fragment shader (sol e point lights), num pipeline-variante (`forward_rq.frag`, e a variante `rq` de cada material do jogo). Em GPUs sem RT, o pipeline raster normal é usado sem nenhuma mudança no código do jogo.
-- **shadow maps em cascata** do sol quando não há ray tracing (ou com `RenderSettings::rayTracedShadows` desligado): 4 cascatas num atlas de profundidade (`shadowMapSize`, padrão 2048 por cascata) até `shadowDistance` (padrão 120 m), divisões práticas entre log e linear, cada cascata numa esfera estável (sem tremer ao girar a câmera) com o centro preso aos texels em coordenadas de mundo, PCF 3×3 e deslocamento pela normal contra acne. Projetam sombra as malhas com esqueleto (mesmo vertex shader) e as recortadas respeitam o alfa (`shadow.frag`); as transparentes (`Blend`) não projetam. No fim de cada cascata (`shadowCascadeBlend`, padrão 15% do comprimento dela) a sombra se mistura com a seguinte, e a última some aos poucos até `shadowDistance`: não aparece a borda onde uma cascata termina. Desligue com `RenderSettings::shadowMaps = false`. `Sandbox --no-rt` força esse caminho.
+- **shadow maps em cascata** do sol quando não há ray tracing (ou com `RenderSettings::rayTracedShadows` desligado): 4 cascatas num atlas de profundidade (`shadowMapSize`, padrão 2048 por cascata) até `shadowDistance` (padrão 120 m), divisões práticas entre log e linear, cada cascata numa esfera estável (sem tremer ao girar a câmera) com o centro preso aos texels em coordenadas de mundo, PCF 3×3 e deslocamento pela normal contra acne. Cada cascata desenha só os objetos cuja esfera envolvente alcança o volume dela. Projetam sombra as malhas com esqueleto (mesmo vertex shader) e as recortadas respeitam o alfa (`shadow.frag`); as transparentes (`Blend`) não projetam. No fim de cada cascata (`shadowCascadeBlend`, padrão 15% do comprimento dela) a sombra se mistura com a seguinte, e a última some aos poucos até `shadowDistance`: não aparece a borda onde uma cascata termina. Desligue com `RenderSettings::shadowMaps = false`. `Sandbox --no-rt` força esse caminho.
 - **sombras das point lights sem ray tracing:** shadow maps de cubo para as luzes mais próximas da câmera (`maxPointShadows`, padrão 4; `pointShadowMapSize`, padrão 512 por face). Cada luz ocupa uma linha de um atlas transitório, com 6 faces de 90°, e desenha só os objetos dentro do seu raio. O shader escolhe a face e a profundidade analiticamente, com PCF 3×3 e deslocamento pela normal. `PointLightComponent::castShadows` desliga a sombra de uma luz (também no ray tracing). O sandbox tem o cenário **Point lights** (três luzes coloridas girando entre pilares).
 
 - **pipeline de ray tracing** (`DeviceCaps::rayTracingPipeline`):
@@ -473,11 +475,11 @@ Próximos passos:
   - renderização na emenda escolhível com `NOVA_WRAP_RENDER_MODES` (por triângulo, por objeto ou recortada, e voltas repetidas).
 
   Detalhes em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md#posição-em-64-bits-mundo-sempre-circular-e-worldorigin-feito).
-- **Mundo grande contínuo por blocos** (planejado): blocos de 4096 m, dormência e carregamento com histerese (carrega no 5×5, descarrega fora do 7×7) e eventos de bloco para o jogo. As posições já são `int64`.
+- **Mundo grande contínuo por blocos** (adiado: com posições `int64`, mundo circular e `WorldOrigin`, não foi preciso): blocos de 4096 m, dormência e carregamento com histerese (carrega no 5×5, descarrega fora do 7×7) e eventos de bloco para o jogo.
 - Modelo anterior (substituído): **Mundos grandes** com posições globais inteiras (ponto fixo em `int64`, escala ajustável, bordas com volta ou barreira). O histórico está em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md).
-- **Renderização circular**: feita como opção de compilação (`NOVA_WRAP_RENDER_MODES`, `RenderSettings::wrapShift` / `wrapRepeat`). Falta conferir em GPU e fazer o picking ciente das cópias.
+- **Renderização circular**: feita como opção de compilação (`NOVA_WRAP_RENDER_MODES`, `RenderSettings::wrapShift` / `wrapRepeat`), conferida em GPU. Falta o picking ciente das cópias.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer. Os shaders de RT do jogo já existem (`Renderer::rayTracingPipeline`).
 - Editor: receitas para IA / servidor MCP (fase 5).
-- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT, render graph, culling na GPU por frustum e oclusão (Hi-Z em duas fases), sombras de point lights, bloom, mistura entre cascatas, exposição automática, SSAO, FXAA e TAA (feitos). Próximo: backend D3D12.
+- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT, render graph, culling na GPU por frustum e oclusão (Hi-Z em duas fases), sombras de point lights, bloom, mistura entre cascatas, exposição automática, SSAO, FXAA e TAA (feitos). Ray tracing: sombras, reflexos e AO por ray query, pipeline de RT, visualização traçada, path tracer e shaders de RT do jogo (feitos). Backend D3D12: depende de trocar os endereços de GPU nos shaders (veja o modelo de binding).
 - Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*; modelos glTF instanciados com a árvore dos nós, sob uma raiz com o nome do arquivo).
 - Animação: dos nós, skinning (com sombras e picking na pose atual), troca e mistura de clipes, máscaras por osso, eventos e escolha do clipe pelo nome no inspetor (feitos).

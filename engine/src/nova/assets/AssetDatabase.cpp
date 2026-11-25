@@ -94,8 +94,11 @@ void AssetDatabase::registerBuiltinImporters() {
 
     addImporter({
         .type = "Shader",
-        .extensions = {".vert", ".frag", ".comp", ".vert.glsl", ".frag.glsl", ".comp.glsl", ".vert.spv", ".frag.spv",
-                       ".comp.spv"},
+        // Every stage the ShaderLibrary knows (ray tracing too); the editor offers only fragment
+        // shaders as materials.
+        .extensions = {".vert", ".frag", ".comp", ".rgen", ".rmiss", ".rchit", ".rahit",
+                       ".vert.glsl", ".frag.glsl", ".comp.glsl", ".rgen.glsl", ".rmiss.glsl", ".rchit.glsl", ".rahit.glsl",
+                       ".vert.spv", ".frag.spv", ".comp.spv", ".rgen.spv", ".rmiss.spv", ".rchit.spv", ".rahit.spv"},
         .load = [](AssetDatabase& db, const fs::path& file, AssetData& out) {
             if (!db.renderer()) return false;
             const ShaderHandle h = db.renderer()->shaders().load(file);

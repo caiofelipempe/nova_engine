@@ -210,7 +210,7 @@ struct RenderSettings {
     f32 rayTracedAoRadius = 0.75f; ///< How far the AO rays look (m).
     u32 rayTracedAoRays = 2;       ///< AO rays per pixel (1..16).
     /// @brief Without ray-traced shadows (off, or no ray queries), the sun casts shadows from
-    ///        cascaded shadow maps (4 cascades up to shadowDistance; point lights cast none).
+    ///        cascaded shadow maps (4 cascades up to shadowDistance; point lights: pointShadowMaps).
     bool shadowMaps = true;
     f32 shadowDistance = 120.0f;                 ///< How far from the camera shadow maps reach (m).
     u32 shadowMapSize = 2048;                    ///< Texels per side of each cascade.
@@ -312,11 +312,12 @@ struct RenderStats {
     ///        few frames later: of the last view rendered.
     f32 autoExposure = 0.0f;
     u32 pathSamples = 0; ///< DebugView::PathTraced: paths per pixel averaged so far (last view rendered).
+    f32 cpuMs = 0.0f;    ///< CPU time spent building and recording the frame's graphs (all views), in ms.
 };
 
 /// @brief Where in the frame Renderer::addRenderPasses adds passes.
 enum class RenderStage : u32 {
-    AfterOpaque,   ///< After the forward pass (sky, opaque and see-through), before post-processing (HDR).
+    AfterOpaque,   ///< After the forward pass and what refines it (SSAO, the traced views, TAA), before post-processing (HDR).
     BeforeTonemap, ///< After RenderSettings::postProcess, before the tonemap (HDR).
     AfterTonemap,  ///< After the tonemap, on the output (display format): overlays. Draw with LoadOp::Load.
 };
@@ -409,7 +410,11 @@ private:
     u32 m_jitterIndex = 0;
     u64 m_motionFrame = ~0ull;
     glm::mat4 m_prevViewProjNoJitter{1.0f};
-    std::unordered_map<u64, glm::mat4> m_prevModels, m_models;
+    struct KeyedModel {
+        u64 key;
+        glm::mat4 model;
+    };
+    std::vector<KeyedModel> m_prevModels, m_models; // sorted by key; kept only with TAA (no allocation per frame)
     std::unordered_map<u64, std::vector<glm::mat4>> m_prevJoints, m_joints; // skinned: the joint matrices (TAA)
     // Path tracer: the running average (RGBA32F), its paths per pixel, and a key of everything it
     // depends on (camera, objects, lights, sky, options): another key starts it over.
@@ -418,24 +423,28 @@ private:
     u64 m_pathKey = 0;
 };
 
-/// @brief Hybrid forward renderer: rasterized PBR shading with ray-queried shadows.
+/// @brief Hybrid forward renderer: rasterized PBR shading with ray-queried shadows, reflections and
+///        AO where the GPU has ray tracing, and shadow maps where it does not.
 ///
 /// Each frame is a RenderGraph: `[skinned shapes] → [TLAS build] → [shadow maps] → forward (sky,
-/// opaque, see-through; HDR, its ambient share, motion) → [SSAO] → [TAA] → post-process passes (HDR) → [bloom]
-/// → [auto exposure] → tonemap → [FXAA] (output) → [debug lines]`, with
-/// the game's passes (addRenderPasses) at three stages. The graph moves textures between states,
-/// drops passes nothing needs and makes the transient textures (shadow atlas, post-process images).
+/// opaque, see-through; HDR, its ambient share, motion) → [SSAO] → [ray/path traced view] → [TAA]
+/// → AfterOpaque passes → post-process passes (HDR) → BeforeTonemap passes → [bloom] → [auto
+/// exposure] → tonemap → [FXAA] (output) → AfterTonemap passes → [debug lines]`. The graph moves
+/// textures between states, drops passes nothing needs and makes the transient textures (shadow
+/// atlas, post-process images).
 ///
 /// Game shaders plug in without engine changes: Material::shader selects a material fragment
 /// shader (`nova/material.glsl`), RenderSettings::postProcess adds fullscreen passes
-/// (`nova/postprocess.glsl`) and computePipeline() builds compute pipelines. Shaders come from
-/// shaders() and are hot reloaded; pipelines are rebuilt when their shader changes.
+/// (`nova/postprocess.glsl`), computePipeline() builds compute pipelines and rayTracingPipeline()
+/// ray tracing ones. Shaders come from shaders() and are hot reloaded; pipelines are rebuilt when
+/// their shader changes.
 ///
 /// - Meshes are stored once on the GPU (vertex pulling via device addresses) and, when ray
 ///   tracing is available, each gets a BLAS.
 /// - Per-frame data (camera, lights, instances, TLAS instances) is written into a linear upload
 ///   buffer per frame in flight; a TLAS per frame in flight is rebuilt from the draw list.
-/// - Without ray query support the same scene renders unshadowed, with no code changes.
+/// - Without ray tracing the same scene renders with cascaded and cube shadow maps, with no code
+///   changes.
 class Renderer : NonCopyable {
 public:
     /// @brief Loads shaders from `<exe dir>/shaders`, creates pipelines, per-frame buffers and the built-in meshes.

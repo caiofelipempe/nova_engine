@@ -26,7 +26,8 @@ bool nova_shadowAlphaBlocks(uint instance, uint primitive, vec2 bary) {
 }
 #endif
 
-// 1 = lit, 0 = occluded. Without ray query support this is a no-op (future: shadow maps).
+// 1 = lit, 0 = occluded, along a ray through the TLAS. In the variant without ray queries it is
+// always 1 (shadow maps light that variant instead: nova_shadowMaps, nova_pointShadowMap).
 float nova_traceShadow(vec3 origin, vec3 dir, float tMax) {
 #ifdef NOVA_RAY_QUERY
     if (pc.tlas == 0ul) return 1.0;

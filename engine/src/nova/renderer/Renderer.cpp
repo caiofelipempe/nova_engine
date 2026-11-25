@@ -5,6 +5,7 @@
 #include "nova/renderer/GpuTypes.h"
 #include "nova/renderer/WrapInstances.h"
 
+#include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
 
@@ -757,6 +758,31 @@ RGTexture Renderer::addShadowMapPass(RenderGraph& graph, const RenderScene& scen
         fd.shadowSplits[c] = d1;
         fd.shadowTexels[c] = static_cast<f32>(texel);
     }
+    // Each cascade draws only the casters whose bounding sphere reaches its box (the ortho volume,
+    // which already reaches kCasterReach toward the light): the near cascades see few objects.
+    std::array<std::vector<u32>, gpu::kShadowCascades> casters;
+    for (u32 i = 0; i < m_instances.size(); ++i) {
+        const WrapInstance& wi = m_instances[i];
+        const DrawItem& d = scene.draws[wi.draw];
+        if (!d.castShadows || d.material.alphaMode == AlphaMode::Blend) continue;
+        glm::mat4 model = d.transform;
+        model[3] += glm::vec4(wi.offset, 0.0f);
+        const Bounds& b = m_meshes[d.mesh.id].bounds;
+        const f32 scale = std::max({glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])),
+                                    glm::length(glm::vec3(model[2]))});
+        const glm::vec4 center = model * glm::vec4(b.center(), 1.0f);
+        const f32 radius = glm::length(b.extents()) * scale;
+        for (u32 c = 0; c < gpu::kShadowCascades; ++c) {
+            const glm::vec4 clip = matrices[c] * center; // orthographic: w = 1
+            // The sphere's extent in clip space on each axis (|row| · radius: conservative).
+            const glm::mat4& m = matrices[c];
+            const f32 rx = radius * (std::abs(m[0][0]) + std::abs(m[1][0]) + std::abs(m[2][0]));
+            const f32 ry = radius * (std::abs(m[0][1]) + std::abs(m[1][1]) + std::abs(m[2][1]));
+            const f32 rz = radius * (std::abs(m[0][2]) + std::abs(m[1][2]) + std::abs(m[2][2]));
+            if (std::abs(clip.x) <= 1.0f + rx && std::abs(clip.y) <= 1.0f + ry && clip.z >= -rz && clip.z <= 1.0f + rz)
+                casters[c].push_back(i);
+        }
+    }
     fd.shadowParams = glm::vec4(-1.0f, 0.0015f, static_cast<f32>(res), std::clamp(s.shadowCascadeBlend, 0.0f, 0.5f)); // x: the atlas, set when it exists
     fd.cameraForward = glm::vec4(forward, 0.0f);
     fd.flags |= gpu::kFrameFlagShadowMaps;
@@ -765,8 +791,8 @@ RGTexture Renderer::addShadowMapPass(RenderGraph& graph, const RenderScene& scen
     // (the vertex shader reads only viewProj and wrapSize; the frame data in the upload buffer is
     // write-combined memory, never read back).
     gpu::FrameData* frame = &fd;
-    graph.addPass("Shadow maps").depth(atlas).execute([this, &scene, frame, atlas, res, instances, joints, wrap,
-                                                       matrices](RenderPassContext& ctx) {
+    graph.addPass("Shadow maps").depth(atlas).execute([this, &scene, frame, atlas, res, instances, joints, wrap, matrices,
+                                                       casters = std::move(casters)](RenderPassContext& ctx) {
         CommandList& cmd = ctx.cmd;
         frame->shadowParams.x = static_cast<f32>(ctx.bindlessIndex(atlas)); // mapped memory, read when the GPU runs
         for (u32 c = 0; c < gpu::kShadowCascades; ++c) {
@@ -778,7 +804,7 @@ RGTexture Renderer::addShadowMapPass(RenderGraph& graph, const RenderScene& scen
             const f32 x = static_cast<f32>((c & 1u) * res), y = static_cast<f32>((c >> 1) * res);
             cmd.setViewport(x, y, static_cast<f32>(res), static_cast<f32>(res));
             cmd.setScissor(static_cast<i32>(x), static_cast<i32>(y), res, res);
-            drawCasters(cmd, scene, nullptr, cascade.gpu, instances, joints);
+            drawCasters(cmd, scene, &casters[c], cascade.gpu, instances, joints);
         }
     });
     return atlas;
@@ -879,6 +905,7 @@ RGTexture Renderer::addPointShadowPass(RenderGraph& graph, const RenderScene& sc
 
 void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, RenderView& view, TextureHandle output,
                               std::optional<ResourceState> outputState) {
+    const auto cpuStart = std::chrono::steady_clock::now();
     const TextureHandle hdr = view.m_hdr;
     const TextureHandle depth = view.m_depth;
     const Extent2D extent = m_device.textureExtent(hdr);
@@ -1121,19 +1148,22 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             pathKey.add(d.castShadows);
         }
         // Where it was last frame (from this frame's origin, in the same lap); still if unknown.
+        // Only TAA reads it (motion vectors): without it, no bookkeeping.
         glm::mat4 prevModel = model;
-        if (d.objectKey) {
+        if (d.objectKey && taa) {
             if (motionKnown) {
-                if (auto it = view.m_prevModels.find(d.objectKey); it != view.m_prevModels.end()) {
-                    prevModel = it->second;
+                const auto it = std::lower_bound(view.m_prevModels.begin(), view.m_prevModels.end(), d.objectKey,
+                                                 [](const RenderView::KeyedModel& m, u64 key) { return m.key < key; });
+                if (it != view.m_prevModels.end() && it->key == d.objectKey) {
+                    prevModel = it->model;
                     prevModel[3] -= glm::vec4(originMoved, 0.0f);
                     prevModel[3] += glm::vec4(di.offset, 0.0f);
                 }
             }
-            view.m_models[d.objectKey] = d.transform;
+            view.m_models.push_back({d.objectKey, d.transform});
         }
         inst.prevModel = prevModel;
-        inst.normalMatrix = glm::transpose(glm::inverse(d.transform));
+        inst.normalMatrix = glm::mat4(glm::inverseTranspose(glm::mat3(d.transform))); // the shaders read its 3 × 3
         inst.baseColor = d.material.baseColor;
         inst.emissive = glm::vec4(d.material.emissive, d.material.emissiveStrength);
         u32 flags = d.material.checker ? gpu::kMaterialFlagChecker : 0u;
@@ -1173,7 +1203,9 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
                                                : m_meshes[d.mesh.id].blas;
         const bool seeThrough = d.material.alphaMode == AlphaMode::Blend;
         if (tlasRecords && d.castShadows && blas && !di.splitCopy && !seeThrough) {
-            AccelStructInstance& r = tlasRecords[tlasCount++];
+            // Built here and copied whole: the record has bitfields, and setting a bitfield reads the
+            // word first, very slow in the write-combined upload memory.
+            AccelStructInstance r{};
             toInstanceTransform(model, r.transform);
             r.instanceCustomIndex = i;
             r.mask = 0xFF;
@@ -1182,14 +1214,22 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             r.flags = AccelInstanceTriangleCullDisable |
                       (d.material.alphaMode == AlphaMode::Mask ? AccelInstanceForceNoOpaque : AccelInstanceForceOpaque);
             r.blasAddress = m_device.accelStructAddress(blas);
+            std::memcpy(&tlasRecords[tlasCount++], &r, sizeof(r));
         }
     }
 
     // This frame becomes the view's last one (motion vectors next frame).
-    std::swap(view.m_prevModels, view.m_models);
-    view.m_models.clear();
-    view.m_prevViewProjNoJitter = viewProjNoJitter;
-    view.m_motionFrame = frameCounter;
+    if (taa) {
+        std::sort(view.m_models.begin(), view.m_models.end(),
+                  [](const RenderView::KeyedModel& a, const RenderView::KeyedModel& b) { return a.key < b.key; });
+        std::swap(view.m_prevModels, view.m_models);
+        view.m_models.clear(); // keeps its capacity
+        view.m_prevViewProjNoJitter = viewProjNoJitter;
+        view.m_motionFrame = frameCounter;
+    } else {
+        view.m_prevModels.clear();
+        view.m_models.clear();
+    }
 
     u64 tlasAddress = 0, builtTlas = 0; // tlasAddress: for the forward pass's ray-traced shadows
     if (buildTlas) {
@@ -1884,6 +1924,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     m_stats.transientTextures += graph.transientCount();
     m_stats.pooledTextures = m_graphPool->size();
     m_lastGraph = graph.describe();
+    m_stats.cpuMs += std::chrono::duration<f32, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
 }
 
 PipelineHandle Renderer::linePipeline(Format format, bool onTop) {
