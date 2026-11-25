@@ -151,7 +151,9 @@ public:
     virtual TextureHandle createTexture(const TextureDesc& desc) = 0;
     /// @brief Destroys a texture (deferred) and frees its bindless slots. Swapchain images are ignored.
     virtual void destroyTexture(TextureHandle texture) = 0;
-    /// @brief Uploads mip 0 and waits; the texture ends in ResourceState::ShaderRead.
+    /// @brief Uploads mip 0 and waits; the texture ends in ResourceState::ShaderRead. A texture
+    ///        made with more mip levels (and TextureUsage::TransferSrc) gets the others generated,
+    ///        each a filtered half of the one above.
     /// @param data Tightly packed pixels.
     /// @param size Byte count of `data`.
     virtual void uploadTexture(TextureHandle texture, const void* data, u64 size) = 0;

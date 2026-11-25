@@ -260,7 +260,7 @@ O `Material` segue o modelo PBR do glTF:
 - `doubleSided`: as duas faces (sem descarte de faces de trás).
 - `uvScale`, `uvRotation`, `uvOffset`: transformação de UV de todas as texturas (como a `KHR_texture_transform` do glTF, lida da textura de cor); escala 4 repete a textura 4 vezes.
 
-O glTF traz tudo isso, criando cada textura no espaço de cor certo (cor e emissiva em sRGB, os mapas de dados lineares; `Renderer::createTexture2D(..., srgb)`). Materiais de jogo (`nova/material.glsl`) recebem `Surface::alpha` e `Surface::occlusion` também. O cenário **Surfaces** do sandbox mostra cada recurso. As sombras por ray tracing respeitam o recorte: os raios testam o alfa da textura no ponto atingido (instâncias recortadas são não opacas no TLAS), então uma grade projeta sombra com os furos.
+O glTF traz tudo isso, criando cada textura no espaço de cor certo (cor e emissiva em sRGB, os mapas de dados lineares; `Renderer::createTexture2D(..., srgb)`). Toda textura ganha a **cadeia completa de mipmaps**, gerada no upload (`Device::uploadTexture`, por blits lineares), e é amostrada com filtragem trilinear e anisotrópica (16×): de longe ou de lado, ela fica filtrada em vez de cintilar. Formatos que não aceitam blit linear ficam com um nível. Num recorte (`Mask`), a média do alfa nos níveis menores pode afinar o recorte à distância. Materiais de jogo (`nova/material.glsl`) recebem `Surface::alpha` e `Surface::occlusion` também. O cenário **Surfaces** do sandbox mostra cada recurso. As sombras por ray tracing respeitam o recorte: os raios testam o alfa da textura no ponto atingido (instâncias recortadas são não opacas no TLAS), então uma grade projeta sombra com os furos.
 
 ## Áudio
 
