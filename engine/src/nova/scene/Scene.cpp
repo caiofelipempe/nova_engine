@@ -157,7 +157,9 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
         auto& t = cam.transform();
         auto& c = cam.get<CameraComponent>();
         // Camera-relative: the camera is the frame's origin, everything else is measured from it.
-        out.camera = CameraData::relative(t.position, t.orientation(), c.fovY, aspect, c.nearClip, c.farClip);
+        out.camera = c.projection == CameraProjection::Orthographic
+                         ? CameraData::relativeOrthographic(t.position, t.orientation(), c.orthoSize, aspect, c.nearClip, c.farClip)
+                         : CameraData::relative(t.position, t.orientation(), c.fovY, aspect, c.nearClip, c.farClip);
         hasCamera = true;
     }
 

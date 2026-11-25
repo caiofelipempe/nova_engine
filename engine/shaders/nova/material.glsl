@@ -93,7 +93,7 @@ void main() {
     s.relativePos = vWorldPos;
     s.worldPos = vWorldPos + pc.frame.data.originTiled.xyz;
     s.uv = nova_materialUv(inst, vUV); // through the material's UV transform
-    s.viewDir = normalize(nova_cameraPos() - vWorldPos);
+    s.viewDir = nova_toViewer(pc.frame, vWorldPos); // toward the eye, or against the view (orthographic)
     s.custom = inst.custom;
     const vec4 base = inst.baseColor * nova_texture(int(inst.params.w), s.uv);
     s.albedo = base.rgb;

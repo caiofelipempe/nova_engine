@@ -250,6 +250,18 @@ Em superfícies lisas (esfera numa face) as três coincidem; em arestas e vérti
 - Estrutura: frontend (`physics/PhysicsWorld.h`, `scene/PhysicsComponents.h`, `scene/ScenePhysics.cpp`) separado do backend (`physics/backend/`: contrato `float` local, origem flutuante e Jolt). Testes em `tests/PhysicsFeatureTests.cpp`.
 - **Movimento suave:** um corpo cinemático movido num quadro com vários passos anda o mesmo tanto em cada passo. `Scene::interpolatePhysics` (ligado por padrão) desenha corpos dinâmicos, cinemáticos e personagens entre as poses dos dois últimos passos, pelo tempo que sobrou, no máximo um passo atrás. Os transforms guardam a pose simulada. Câmeras que seguem um corpo usam `scene().renderTransform(e)`.
 
+## Câmeras
+
+Uma entidade com `CameraComponent` (`primary`) é a câmera do jogo. `projection` escolhe entre `Perspective` (`fovY`) e `Orthographic` (`orthoSize`: a altura da vista em metros; a largura segue a proporção da tela), com `nearClip` e `farClip` nos dois casos. Sem ECS, use `CameraData::relative` / `relativeLookAt`, ou `relativeOrthographic` / `relativeOrthographicLookAt`.
+
+Tudo no renderer funciona nas duas projeções:
+- culling, oclusão, sombras em cascata (as fatias de uma vista ortográfica têm largura constante), TAA e vetores de movimento;
+- a reconstrução de posição pela profundidade no SSAO e no pós (`nova_viewPositionAt` em `nova/common.glsl`; `nova_viewPosition` no pós);
+- a direção de visão dos materiais (`Surface::viewDir`, por `nova_toViewer`): no ortográfico ela é a mesma em todos os pixels, e o especular e os reflexos usam essa direção;
+- os raios das visualizações traçadas e do path tracer, que saem do plano near de cada pixel.
+
+No editor, `Orthographic viewport` (painel Renderer) deixa a vista do viewport ortográfica, e a roda do mouse dá zoom, enquanto o botão direito está pressionado. O desenho da câmera na cena vira uma caixa. `Sandbox --ortho [altura]` usa uma câmera ortográfica.
+
 ## Materiais
 
 O `Material` segue o modelo PBR do glTF:

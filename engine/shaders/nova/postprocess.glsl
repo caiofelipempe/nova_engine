@@ -39,12 +39,7 @@ float nova_depth(vec2 uv) {
     return texelFetch(g_textures[nonuniformEXT(pc.depthTexture)], clamp(ivec2(uv * vec2(size)), ivec2(0), size - 1), 0).r;
 }
 // The view-space position at uv (camera at the origin, looking down -Z; meters).
-vec3 nova_viewPosition(vec2 uv) {
-    const mat4 P = pc.frame.data.proj;
-    const float z = -P[3][2] / (nova_depth(uv) + P[2][2]);
-    const vec2 ndc = uv * 2.0 - 1.0;
-    return vec3(ndc.x * -z / P[0][0], ndc.y * -z / P[1][1], z);
-}
+vec3 nova_viewPosition(vec2 uv) { return nova_viewPositionAt(pc.frame.data.proj, uv, nova_depth(uv)); }
 // Distance from the camera plane at uv (m); the far plane where nothing was drawn.
 float nova_linearDepth(vec2 uv) { return -nova_viewPosition(uv).z; }
 

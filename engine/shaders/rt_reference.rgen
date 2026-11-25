@@ -8,8 +8,11 @@ layout(location = 0) rayPayloadEXT NovaPrimaryPayload payload;
 void main() {
     const vec2 pixel = vec2(gl_LaunchIDEXT.xy) + 0.5;
     const vec2 ndc = pixel / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
+    // From the pixel's point on the near plane toward its point on the far plane: the eye's rays for
+    // a perspective camera, parallel ones for an orthographic camera.
+    const vec4 nearPoint = pc.frame.data.invViewProj * vec4(ndc, 0.0, 1.0);
     const vec4 far = pc.frame.data.invViewProj * vec4(ndc, 1.0, 1.0);
-    const vec3 origin = pc.frame.data.cameraPos.xyz;
+    const vec3 origin = nearPoint.xyz / nearPoint.w;
     const vec3 dir = normalize(far.xyz / far.w - origin);
     payload.color = vec3(0.0);
     payload.hitT = -1.0;

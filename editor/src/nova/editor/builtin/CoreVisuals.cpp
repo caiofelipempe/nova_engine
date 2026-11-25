@@ -20,9 +20,14 @@ const glm::vec4 kCamera{0.7f, 0.8f, 1.0f, 0.9f};
 
 void drawFrustum(DebugDraw& dd, const TransformComponent& t, const CameraComponent& c) {
     const f32 farDist = std::min(c.farClip, 4.0f), aspect = 16.0f / 9.0f;
-    const f32 h = std::tan(c.fovY * 0.5f), w = h * aspect;
+    // Perspective: widening with distance; orthographic: a box orthoSize tall.
+    const bool ortho = c.projection == CameraProjection::Orthographic;
+    const f32 h = ortho ? c.orthoSize * 0.5f : std::tan(c.fovY * 0.5f), w = h * aspect;
     const glm::quat q = t.orientation();
-    auto corner = [&](f32 d, f32 sx, f32 sy) { return t.position + q * glm::vec3(sx * w * d, sy * h * d, -d); };
+    auto corner = [&](f32 d, f32 sx, f32 sy) {
+        const f32 spread = ortho ? 1.0f : d;
+        return t.position + q * glm::vec3(sx * w * spread, sy * h * spread, -d);
+    };
     const f32 n = c.nearClip;
     GlobalPosition nc[4] = {corner(n, -1, -1), corner(n, 1, -1), corner(n, 1, 1), corner(n, -1, 1)};
     GlobalPosition fc[4] = {corner(farDist, -1, -1), corner(farDist, 1, -1), corner(farDist, 1, 1), corner(farDist, -1, 1)};

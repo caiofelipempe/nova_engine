@@ -30,12 +30,15 @@ bool EditorCamera::update(f32 dt, bool hovered) {
     if (Input::isKeyDown(Key::A)) position -= right() * s;
     if (Input::isKeyDown(Key::E)) position += glm::vec3(0.0f, s, 0.0f);
     if (Input::isKeyDown(Key::Q)) position -= glm::vec3(0.0f, s, 0.0f);
-    if (f32 wheel = Input::scrollDelta(); wheel != 0.0f)
-        speed = glm::clamp(speed * (wheel > 0 ? 1.2f : 1.0f / 1.2f), 0.5f, 200.0f);
+    if (f32 wheel = Input::scrollDelta(); wheel != 0.0f) {
+        if (orthographic) orthoSize = glm::clamp(orthoSize * (wheel > 0 ? 1.0f / 1.2f : 1.2f), 0.1f, 100000.0f); // zoom
+        else speed = glm::clamp(speed * (wheel > 0 ? 1.2f : 1.0f / 1.2f), 0.5f, 200.0f);
+    }
     return true;
 }
 
 CameraData EditorCamera::data(f32 aspect) const {
+    if (orthographic) return CameraData::relativeOrthographicLookAt(position, forward(), orthoSize, aspect, 0.05f, 1000.0f);
     return CameraData::relativeLookAt(position, forward(), fovY, aspect, 0.05f, 1000.0f);
 }
 

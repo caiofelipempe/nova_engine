@@ -13,6 +13,7 @@
 #define FRAME_FLAG_POINT_SHADOW_MAPS 4u
 #define FRAME_FLAG_RT_REFLECTIONS 8u
 #define FRAME_FLAG_RT_AO 16u
+#define FRAME_FLAG_ORTHOGRAPHIC 32u
 
 #define MATERIAL_FLAG_CHECKER 1u
 
@@ -101,6 +102,25 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Sk
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer JointBuffer { mat4 items[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer VertexBuffer { Vertex items[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer IndexBuffer { uint items[]; };
+
+// The unit direction from a surface point (camera relative) toward the viewer: toward the eye for a
+// perspective camera, against the view direction for an orthographic one (parallel rays).
+vec3 nova_toViewer(FrameBuffer frame, vec3 position) {
+    return (frame.data.flags & FRAME_FLAG_ORTHOGRAPHIC) != 0u ? -frame.data.cameraForward.xyz
+                                                             : normalize(frame.data.cameraPos.xyz - position);
+}
+
+// The view-space position at a point of the screen (uv 0..1) of the given depth (0..1), for the
+// frame's projection: perspective or orthographic (and its TAA jitter).
+vec3 nova_viewPositionAt(mat4 P, vec2 uv, float depth) {
+    const vec2 ndc = uv * 2.0 - 1.0;
+    if (P[2][3] == 0.0) { // orthographic: clip = P · view, w = 1
+        const float z = (depth - P[3][2]) / P[2][2];
+        return vec3((ndc.x - P[3][0]) / P[0][0], (ndc.y - P[3][1]) / P[1][1], z);
+    }
+    const float z = -P[3][2] / (depth + P[2][2]);
+    return vec3(ndc.x * -z / P[0][0], ndc.y * -z / P[1][1], z);
+}
 
 // A view's auto exposure (exposure.comp; the tonemap reads `exposure`). C++: gpu::ExposureState.
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ExposureBuffer {

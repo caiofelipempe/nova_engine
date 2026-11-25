@@ -30,6 +30,9 @@ void registerEngineTypes() {
         .value("Velocity", physics::JointMotorMode::Velocity)
         .value("Position", physics::JointMotorMode::Position);
 
+    enumeration<CameraProjection>("CameraProjection")
+        .value("Perspective", CameraProjection::Perspective)
+        .value("Orthographic", CameraProjection::Orthographic);
     enumeration<AlphaMode>("AlphaMode").value("Opaque", AlphaMode::Opaque).value("Mask", AlphaMode::Mask).value("Blend", AlphaMode::Blend);
 
     type<Material>("Material")
@@ -77,7 +80,9 @@ void registerEngineTypes() {
         .component();
 
     type<CameraComponent>("Camera")
+        .field("projection", &CameraComponent::projection, {.tooltip = "Orthographic: no perspective (sizes do not change with distance)"})
         .field("fovY", &CameraComponent::fovY, {.min = 10.0f, .max = 120.0f, .degrees = true, .label = "Field of View"})
+        .field("orthoSize", &CameraComponent::orthoSize, {.speed = 0.1f, .tooltip = "Orthographic: height of the view (m)", .label = "Ortho Size"})
         .field("nearClip", &CameraComponent::nearClip, {.min = 0.001f, .max = 10.0f})
         .field("farClip", &CameraComponent::farClip, {.speed = 1.0f})
         .field("primary", &CameraComponent::primary)

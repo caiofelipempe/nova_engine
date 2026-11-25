@@ -31,13 +31,8 @@ float depthAt(ivec2 p) {
     return texelFetch(g_textures[nonuniformEXT(pc.depthTexture)], clamp(p, ivec2(0), size - 1), 0).r;
 }
 
-// View-space position of a point of the screen at a depth (a perspective projection, depth 0..1).
-vec3 viewPosition(vec2 uv, float depth) {
-    const mat4 P = pc.frame.data.proj;
-    const float z = -P[3][2] / (depth + P[2][2]);
-    const vec2 ndc = uv * 2.0 - 1.0;
-    return vec3(ndc.x * -z / P[0][0], ndc.y * -z / P[1][1], z);
-}
+// View-space position of a point of the screen at a depth (0..1; perspective or orthographic).
+vec3 viewPosition(vec2 uv, float depth) { return nova_viewPositionAt(pc.frame.data.proj, uv, depth); }
 
 vec3 positionAt(ivec2 p) { return viewPosition((vec2(p) + 0.5) * pc.texel, depthAt(p)); }
 
@@ -51,7 +46,9 @@ float occlusion(ivec2 pixel) {
     const vec3 dx = abs(r.z - P.z) < abs(P.z - l.z) ? r - P : P - l;
     const vec3 dy = abs(d.z - P.z) < abs(P.z - u.z) ? d - P : P - u;
     vec3 N = normalize(cross(dx, dy));
-    if (dot(N, P) > 0.0) N = -N; // facing the camera
+    // Facing the camera: against the ray from the eye (perspective) or the view direction (-Z, orthographic).
+    const vec3 viewRay = pc.frame.data.proj[2][3] == 0.0 ? vec3(0.0, 0.0, -1.0) : P;
+    if (dot(N, viewRay) > 0.0) N = -N;
 
     const float noise = fract(52.9829189 * fract(dot(vec2(pixel), vec2(0.06711056, 0.00583715))) +
                               float(pc.noiseFrame % 64u) * 0.61803399);

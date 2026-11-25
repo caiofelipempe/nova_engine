@@ -166,8 +166,16 @@ struct MeshComponent {
 };
 
 /// @brief Makes the entity a camera; it looks down its forward (−Z) axis.
+/// @brief How a camera projects the scene.
+enum class CameraProjection : u8 {
+    Perspective,  ///< Things shrink with distance (fovY).
+    Orthographic, ///< Parallel lines stay parallel; sizes do not change with distance (orthoSize).
+};
+
 struct CameraComponent {
-    f32 fovY = glm::radians(60.0f); ///< Vertical field of view in radians.
+    CameraProjection projection = CameraProjection::Perspective; ///< Perspective or orthographic.
+    f32 fovY = glm::radians(60.0f); ///< Perspective: vertical field of view in radians.
+    f32 orthoSize = 10.0f;          ///< Orthographic: height of the view (m); the width follows the aspect.
     f32 nearClip = 0.05f;           ///< Near plane distance.
     f32 farClip = 500.0f;           ///< Far plane distance.
     bool primary = true;            ///< The first primary camera renders the scene (see Scene::primaryCamera).

@@ -33,6 +33,7 @@ struct CameraData {
     glm::mat4 projection{1.0f}; ///< View → clip, Vulkan convention (Y down, depth 0..1).
     glm::vec3 position{0.0f};   ///< Camera position relative to `origin` (zero for relative cameras).
     GlobalPosition origin;      ///< Point every position of the frame is measured from.
+    bool orthographic = false;  ///< `projection` is orthographic (no perspective): view rays are parallel.
 
     /// @brief Camera at `eye` (which becomes the origin) with the given orientation (looks down −Z).
     /// @param eye Exact world position of the camera.
@@ -52,6 +53,13 @@ struct CameraData {
     /// @param farClip Far plane distance.
     static CameraData relativeLookAt(const GlobalPosition& eye, const glm::vec3& direction, f32 fovY, f32 aspect,
                                      f32 nearClip, f32 farClip);
+    /// @brief Orthographic camera at `eye` (which becomes the origin) with the given orientation
+    ///        (looks down −Z): a box `height` tall and `height × aspect` wide, from nearClip to farClip.
+    static CameraData relativeOrthographic(const GlobalPosition& eye, const glm::quat& orientation, f32 height, f32 aspect,
+                                           f32 nearClip, f32 farClip);
+    /// @brief Orthographic camera at `eye` looking along `direction` (Y up).
+    static CameraData relativeOrthographicLookAt(const GlobalPosition& eye, const glm::vec3& direction, f32 height,
+                                                 f32 aspect, f32 nearClip, f32 farClip);
 
     /// @brief Perspective camera looking from `position` at `target` (Y up).
     /// @param fovY Vertical field of view in radians.

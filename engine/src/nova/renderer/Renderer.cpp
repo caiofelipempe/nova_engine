@@ -86,6 +86,36 @@ CameraData CameraData::relative(const GlobalPosition& eye, const glm::quat& orie
     return c;
 }
 
+namespace {
+// Orthographic projection (Vulkan: y down, depth 0..1), height tall.
+glm::mat4 orthographicProjection(f32 height, f32 aspect, f32 nearClip, f32 farClip) {
+    const f32 h = std::max(height, 1e-4f) * 0.5f, w = h * aspect;
+    glm::mat4 p = glm::ortho(-w, w, -h, h, nearClip, farClip);
+    p[1][1] *= -1.0f;
+    return p;
+}
+} // namespace
+
+CameraData CameraData::relativeOrthographic(const GlobalPosition& eye, const glm::quat& orientation, f32 height, f32 aspect,
+                                            f32 nearClip, f32 farClip) {
+    CameraData c;
+    c.origin = eye;
+    c.view = glm::inverse(glm::toMat4(orientation));
+    c.projection = orthographicProjection(height, aspect, nearClip, farClip);
+    c.orthographic = true;
+    return c;
+}
+
+CameraData CameraData::relativeOrthographicLookAt(const GlobalPosition& eye, const glm::vec3& direction, f32 height,
+                                                  f32 aspect, f32 nearClip, f32 farClip) {
+    CameraData c;
+    c.origin = eye;
+    c.view = glm::lookAt(glm::vec3(0.0f), glm::normalize(direction), glm::vec3(0, 1, 0));
+    c.projection = orthographicProjection(height, aspect, nearClip, farClip);
+    c.orthographic = true;
+    return c;
+}
+
 CameraData CameraData::relativeLookAt(const GlobalPosition& eye, const glm::vec3& direction, f32 fovY, f32 aspect,
                                       f32 nearClip, f32 farClip) {
     CameraData c;
@@ -822,7 +852,10 @@ RGTexture Renderer::addShadowMapPass(RenderGraph& graph, const RenderScene& scen
         glm::vec3 center(0.0f);
         for (int k = 0; k < 8; ++k) {
             const f32 d = (k & 4) ? d1 : d0;
-            corners[k] = toWorld * glm::vec3(((k & 1) ? 1.0f : -1.0f) * d * tanX, ((k & 2) ? 1.0f : -1.0f) * d * tanY, -d);
+            // Perspective: the slice widens with distance (tan of the half angles); orthographic: 1/proj
+            // is already the half width and height, the same at every distance.
+            const f32 spread = scene.camera.orthographic ? 1.0f : d;
+            corners[k] = toWorld * glm::vec3(((k & 1) ? 1.0f : -1.0f) * spread * tanX, ((k & 2) ? 1.0f : -1.0f) * spread * tanY, -d);
             center += corners[k] / 8.0f;
         }
         f32 radius = 0.0f;
@@ -1073,6 +1106,9 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     const u32 pointLightCount = std::min<u32>(static_cast<u32>(scene.pointLights.size()), gpu::kMaxPointLights);
     fd.pointLightCount = pointLightCount;
     u32 frameFlags = useRt ? gpu::kFrameFlagRtShadows : 0u;
+    if (scene.camera.orthographic) frameFlags |= gpu::kFrameFlagOrthographic;
+    // The view direction (shadow cascades, and the direction to the viewer of an orthographic camera).
+    fd.cameraForward = glm::vec4(glm::transpose(glm::mat3(scene.camera.view)) * glm::vec3(0.0f, 0.0f, -1.0f), 0.0f);
     if (useRt && s.rayTracedReflections) frameFlags |= gpu::kFrameFlagRtReflections;
     if (useRt && s.rayTracedAo) frameFlags |= gpu::kFrameFlagRtAo;
     fd.rtParams = glm::vec4(std::max(s.rayTracedAoRadius, 0.01f), static_cast<f32>(std::clamp(s.rayTracedAoRays, 1u, 16u)),

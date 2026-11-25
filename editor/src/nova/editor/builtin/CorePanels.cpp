@@ -474,6 +474,12 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     bool vsync = dev.vsync();
     if (ImGui::Checkbox("VSync", &vsync)) dev.setVSync(vsync);
     ImGui::SliderFloat("Look sensitivity", &ctx.camera().lookSensitivity, 0.0001f, 0.005f, "%.4f rad", ImGuiSliderFlags_Logarithmic);
+    ImGui::Checkbox("Orthographic viewport", &ctx.camera().orthographic);
+    if (ctx.camera().orthographic) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::DragFloat("Height (m)", &ctx.camera().orthoSize, 0.1f, 0.1f, 100000.0f, "%.1f");
+    }
 
     const char* views[] = {"Lit",          "Normals",       "Sun shadows", "Albedo", "Ambient occlusion",
                            "Motion (TAA)", "Ray traced (reference)", "Path traced (reference)"};

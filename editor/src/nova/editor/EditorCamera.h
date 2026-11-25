@@ -17,6 +17,8 @@ public:
     f32 yaw = 0.0f;                        ///< Radians; 0 looks down −Z.
     f32 pitch = -0.3f;                     ///< Radians; positive looks up.
     f32 fovY = glm::radians(60.0f);        ///< Vertical field of view in radians.
+    bool orthographic = false;             ///< Orthographic view (no perspective); the mouse wheel zooms it.
+    f32 orthoSize = 20.0f;                 ///< Orthographic: height of the view (m).
     f32 speed = 6.0f;                      ///< Movement speed in units per second.
     /// @brief Radians turned per mouse count (raw input while looking). 0.0008 ≈ a common game
     ///        default; higher is faster but each count moves the image further (steppier).

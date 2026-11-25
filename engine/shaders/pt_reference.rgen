@@ -52,8 +52,10 @@ void main() {
     // A random point of the pixel, without the frame's TAA jitter (viewProj includes it).
     const vec2 point = vec2(pixel) + vec2(random(seed), random(seed));
     const vec2 ndc = point / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0 + pc.frame.data.jitter.xy;
+    // From the near plane to the far plane through the pixel (perspective or orthographic).
+    const vec4 nearPoint = pc.frame.data.invViewProj * vec4(ndc, 0.0, 1.0);
     const vec4 far = pc.frame.data.invViewProj * vec4(ndc, 1.0, 1.0);
-    vec3 origin = pc.frame.data.cameraPos.xyz;
+    vec3 origin = nearPoint.xyz / nearPoint.w;
     vec3 dir = normalize(far.xyz / far.w - origin);
 
     vec3 radiance = vec3(0.0), throughput = vec3(1.0);

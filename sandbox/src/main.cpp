@@ -132,6 +132,7 @@ public:
     static inline bool s_noVsync = false; // --no-vsync: frames as fast as they go (measuring cost)
     static inline bool s_prepass = false; // --prepass: RenderSettings::depthPrepass
     static inline bool s_fog = false;     // --fog: assets/shaders/fog.frag as a post effect (reads depth)
+    static inline float s_orthoSize = 0.0f; // --ortho [height]: an orthographic camera (that tall, in m)
     static inline bool s_wave = false;    // --wave: a flag waving by a material vertex shader (assets/shaders/wave.vert)
     static inline bool s_rqAo = false, s_noReflections = false; // --rq-ao, --no-reflections (ray query in the forward pass)
     static inline int s_debugView = -1; // --debug-view N (nova::DebugView)
@@ -331,7 +332,12 @@ private:
         const View view = sc.build(scene(), m_meshes);
         if (sc.enter && !keep) sc.enter(); // a reset keeps what was chosen in its panel
         m_camera = scene().createEntity("Camera");
-        m_camera.add<nova::CameraComponent>().farClip = 500.0f;
+        auto& camera = m_camera.add<nova::CameraComponent>();
+        camera.farClip = 500.0f;
+        if (s_orthoSize > 0.0f) { // --ortho: no perspective
+            camera.projection = nova::CameraProjection::Orthographic;
+            camera.orthoSize = s_orthoSize;
+        }
         m_camera.transform().position = keep ? eye : view.eye;
         if (keep) m_camera.transform().setRotation(look);
         else m_camera.transform().lookAt(view.target);
@@ -613,6 +619,10 @@ int main(int argc, char** argv) {
         else if (arg == "--prepass") PhysicsBench::s_prepass = true;
         else if (arg == "--fog") PhysicsBench::s_fog = true;
         else if (arg == "--wave") PhysicsBench::s_wave = true;
+        else if (arg == "--ortho") {
+            PhysicsBench::s_orthoSize = 30.0f;
+            if (hasValue && std::atof(argv[i + 1]) > 0.0) PhysicsBench::s_orthoSize = static_cast<float>(std::atof(argv[++i]));
+        }
         else if (arg == "--size" && hasValue) { // WxH
             char* end = nullptr;
             width = static_cast<nova::u32>(std::strtoul(argv[++i], &end, 10));
