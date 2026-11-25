@@ -24,11 +24,15 @@ layout(location = 0) in vec3 vWorldPos;
 layout(location = 1) in vec3 vNormal;
 layout(location = 2) in vec2 vUV;
 layout(location = 3) flat in uint vInstance;
+layout(location = 4) in vec4 vClip;
+layout(location = 5) in vec4 vPrevClip;
 
 layout(location = 0) out vec4 outColor;
 // The ambient light's share of outColor, for screen-space ambient occlusion (RenderSettings::ssao;
 // the renderer leaves this output unused when it is off).
 layout(location = 1) out vec4 outAmbient;
+// How far the surface moved on screen since last frame, in UV (TAA; unused when it is off).
+layout(location = 2) out vec4 outMotion;
 
 struct Surface {
     vec3 albedo;      // linear base color
@@ -135,6 +139,7 @@ void main() {
     const float alpha = alphaMode == 2u ? clamp(s.alpha, 0.0, 1.0) : 1.0;
     outColor = vec4(color, alpha);
     outAmbient = vec4(ambient, alpha); // blended as the color is (see-through surfaces)
+    outMotion = vec4(nova_motion(vClip, vPrevClip, pc.frame.data.jitter.xy), 0.0, alpha);
 }
 
 #endif // NOVA_MATERIAL_GLSL

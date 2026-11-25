@@ -139,6 +139,11 @@ void RenderView::destroy() {
     if (m_exposure) d.destroyBuffer(m_exposure);
     m_exposure = {};
     m_exposureValid = false;
+    for (rhi::TextureHandle& h : m_history) {
+        if (h) d.destroyTexture(h);
+        h = {};
+    }
+    m_historyValid = false;
     m_hdr = m_depth = m_output = {};
 }
 
@@ -186,7 +191,7 @@ Renderer::~Renderer() {
     m_skinnedShapes.clear();
     for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline,
                              m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline, m_hizPipeline, m_bloomPipeline, m_exposurePipeline,
-                             m_ssaoPipeline, m_ssaoApplyPipeline})
+                             m_ssaoPipeline, m_ssaoApplyPipeline, m_taaPipeline})
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_fxaaPipelines) m_device.destroyPipeline(p);
@@ -215,7 +220,7 @@ void Renderer::createPipelines() {
     GraphicsPipelineDesc sky;
     sky.vertex = m_fullscreenVS;
     sky.fragment = loadShader("sky.frag");
-    sky.colorFormats = {kHdrFormat, kHdrFormat}; // the forward pass: color, and the ambient's share (SSAO)
+    sky.colorFormats = {kHdrFormat, kHdrFormat, kMotionFormat}; // the forward pass: color, the ambient's share (SSAO), motion (TAA)
     sky.depthFormat = kDepthFormat;
     sky.cullMode = CullMode::None;
     sky.depthTest = false;
@@ -226,7 +231,7 @@ void Renderer::createPipelines() {
     GraphicsPipelineDesc fwd;
     fwd.vertex = forwardVS;
     fwd.fragment = loadShader("forward.frag");
-    fwd.colorFormats = {kHdrFormat, kHdrFormat}; // color, and the ambient's share (material.glsl's outAmbient)
+    fwd.colorFormats = {kHdrFormat, kHdrFormat, kMotionFormat}; // color, the ambient's share, motion (material.glsl)
     fwd.depthFormat = kDepthFormat;
     fwd.debugName = "pipeline.forward";
     m_forwardPipeline = m_device.createGraphicsPipeline(fwd);
@@ -274,6 +279,11 @@ void Renderer::createPipelines() {
         ssao.colorFormats = {Format::R8_UNORM};
         ssao.debugName = "pipeline.ssao";
         m_ssaoPipeline = m_device.createGraphicsPipeline(ssao);
+
+        GraphicsPipelineDesc taa = bloom; // fullscreen, HDR
+        taa.fragment = loadShader("taa.frag");
+        taa.debugName = "pipeline.taa";
+        m_taaPipeline = m_device.createGraphicsPipeline(taa);
     }
 
     { // GPU frustum culling
@@ -800,7 +810,29 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     const RenderSettings& s = m_settings;
 
     // ---- per-frame constants
-    const glm::mat4 viewProj = scene.camera.projection * scene.camera.view;
+    // TAA: the projection moved by a sub-pixel amount, different every frame (Halton 2, 3; 8 steps).
+    const bool taa = s.antiAliasing == AntiAliasing::TAA && m_taaPipeline;
+    glm::vec2 jitter(0.0f); // NDC
+    if (taa) {
+        auto halton = [](u32 i, u32 base) {
+            f32 f = 1.0f, r = 0.0f;
+            for (; i > 0; i /= base) {
+                f /= static_cast<f32>(base);
+                r += f * static_cast<f32>(i % base);
+            }
+            return r;
+        };
+        const u32 i = view.m_jitterIndex++ % 8u + 1u;
+        jitter = glm::vec2((halton(i, 2) - 0.5f) * 2.0f / f32(extent.width), (halton(i, 3) - 0.5f) * 2.0f / f32(extent.height));
+    }
+    const glm::mat4 projection =
+        glm::translate(glm::mat4(1.0f), glm::vec3(jitter, 0.0f)) * scene.camera.projection; // NDC moved by `jitter`
+    const glm::mat4 viewProjNoJitter = scene.camera.projection * scene.camera.view;
+    const glm::mat4 viewProj = projection * scene.camera.view;
+    // Motion vectors: last frame's view and transforms, if this view was drawn then.
+    const u64 frameCounter = m_device.frameCounter();
+    const bool motionKnown = view.m_motionFrame + 1 == frameCounter;
+    const glm::vec3 originMoved = motionKnown ? glm::vec3((scene.camera.origin - view.m_prevOrigin).toMeters()) : glm::vec3(0.0f);
     expandDraws(scene, viewProj);
     const u32 drawCount = static_cast<u32>(m_instances.size());
     auto frameAlloc = allocate(sizeof(gpu::FrameData));
@@ -826,9 +858,12 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
 
     auto& fd = *static_cast<gpu::FrameData*>(frameAlloc.cpu);
     fd.view = scene.camera.view;
-    fd.proj = scene.camera.projection;
+    fd.proj = projection;
     fd.viewProj = viewProj;
     fd.invViewProj = glm::inverse(fd.viewProj);
+    // Last frame's view, seen from this frame's origin: a point x (from this origin) was x + moved from that one.
+    fd.prevViewProj = motionKnown ? view.m_prevViewProjNoJitter * glm::translate(glm::mat4(1.0f), originMoved) : viewProjNoJitter;
+    fd.jitter = glm::vec4(jitter, 0.0f, 0.0f);
     fd.cameraPos = glm::vec4(scene.camera.position, scene.time);
     fd.sunDirection = glm::vec4(glm::normalize(scene.sun.direction), scene.sun.intensity);
     fd.sunColor = glm::vec4(scene.sun.color, 0.0f);
@@ -966,6 +1001,19 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         glm::mat4 model = d.transform;
         model[3] += glm::vec4(di.offset, 0.0f); // a copy in another lap: whole laps over
         inst.model = model;
+        // Where it was last frame (from this frame's origin, in the same lap); still if unknown.
+        glm::mat4 prevModel = model;
+        if (d.objectKey) {
+            if (motionKnown) {
+                if (auto it = view.m_prevModels.find(d.objectKey); it != view.m_prevModels.end()) {
+                    prevModel = it->second;
+                    prevModel[3] -= glm::vec4(originMoved, 0.0f);
+                    prevModel[3] += glm::vec4(di.offset, 0.0f);
+                }
+            }
+            view.m_models[d.objectKey] = d.transform;
+        }
+        inst.prevModel = prevModel;
         inst.normalMatrix = glm::transpose(glm::inverse(d.transform));
         inst.baseColor = d.material.baseColor;
         inst.emissive = glm::vec4(d.material.emissive, d.material.emissiveStrength);
@@ -1014,6 +1062,12 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             r.blasAddress = m_device.accelStructAddress(blas);
         }
     }
+
+    // This frame becomes the view's last one (motion vectors next frame).
+    std::swap(view.m_prevModels, view.m_models);
+    view.m_models.clear();
+    view.m_prevViewProjNoJitter = viewProjNoJitter;
+    view.m_motionFrame = frameCounter;
 
     u64 tlasAddress = 0;
     if (useRt) {
@@ -1293,9 +1347,14 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     const RGTexture ambientTex = ssao || !m_device.caps().unusedAttachments
                                      ? graph.create({extent.width, extent.height, kHdrFormat, "ambient"})
                                      : RGTexture{};
+    // TAA needs the motion vectors: the third output (left unused, or a texture nobody reads, without it).
+    const RGTexture motionTex = taa || !m_device.caps().unusedAttachments
+                                    ? graph.create({extent.width, extent.height, kMotionFormat, "motion"})
+                                    : RGTexture{};
     {
         RenderPassBuilder forward = graph.addPass("Forward");
         forward.color(hdrTex, LoadOp::DontCare).color(ambientTex, LoadOp::Clear, StoreOp::Store, {0.0f, 0.0f, 0.0f, 0.0f});
+        forward.color(motionTex, LoadOp::Clear, StoreOp::Store, {0.0f, 0.0f, 0.0f, 0.0f});
         forward.depth(depthTex); // depth is kept for the debug lines
         if (shadowAtlas) forward.sample(shadowAtlas);
         if (pointShadowAtlas) forward.sample(pointShadowAtlas);
@@ -1334,7 +1393,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             if (readback) ctx.cmd.copyBuffer(cullBuffer, readback, 16, offCounters, 0);
         });
         RenderPassBuilder late = graph.addPass("Forward (late)");
-        late.color(hdrTex, LoadOp::Load).color(ambientTex, LoadOp::Load).depth(depthTex, LoadOp::Load);
+        late.color(hdrTex, LoadOp::Load).color(ambientTex, LoadOp::Load).color(motionTex, LoadOp::Load).depth(depthTex, LoadOp::Load);
         if (shadowAtlas) late.sample(shadowAtlas);
         if (pointShadowAtlas) late.sample(pointShadowAtlas);
         late.execute([&record](RenderPassContext& ctx) { record(ctx.cmd, true); });
@@ -1384,6 +1443,43 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
                 ctx.cmd.draw(3);
             });
         sceneColor = applied;
+    }
+
+    // ---- TAA: this frame blended into the view's history (two images, written in turn); the
+    // result is the image from here on (post-processing, bloom and the tonemap read it)
+    if (taa) {
+        for (TextureHandle& h : view.m_history)
+            if (!h)
+                h = m_device.createTexture({extent.width, extent.height, 1, kHdrFormat,
+                                            TextureUsage::RenderTarget | TextureUsage::Sampled, "view.taaHistory"});
+        const bool showMotion = s.debugView == DebugView::Motion;
+        const bool historyValid = view.m_historyValid && view.m_taaFrame + 1 == frameCounter;
+        const u32 write = view.m_historyIndex ^ 1u;
+        const RGTexture previous = graph.import("taa history", view.m_history[view.m_historyIndex], extent, kHdrFormat);
+        const RGTexture result = graph.import("taa result", view.m_history[write], extent, kHdrFormat);
+        gpu::TaaPush push{};
+        push.texel = glm::vec2(1.0f / f32(extent.width), 1.0f / f32(extent.height));
+        push.feedback = std::clamp(s.taaFeedback, 0.01f, 1.0f);
+        push.mode = showMotion ? 2u : historyValid ? 0u : 1u;
+        const PipelineHandle pipeline = m_taaPipeline;
+        const RGTexture source = sceneColor;
+        RenderPassBuilder resolve = graph.addPass("TAA");
+        resolve.sample(source).sample(motionTex).sample(depthTex);
+        if (historyValid) resolve.sample(previous);
+        resolve.color(result, LoadOp::DontCare).execute([=](RenderPassContext& ctx) {
+            gpu::TaaPush p = push;
+            p.color = ctx.bindlessIndex(source);
+            p.velocity = ctx.bindlessIndex(motionTex);
+            p.depth = ctx.bindlessIndex(depthTex);
+            p.history = historyValid ? ctx.bindlessIndex(previous) : p.color;
+            ctx.cmd.bindPipeline(pipeline);
+            ctx.cmd.pushConstants(p);
+            ctx.cmd.draw(3);
+        });
+        sceneColor = result;
+        view.m_historyIndex = write;
+        view.m_historyValid = !showMotion; // the motion view is no history to build on
+        view.m_taaFrame = frameCounter;
     }
 
     RenderGraphFrame frame{graph, scene, extent, sceneColor, depthTex, frameAddress};

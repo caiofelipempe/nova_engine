@@ -333,7 +333,7 @@ Detalhes:
 
 Cada frame é um `RenderGraph` (`nova/renderer/RenderGraph.h`). Os passes declaram as texturas que leem e escrevem, e são executados na ordem em que foram adicionados:
 
-`[skinned shapes] → [TLAS build] → [shadow maps] → Forward (céu, opacos, transparentes; HDR + parte ambiente) → [SSAO] → pós-processos (HDR) → [bloom] → [exposição automática] → Tonemap → [FXAA] (saída) → [debug lines]`
+`[skinned shapes] → [TLAS build] → [shadow maps] → Forward (céu, opacos, transparentes; HDR + parte ambiente + movimento) → [SSAO] → [TAA] → pós-processos (HDR) → [bloom] → [exposição automática] → Tonemap → [FXAA] (saída) → [debug lines]`
 
 Com base no que cada passe declara, o graph:
 - **descarta os passes de que nada precisa:** fica só o que alimenta uma saída (uma textura importada com estado final, ou marcada com `markOutput`) ou tem efeito colateral (`sideEffect()`: buffers, estruturas de aceleração);
@@ -379,7 +379,14 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 
 **Anti-aliasing** (`RenderSettings::antiAliasing`, FXAA por padrão): o tonemap escreve numa textura RGBA8 transitória e o FXAA (como o FXAA 3.11 de Lottes, qualidade de PC) suaviza as bordas ao escrever a saída. Ele acha as bordas pelo contraste da luma, procura as duas pontas de cada uma e mistura através dela, com um ajuste para detalhes de um pixel (`fxaaSubpixel`). As linhas de debug e os passes `AfterTonemap` vêm depois, nítidos. `AntiAliasing::None` desliga, e `Sandbox --no-aa` também.
 
-**Bloom** (`RenderSettings::bloom`, ligado por padrão), como no Call of Duty: Advanced Warfare (Jimenez):
+**TAA** (`AntiAliasing::TAA`; o padrão continua FXAA): anti-aliasing temporal.
+- A cada frame, a projeção se desloca uma fração de pixel (sequência Halton 2, 3 com 8 posições, `FrameData::jitter`). As linhas de debug descontam o deslocamento e não tremem.
+- O passe forward ganha uma terceira saída, os **vetores de movimento** (`outMotion` em `nova/material.glsl`). Cada instância leva o transform do frame anterior (`InstanceData::prevModel`), que a view guarda por `DrawItem::objectKey` (a Scene usa o UUID da entidade), e a câmera leva a view-projection anterior sem jitter, já vista da origem atual. O céu se move só com a rotação da câmera. Nas malhas com esqueleto, só o movimento do objeto entra, não o dos ossos.
+- O resolve (`taa.frag`, logo depois do SSAO, em HDR) lê o histórico onde o pixel estava no frame anterior, com filtro Catmull-Rom. O movimento vem da superfície mais próxima na vizinhança 3 × 3, para que as bordas de objetos em movimento o acompanhem. O histórico é recortado pela faixa de cores da vizinhança atual (média ± desvio padrão em YCoCg), o que elimina rastros e o que reaparece atrás de objetos, e é misturado após um tonemap reversível. `taaFeedback` (0,1) é o peso de cada frame novo e cresce com a velocidade.
+- O histórico fica em duas texturas por view, usadas em alternância, e recomeça quando a view muda de tamanho ou não é desenhada num frame.
+- `DebugView::Motion` mostra os vetores de movimento. `Sandbox --taa` liga, e `--debug-view 5` mostra o movimento.
+- Sem TAA, a terceira saída fica sem textura, como a do SSAO.
+, ligado por padrão), como no Call of Duty: Advanced Warfare (Jimenez):
 - uma cadeia de imagens de metade do tamanho (`bloomLevels`, 6), cada uma com um filtro de 13 amostras da anterior; a primeira usa a média de Karis, para que pixels isolados muito brilhantes não pisquem;
 - a volta para cima soma, em cada nível, um filtro tenda 3×3 do nível menor (`bloomRadius`);
 - o resultado é misturado ao HDR no tonemap (`bloomStrength`, padrão 0,04). Sem limiar, tudo brilha um pouco, como numa lente real; `bloomThreshold` > 0 limita o efeito ao que passa desse brilho, com transição suave;
@@ -433,6 +440,6 @@ Próximos passos (a estrutura já está preparada):
 - **Renderização circular**: feita como opção de compilação (`NOVA_WRAP_RENDER_MODES`, `RenderSettings::wrapShift` / `wrapRepeat`). Falta conferir em GPU e fazer o picking ciente das cópias.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
-- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT, render graph, culling na GPU por frustum e oclusão (Hi-Z em duas fases), sombras de point lights, bloom, mistura entre cascatas, exposição automática, SSAO e FXAA (feitos). Próximos: TAA e backend D3D12.
+- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT, render graph, culling na GPU por frustum e oclusão (Hi-Z em duas fases), sombras de point lights, bloom, mistura entre cascatas, exposição automática, SSAO, FXAA e TAA (feitos). Próximo: backend D3D12.
 - Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*; modelos glTF instanciados com a árvore dos nós, sob uma raiz com o nome do arquivo).
 - Animação: dos nós, skinning (com sombras e picking na pose atual), troca e mistura de clipes, máscaras por osso, eventos e escolha do clipe pelo nome no inspetor (feitos).

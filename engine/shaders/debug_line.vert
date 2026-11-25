@@ -21,4 +21,5 @@ void main() {
     vColor = unpackUnorm4x8(v.color);
     gl_Position = pc.frame.data.viewProj * vec4(v.position + pc.offset.xyz, 1.0);
     gl_Position.z -= 2e-5 * gl_Position.w; // tiny bias: lines on surfaces win the depth test
+    gl_Position.xy -= pc.frame.data.jitter.xy * gl_Position.w; // drawn after TAA: steady, not jittered
 }

@@ -55,8 +55,12 @@ struct FrameData {
     /// @brief Per point light (4 per vector): its row in the point shadow atlas, -1 none (ray traced
     ///        shadows, or lit), -2 it casts no shadows at all.
     glm::ivec4 pointShadowSlots[kMaxPointLights / 4];
+    /// @brief Last frame's view-projection without jitter, from this frame's origin (motion vectors).
+    glm::mat4 prevViewProj;
+    glm::vec4 jitter; ///< xy = this frame's projection offset in NDC (TAA; 0 without it): viewProj includes it.
 };
-static_assert(sizeof(FrameData) == 256 + 8 * 16 + 4 * 64 + 4 * 16 + 16 + kMaxPointLights * 32 + 16 + kMaxPointLights * 4);
+static_assert(sizeof(FrameData) ==
+              256 + 8 * 16 + 4 * 64 + 4 * 16 + 16 + kMaxPointLights * 32 + 16 + kMaxPointLights * 4 + 64 + 16);
 
 /// @brief Per-draw instance data, indexed by DrawPush::instanceIndex.
 struct InstanceData {
@@ -72,8 +76,9 @@ struct InstanceData {
     glm::vec4 uvMatrix;     ///< The UV transform's 2×2 (rotation · scale), by columns: (xy) (zw).
     glm::vec4 uvOffset;     ///< xy = its offset.
     glm::uvec4 mesh;        ///< Device addresses (lo, hi): xy the vertices, zw the indices (alpha-tested shadows).
+    glm::mat4 prevModel;    ///< `model` last frame, from this frame's origin (motion vectors; = model when unknown).
 };
-static_assert(sizeof(InstanceData) == 288);
+static_assert(sizeof(InstanceData) == 352);
 
 /// @brief Push constants of the forward pass (`forward_push.glsl`).
 struct DrawPush {
@@ -195,6 +200,18 @@ struct SsaoPush {
     f32 intensity;        ///< The occlusion raised to this power.
 };
 static_assert(sizeof(SsaoPush) == 48);
+
+/// @brief Push constants of taa.frag.
+struct TaaPush {
+    u32 color;       ///< Bindless index of this frame's HDR image.
+    u32 velocity;    ///< The motion vectors (UV this frame − UV last frame).
+    u32 depth;       ///< The depth buffer.
+    u32 history;     ///< Last frame's result.
+    glm::vec2 texel; ///< 1 / size.
+    f32 feedback;    ///< How much of this frame goes in (0..1).
+    u32 mode;        ///< 0 resolve, 1 no history (this frame as is), 2 show the motion (DebugView::Motion).
+};
+static_assert(sizeof(TaaPush) == 32);
 
 /// @brief Push constants of fxaa.frag.
 struct FxaaPush {

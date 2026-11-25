@@ -49,6 +49,8 @@ struct FrameData {
     PointLight pointLights[MAX_POINT_LIGHTS];
     vec4 pointShadowParams;  // point shadow maps: x atlas (bindless), y face resolution, z near plane, w depth bias
     ivec4 pointShadowSlots[MAX_POINT_LIGHTS / 4]; // per light: its atlas row, -1 none, -2 casts no shadows
+    mat4 prevViewProj;  // last frame's view-projection without jitter, from this frame's origin (motion vectors)
+    vec4 jitter;        // xy = this frame's projection offset in NDC (TAA), already in viewProj
 };
 
 struct InstanceData {
@@ -64,7 +66,15 @@ struct InstanceData {
     vec4 uvMatrix;  // the UV transform's 2x2 by columns: (xy) (zw)
     vec4 uvOffset;  // xy = its offset
     uvec4 mesh;     // device addresses (lo, hi): xy vertices, zw indices
+    mat4 prevModel; // model last frame, from this frame's origin (motion vectors)
 };
+
+// Motion of a point between last frame and this one, in UV (this − last; both without jitter),
+// from its clip positions: `clip` this frame (jittered, as rasterized) and `prevClip` last frame.
+vec2 nova_motion(vec4 clip, vec4 prevClip, vec2 jitter) {
+    if (clip.w <= 1e-5 || prevClip.w <= 1e-5) return vec2(0.0);
+    return (clip.xy / clip.w - jitter - prevClip.xy / prevClip.w) * 0.5;
+}
 
 // A mesh UV through the material's UV transform (Material::uvScale, uvRotation, uvOffset).
 vec2 nova_materialUv(InstanceData inst, vec2 uv) { return mat2(inst.uvMatrix.xy, inst.uvMatrix.zw) * uv + inst.uvOffset.xy; }

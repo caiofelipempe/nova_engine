@@ -80,6 +80,7 @@ public:
         if (s_autoExposure) r.settings().autoExposure = true;
         if (s_noSsao) r.settings().ssao = false;
         if (s_noAa) r.settings().antiAliasing = nova::AntiAliasing::None;
+        if (s_taa) r.settings().antiAliasing = nova::AntiAliasing::TAA;
         if (s_debugView >= 0) r.settings().debugView = static_cast<nova::DebugView>(s_debugView);
 #if NOVA_WRAP_RENDER_MODES
         if (s_wrapShift >= 0) r.settings().wrapShift = static_cast<nova::WrapShift>(s_wrapShift);
@@ -105,6 +106,7 @@ public:
     static inline bool s_autoExposure = false;
     static inline bool s_noSsao = false;
     static inline bool s_noAa = false;
+    static inline bool s_taa = false;
     static inline int s_debugView = -1; // --debug-view N (nova::DebugView)
     static inline int s_quitAfterFrames = -1; // --frames N: quit after N frames (smoke tests)
     static inline std::string s_screenshot;   // --screenshot <file.png>: the last frame before quitting
@@ -482,6 +484,7 @@ int main(int argc, char** argv) {
         else if (arg == "--auto-exposure") PhysicsBench::s_autoExposure = true;
         else if (arg == "--no-ssao") PhysicsBench::s_noSsao = true;
         else if (arg == "--no-aa") PhysicsBench::s_noAa = true;
+        else if (arg == "--taa") PhysicsBench::s_taa = true;
         else if (arg == "--debug-view" && hasValue) PhysicsBench::s_debugView = std::atoi(argv[++i]);
         else if (arg == "--frames" && hasValue) PhysicsBench::s_quitAfterFrames = std::atoi(argv[++i]);
         else if (arg == "--screenshot" && hasValue) PhysicsBench::s_screenshot = argv[++i];

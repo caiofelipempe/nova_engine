@@ -99,6 +99,10 @@ struct DrawItem {
     ///        (Scene uses the entity's UUID). With it, the deformed shape casts ray-traced shadows
     ///        (a BLAS of its own, refitted every frame); 0: none (the draw casts no ray-traced shadow).
     u64 skinKey = 0;
+    /// @brief A key that stays the same from frame to frame for the same object (Scene uses the
+    ///        entity's UUID): its motion since last frame is known (TAA's motion vectors). 0: the
+    ///        draw is taken as still (only the camera's motion).
+    u64 objectKey = 0;
 };
 
 /// @brief Everything needed to draw one frame of a scene.
@@ -136,6 +140,7 @@ enum class DebugView : u32 {
     Shadows, ///< Sun visibility (white = lit).
     Albedo,  ///< Base color only.
     AmbientOcclusion, ///< Screen-space ambient occlusion (RenderSettings::ssao; white = open).
+    Motion,           ///< Motion vectors on screen (AntiAliasing::TAA; black = still).
 };
 
 /// @brief HDR → display mapping.
@@ -149,6 +154,9 @@ enum class Tonemapper : u32 {
 enum class AntiAliasing : u32 {
     None = 0, ///< Hard, stair-stepped edges.
     FXAA,     ///< Fast approximate anti-aliasing on the tonemapped image (one fullscreen pass).
+    /// @brief Temporal anti-aliasing: the projection moves by a sub-pixel amount each frame and the
+    ///        frames are blended along each object's motion (also smooths shading and SSAO noise).
+    TAA,
 };
 
 /// @brief A fullscreen pass over the HDR image, written against `nova/postprocess.glsl`.
@@ -210,6 +218,7 @@ struct RenderSettings {
     /// @brief Edge smoothing, after the tonemap (the image then goes through an RGBA8 texture).
     AntiAliasing antiAliasing = AntiAliasing::FXAA;
     f32 fxaaSubpixel = 0.75f;                    ///< FXAA: softening of single-pixel details (0 off .. 1).
+    f32 taaFeedback = 0.1f;                      ///< TAA: weight of each new frame (lower: smoother, more trailing).
     f32 exposure = 1.0f;                         ///< Linear exposure multiplier applied before tonemapping (with autoExposure: on top of it).
     /// @brief Auto exposure (eye adaptation): each view measures its image (a histogram of the
     ///        luminance, the darkest 40% and brightest 5% left out) and eases its exposure toward
@@ -346,12 +355,23 @@ private:
     rhi::BufferHandle m_exposure;
     bool m_exposureValid = false;
     f64 m_exposureTime = 0.0;
+    // TAA: two history images (written in turn), the frame it last ran on (device frame counter),
+    // the jitter sequence, and what motion vectors need: last frame's view-projection without
+    // jitter and each object's transform (by DrawItem::objectKey, from that frame's origin).
+    rhi::TextureHandle m_history[2];
+    u32 m_historyIndex = 0;
+    bool m_historyValid = false;
+    u64 m_taaFrame = ~0ull;
+    u32 m_jitterIndex = 0;
+    u64 m_motionFrame = ~0ull;
+    glm::mat4 m_prevViewProjNoJitter{1.0f};
+    std::unordered_map<u64, glm::mat4> m_prevModels, m_models;
 };
 
 /// @brief Hybrid forward renderer: rasterized PBR shading with ray-queried shadows.
 ///
 /// Each frame is a RenderGraph: `[skinned shapes] → [TLAS build] → [shadow maps] → forward (sky,
-/// opaque, see-through; HDR and its ambient share) → [SSAO] → post-process passes (HDR) → [bloom]
+/// opaque, see-through; HDR, its ambient share, motion) → [SSAO] → [TAA] → post-process passes (HDR) → [bloom]
 /// → [auto exposure] → tonemap → [FXAA] (output) → [debug lines]`, with
 /// the game's passes (addRenderPasses) at three stages. The graph moves textures between states,
 /// drops passes nothing needs and makes the transient textures (shadow atlas, post-process images).
@@ -472,6 +492,7 @@ public:
 
     static constexpr rhi::Format kHdrFormat = rhi::Format::RGBA16_FLOAT; ///< Format of the HDR color target.
     static constexpr rhi::Format kDepthFormat = rhi::Format::D32_FLOAT;  ///< Format of the depth target.
+    static constexpr rhi::Format kMotionFormat = rhi::Format::RG16_FLOAT; ///< The forward pass's motion vectors (third output).
 
 private:
     struct GpuMesh {
@@ -545,6 +566,7 @@ private:
     rhi::PipelineHandle m_exposurePipeline;   // exposure.comp: auto exposure
     rhi::PipelineHandle m_ssaoPipeline;       // ssao.frag: the occlusion (R8)
     rhi::PipelineHandle m_ssaoApplyPipeline;  // ssao.frag: applied to the image (HDR)
+    rhi::PipelineHandle m_taaPipeline;        // taa.frag: the temporal resolve (HDR)
     std::vector<rhi::BufferHandle> m_exposureReadback; // per frame in flight: the exposure chosen, read back later
     std::vector<rhi::BufferHandle> m_cullCounters; // per frame in flight: GPU culling statistics, read back later
     // Per frame in flight: what GPU culling writes (draw commands, visible lists, states, counters),
