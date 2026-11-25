@@ -333,7 +333,7 @@ Detalhes:
 
 Cada frame é um `RenderGraph` (`nova/renderer/RenderGraph.h`). Os passes declaram as texturas que leem e escrevem, e são executados na ordem em que foram adicionados:
 
-`[skinned shapes] → [TLAS build] → [shadow maps] → Forward (céu, opacos, transparentes; HDR) → pós-processos (HDR) → Tonemap (saída) → [debug lines]`
+`[skinned shapes] → [TLAS build] → [shadow maps] → Forward (céu, opacos, transparentes; HDR + parte ambiente) → [SSAO] → pós-processos (HDR) → [bloom] → [exposição automática] → Tonemap → [FXAA] (saída) → [debug lines]`
 
 Com base no que cada passe declara, o graph:
 - **descarta os passes de que nada precisa:** fica só o que alimenta uma saída (uma textura importada com estado final, ou marcada com `markOutput`) ou tem efeito colateral (`sideEffect()`: buffers, estruturas de aceleração);
@@ -376,6 +376,8 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 - precisa de `DeviceCaps::drawIndirectFirstInstance`; sem isso, tudo é desenhado sem culling;
 - `RenderStats` traz os grupos e quantas instâncias a GPU testou e achou visíveis (lido de volta alguns frames depois, sem esperar);
 - `Sandbox --no-cull` desliga todo o culling e `--no-occlusion` só o de oclusão, para comparar; o cenário **Occlusion** põe um muro na frente de uma cidade de 900 blocos (das 1802 instâncias, 82 são desenhadas).
+
+**Anti-aliasing** (`RenderSettings::antiAliasing`, FXAA por padrão): o tonemap escreve numa textura RGBA8 transitória e o FXAA (como o FXAA 3.11 de Lottes, qualidade de PC) suaviza as bordas ao escrever a saída. Ele acha as bordas pelo contraste da luma, procura as duas pontas de cada uma e mistura através dela, com um ajuste para detalhes de um pixel (`fxaaSubpixel`). As linhas de debug e os passes `AfterTonemap` vêm depois, nítidos. `AntiAliasing::None` desliga, e `Sandbox --no-aa` também.
 
 **Bloom** (`RenderSettings::bloom`, ligado por padrão), como no Call of Duty: Advanced Warfare (Jimenez):
 - uma cadeia de imagens de metade do tamanho (`bloomLevels`, 6), cada uma com um filtro de 13 amostras da anterior; a primeira usa a média de Karis, para que pixels isolados muito brilhantes não pisquem;
@@ -431,6 +433,6 @@ Próximos passos (a estrutura já está preparada):
 - **Renderização circular**: feita como opção de compilação (`NOVA_WRAP_RENDER_MODES`, `RenderSettings::wrapShift` / `wrapRepeat`). Falta conferir em GPU e fazer o picking ciente das cópias.
 - Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit) quando o pipeline de RT existir.
 - Editor: receitas para IA / servidor MCP (fase 5).
-- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT, render graph e culling na GPU por frustum e oclusão (Hi-Z em duas fases) (feitos). Próximos: backend D3D12.
+- Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT, render graph, culling na GPU por frustum e oclusão (Hi-Z em duas fases), sombras de point lights, bloom, mistura entre cascatas, exposição automática, SSAO e FXAA (feitos). Próximos: TAA e backend D3D12.
 - Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*; modelos glTF instanciados com a árvore dos nós, sob uma raiz com o nome do arquivo).
 - Animação: dos nós, skinning (com sombras e picking na pose atual), troca e mistura de clipes, máscaras por osso, eventos e escolha do clipe pelo nome no inspetor (feitos).

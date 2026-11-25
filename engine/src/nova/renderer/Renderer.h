@@ -145,6 +145,12 @@ enum class Tonemapper : u32 {
     None,     ///< Clamp only.
 };
 
+/// @brief How edges are smoothed.
+enum class AntiAliasing : u32 {
+    None = 0, ///< Hard, stair-stepped edges.
+    FXAA,     ///< Fast approximate anti-aliasing on the tonemapped image (one fullscreen pass).
+};
+
 /// @brief A fullscreen pass over the HDR image, written against `nova/postprocess.glsl`.
 ///
 /// @code
@@ -201,6 +207,9 @@ struct RenderSettings {
     bool wireframe = false;                      ///< Draw meshes as lines (needs DeviceCaps::wireframe).
     DebugView debugView = DebugView::Lit;        ///< Debug visualization.
     Tonemapper tonemapper = Tonemapper::ACES;    ///< Tonemapping operator.
+    /// @brief Edge smoothing, after the tonemap (the image then goes through an RGBA8 texture).
+    AntiAliasing antiAliasing = AntiAliasing::FXAA;
+    f32 fxaaSubpixel = 0.75f;                    ///< FXAA: softening of single-pixel details (0 off .. 1).
     f32 exposure = 1.0f;                         ///< Linear exposure multiplier applied before tonemapping (with autoExposure: on top of it).
     /// @brief Auto exposure (eye adaptation): each view measures its image (a histogram of the
     ///        luminance, the darkest 40% and brightest 5% left out) and eases its exposure toward
@@ -342,7 +351,8 @@ private:
 /// @brief Hybrid forward renderer: rasterized PBR shading with ray-queried shadows.
 ///
 /// Each frame is a RenderGraph: `[skinned shapes] → [TLAS build] → [shadow maps] → forward (sky,
-/// opaque, see-through; HDR) → post-process passes (HDR) → tonemap (output) → [debug lines]`, with
+/// opaque, see-through; HDR and its ambient share) → [SSAO] → post-process passes (HDR) → [bloom]
+/// → [auto exposure] → tonemap → [FXAA] (output) → [debug lines]`, with
 /// the game's passes (addRenderPasses) at three stages. The graph moves textures between states,
 /// drops passes nothing needs and makes the transient textures (shadow atlas, post-process images).
 ///
@@ -577,6 +587,9 @@ private:
     u64 m_frameNumber = 0;
     void releaseSkinnedShape(SkinnedShape& shape);
     std::unordered_map<rhi::Format, rhi::PipelineHandle> m_tonemapPipelines;
+    std::unordered_map<rhi::Format, rhi::PipelineHandle> m_fxaaPipelines; // by output format
+    rhi::ShaderDesc m_fxaaFS;
+    rhi::PipelineHandle fxaaPipeline(rhi::Format format);
     rhi::ShaderDesc m_fullscreenVS;
     rhi::ShaderDesc m_tonemapFS;
     rhi::ShaderDesc m_lineVS;

@@ -155,6 +155,7 @@ nova_add_shader(NovaShaders ${SH}/debug_line.frag DEPENDS ${NOVA_SHADER_INCLUDES
 nova_add_shader(NovaShaders ${SH}/hiz.comp        DEPENDS ${NOVA_SHADER_INCLUDES}) # Hi-Z pyramid (occlusion culling)
 nova_add_shader(NovaShaders ${SH}/exposure.comp   DEPENDS ${NOVA_SHADER_INCLUDES}) # auto exposure
 nova_add_shader(NovaShaders ${SH}/ssao.frag       DEPENDS ${NOVA_SHADER_INCLUDES}) # screen-space ambient occlusion
+nova_add_shader(NovaShaders ${SH}/fxaa.frag       DEPENDS ${NOVA_SHADER_INCLUDES}) # anti-aliasing
 nova_add_shader(NovaShaders ${SH}/cull.comp       DEPENDS ${NOVA_SHADER_INCLUDES}) # GPU frustum culling
 nova_add_shader(NovaShaders ${SH}/shadow.frag     DEPENDS ${NOVA_SHADER_INCLUDES}) # cut-out shadow casters
 nova_add_shader(NovaShaders ${SH}/skin.comp       DEPENDS ${NOVA_SHADER_INCLUDES}) # skinned meshes for ray tracing

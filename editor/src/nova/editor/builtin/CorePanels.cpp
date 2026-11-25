@@ -462,6 +462,10 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     const char* tms[] = {"ACES", "Reinhard", "None"};
     int tm = static_cast<int>(s.tonemapper);
     if (ImGui::Combo("Tonemapper", &tm, tms, 3)) s.tonemapper = static_cast<Tonemapper>(tm);
+    const char* aas[] = {"None", "FXAA"};
+    int aa = static_cast<int>(s.antiAliasing);
+    if (ImGui::Combo("Anti-aliasing", &aa, aas, 2)) s.antiAliasing = static_cast<AntiAliasing>(aa);
+    if (s.antiAliasing == AntiAliasing::FXAA) ImGui::SliderFloat("FXAA sub-pixel", &s.fxaaSubpixel, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("Exposure", &s.exposure, 0.05f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
     if (ImGui::TreeNode("Auto exposure")) {
         ImGui::Checkbox("Enabled", &s.autoExposure);

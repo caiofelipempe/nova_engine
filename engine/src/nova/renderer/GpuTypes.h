@@ -196,6 +196,16 @@ struct SsaoPush {
 };
 static_assert(sizeof(SsaoPush) == 48);
 
+/// @brief Push constants of fxaa.frag.
+struct FxaaPush {
+    u32 source;           ///< Bindless index of the tonemapped image.
+    f32 subpix;           ///< Sub-pixel blending (0 off .. 1 soft).
+    f32 edgeThreshold;    ///< Contrast needed, relative to the brightest neighbor.
+    f32 edgeThresholdMin; ///< Contrast needed in dark areas.
+    glm::vec2 texel;      ///< 1 / size.
+};
+static_assert(sizeof(FxaaPush) == 24);
+
 /// @brief Push constants of bloom.frag.
 struct BloomPush {
     u32 source, lower, mode; ///< mode: 0 first downsample, 1 downsample, 2 upsample.

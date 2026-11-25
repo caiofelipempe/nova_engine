@@ -189,6 +189,7 @@ Renderer::~Renderer() {
                              m_ssaoPipeline, m_ssaoApplyPipeline})
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
+    for (auto& [fmt, p] : m_fxaaPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
     for (auto& [id, mp] : m_materialPipelines)
         for (int k = 0; k < 4; ++k)
@@ -206,6 +207,7 @@ Renderer::~Renderer() {
 void Renderer::createPipelines() {
     m_fullscreenVS = loadShader("fullscreen.vert");
     m_tonemapFS = loadShader("tonemap.frag");
+    m_fxaaFS = loadShader("fxaa.frag");
     m_lineVS = loadShader("debug_line.vert");
     m_lineFS = loadShader("debug_line.frag");
     ShaderDesc forwardVS = loadShader("forward.vert");
@@ -319,6 +321,22 @@ PipelineHandle Renderer::tonemapPipeline(Format format) {
     desc.debugName = "pipeline.tonemap";
     PipelineHandle p = m_device.createGraphicsPipeline(desc);
     m_tonemapPipelines.emplace(format, p);
+    return p;
+}
+
+PipelineHandle Renderer::fxaaPipeline(Format format) {
+    auto it = m_fxaaPipelines.find(format);
+    if (it != m_fxaaPipelines.end()) return it->second;
+    GraphicsPipelineDesc desc;
+    desc.vertex = m_fullscreenVS;
+    desc.fragment = m_fxaaFS;
+    desc.colorFormats = {format};
+    desc.cullMode = CullMode::None;
+    desc.depthTest = false;
+    desc.depthWrite = false;
+    desc.debugName = "pipeline.fxaa";
+    PipelineHandle p = m_device.createGraphicsPipeline(desc);
+    m_fxaaPipelines.emplace(format, p);
     return p;
 }
 
@@ -1506,16 +1524,19 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         }
     }
 
-    // ---- tonemap
+    // ---- tonemap (into an RGBA8 transient when FXAA follows), then FXAA into the output
+    const bool fxaa = s.antiAliasing == AntiAliasing::FXAA;
+    const RGTexture tonemapTarget =
+        fxaa ? graph.create({extent.width, extent.height, Format::RGBA8_UNORM, "tonemapped"}) : outputTex;
     {
         const RGTexture source = frame.color;
-        const PipelineHandle tonemap = tonemapPipeline(m_device.backbufferFormat());
+        const PipelineHandle tonemap = tonemapPipeline(fxaa ? Format::RGBA8_UNORM : m_device.backbufferFormat());
         const f32 exposure = s.exposure, bloomStrength = std::clamp(s.bloomStrength, 0.0f, 1.0f);
         const u32 op = static_cast<u32>(s.tonemapper);
         RenderPassBuilder tm = graph.addPass("Tonemap");
         tm.sample(source);
         if (bloomTex) tm.sample(bloomTex);
-        tm.color(outputTex, LoadOp::DontCare)
+        tm.color(tonemapTarget, LoadOp::DontCare)
             .execute([tonemap, source, exposure, op, bloomTex, bloomStrength, exposureAddress](RenderPassContext& ctx) {
                 ctx.cmd.bindPipeline(tonemap);
                 gpu::TonemapPush push{ctx.bindlessIndex(source), exposure, op, bloomTex ? ctx.bindlessIndex(bloomTex) : ~0u,
@@ -1524,6 +1545,18 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
                 ctx.cmd.pushConstants(push);
                 ctx.cmd.draw(3);
             });
+    }
+    if (fxaa) {
+        const PipelineHandle pipeline = fxaaPipeline(m_device.backbufferFormat());
+        const gpu::FxaaPush push{0u, std::clamp(s.fxaaSubpixel, 0.0f, 1.0f), 0.166f, 0.0833f,
+                                 glm::vec2(1.0f / f32(extent.width), 1.0f / f32(extent.height))};
+        graph.addPass("FXAA").sample(tonemapTarget).color(outputTex, LoadOp::DontCare).execute([=](RenderPassContext& ctx) {
+            gpu::FxaaPush p = push;
+            p.source = ctx.bindlessIndex(tonemapTarget);
+            ctx.cmd.bindPipeline(pipeline);
+            ctx.cmd.pushConstants(p);
+            ctx.cmd.draw(3);
+        });
     }
     frame.color = outputTex;
     runGraphCallbacks(RenderStage::AfterTonemap, frame);
