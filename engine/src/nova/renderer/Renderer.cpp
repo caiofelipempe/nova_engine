@@ -1743,6 +1743,13 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         sceneColor = accumulation;
     }
 
+    // ---- the game's passes before TAA (RenderStage::BeforeTaa): TAA averages their noise
+    {
+        RenderGraphFrame early{graph, scene, extent, sceneColor, depthTex, frameAddress, builtTlas, instAlloc.gpu};
+        runGraphCallbacks(RenderStage::BeforeTaa, early);
+        sceneColor = early.color;
+    }
+
     // ---- TAA: this frame blended into the view's history (two images, written in turn); the
     // result is the image from here on (post-processing, bloom and the tonemap read it)
     if (taa) {

@@ -335,14 +335,14 @@ Detalhes:
 
 Cada frame é um `RenderGraph` (`nova/renderer/RenderGraph.h`). Os passes declaram as texturas que leem e escrevem, e são executados na ordem em que foram adicionados:
 
-`[skinned shapes] → [TLAS build] → [shadow maps] → Forward (céu, opacos, transparentes; HDR + parte ambiente + movimento) → [SSAO] → [visualização traçada ou path tracer] → [TAA] → passes AfterOpaque → pós-processos (HDR) → passes BeforeTonemap → [bloom] → [exposição automática] → Tonemap → [FXAA] (saída) → passes AfterTonemap → [debug lines]`
+`[skinned shapes] → [TLAS build] → [shadow maps] → Forward (céu, opacos, transparentes; HDR + parte ambiente + movimento) → [SSAO] → [visualização traçada ou path tracer] → passes BeforeTaa → [TAA] → passes AfterOpaque → pós-processos (HDR) → passes BeforeTonemap → [bloom] → [exposição automática] → Tonemap → [FXAA] (saída) → passes AfterTonemap → [debug lines]`
 
 Com base no que cada passe declara, o graph:
 - **descarta os passes de que nada precisa:** fica só o que alimenta uma saída (uma textura importada com estado final, ou marcada com `markOutput`) ou tem efeito colateral (`sideEffect()`: buffers, estruturas de aceleração);
 - **faz as transições:** attachments, `sample` (ShaderRead), `storage` (UnorderedAccess) e o estado final das importadas;
 - **cria as texturas transitórias** (`create`) a partir de um pool mantido entre frames. Transitórias do mesmo tamanho e formato cujos tempos de vida não se sobrepõem dividem a mesma textura. Por isso uma cadeia de pós-processos usa só duas, e o atlas de sombras não existe quando não é usado.
 
-O jogo adiciona passes em três pontos (`RenderStage::AfterOpaque`, `BeforeTonemap`, `AfterTonemap`). Todos vêm depois do TAA, que não suaviza o que eles desenham: um passe do jogo com ruído deve usar um padrão fixo.
+O jogo adiciona passes em quatro pontos: `RenderStage::BeforeTaa` (depois do forward, do SSAO e das visualizações traçadas, antes do TAA), `AfterOpaque`, `BeforeTonemap` e `AfterTonemap`. O TAA média o que é desenhado em `BeforeTaa`, então ali um passe com ruído pode girar o padrão a cada frame; nos outros três estágios, use um padrão fixo.
 
 ```cpp
 #include <nova/renderer/GpuTypes.h> // gpu::PostProcessPush
@@ -451,14 +451,14 @@ ao.rayGen = renderer().shaders().load("rtao.rgen");
 ao.miss = {renderer().shaders().load("rtao.rmiss")};
 ao.hitGroups = {{{}, renderer().shaders().load("rt_alpha.rahit", {.source = nova::ShaderSource::Precompiled})}};
 renderer().settings().rayTracingScene = true;
-renderer().addRenderPasses(nova::RenderStage::BeforeTonemap, [&](nova::RenderGraphFrame& f) {
+renderer().addRenderPasses(nova::RenderStage::BeforeTaa, [&](nova::RenderGraphFrame& f) {
     auto pipeline = renderer().rayTracingPipeline(ao);
     if (!pipeline || !f.tlas) return;
     // f.graph.addPass(...).sample(f.color).storage(out).execute(... ctx.cmd.traceRays(w, h) ...)
 });
 ```
 
-  O Sandbox tem um exemplo completo: AO traçado por raios com shaders próprios (`sandbox/shaders/rtao.*`), ligado com a tecla **O**, o checkbox "RT AO" ou `--rtao`.
+  O Sandbox tem um exemplo completo: AO traçado por raios com shaders próprios (`sandbox/shaders/rtao.*`), em `BeforeTaa` (com TAA, o ruído dele some), ligado com a tecla **O**, o checkbox "RT AO" ou `--rtao`.
 
 - **reflexos e AO por ray query no passe forward** (na variante `rq` dos materiais, com as sombras traçadas ligadas):
   - `RenderSettings::rayTracedReflections` (ligado por padrão) lança um raio por pixel em torno da direção do espelho, espalhado pela rugosidade (um meio-vetor GGX; o TAA média o ruído).

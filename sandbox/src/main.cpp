@@ -330,7 +330,7 @@ private:
 
     // Ray traced ambient occlusion from the game's own ray tracing shaders (shaders/rtao.rgen and
     // .rmiss, built by nova_add_game_shaders; the engine's rt_alpha.rahit lets rays through cut-outs):
-    // a pass before the tonemap reads depth and the image and writes the image darkened.
+    // a pass before TAA reads depth and the image and writes the image darkened.
     void setupRayTracedAo() {
         nova::Renderer& r = renderer();
         if (!r.rayTracingPipelineAvailable()) return;
@@ -339,15 +339,17 @@ private:
         m_rtaoShaders.hitGroups = {{{}, r.shaders().load("rt_alpha.rahit", {.source = nova::ShaderSource::Precompiled})}};
         if (s_rtao) m_rtao = true;
         r.settings().rayTracingScene = m_rtao;
-        r.addRenderPasses(nova::RenderStage::BeforeTonemap, [this](nova::RenderGraphFrame& f) {
+        r.addRenderPasses(nova::RenderStage::BeforeTaa, [this](nova::RenderGraphFrame& f) {
             if (!m_rtao || !f.tlas) return;
             const nova::rhi::PipelineHandle pipeline = renderer().rayTracingPipeline(m_rtaoShaders);
             if (!pipeline) return;
             const nova::RGTexture source = f.color, depth = f.depth;
             const nova::RGTexture out = f.graph.create({f.extent.width, f.extent.height, nova::Renderer::kHdrFormat, "rt ao"});
             nova::gpu::RtPush push{f.frameData, f.instances, f.tlas, 0u, 0.02f};
-            // A fixed noise pattern: this stage runs after TAA, so a pattern changing each frame would flicker.
-            push.sampleIndex = 0;
+            // Before TAA: a noise pattern that turns every frame is averaged by it (fixed without TAA).
+            push.sampleIndex = renderer().settings().antiAliasing == nova::AntiAliasing::TAA
+                                   ? static_cast<nova::u32>(app().device().frameCounter())
+                                   : 0u;
             push.params = glm::vec4(1.0f, 8.0f, 0.8f, 0.0f); // radius (m), rays per pixel, strength
             const nova::Extent2D size = f.extent;
             f.graph.addPass("RT AO (game)").sample(source).sample(depth).storage(out).execute([=, this](nova::RenderPassContext& ctx) {

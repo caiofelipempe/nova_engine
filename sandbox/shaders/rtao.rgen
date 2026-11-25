@@ -1,6 +1,6 @@
 #version 460
 // Sandbox: ambient occlusion traced by a GAME ray tracing pipeline (Renderer::rayTracingPipeline),
-// added before the tonemap with Renderer::addRenderPasses. Per pixel: the surface from the depth
+// added before TAA with Renderer::addRenderPasses (RenderStage::BeforeTaa). Per pixel: the surface from the depth
 // buffer (position, and a normal from the neighbors), a few short rays in its hemisphere through
 // the frame's TLAS, and the image darkened by the share of them that hit something.
 //   pc.inputs[0] = depth (sampled), pc.inputs[1] = the HDR image (sampled), pc.outputImage = result

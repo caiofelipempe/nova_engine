@@ -324,6 +324,10 @@ enum class RenderStage : u32 {
     AfterOpaque,   ///< After the forward pass and what refines it (SSAO, the traced views, TAA), before post-processing (HDR).
     BeforeTonemap, ///< After RenderSettings::postProcess, before the tonemap (HDR).
     AfterTonemap,  ///< After the tonemap, on the output (display format): overlays. Draw with LoadOp::Load.
+    /// @brief After the forward pass, SSAO and the traced views, before TAA (HDR): what passes add
+    ///        here is averaged by TAA, so a noise pattern that turns every frame gets smoothed.
+    ///        (Comes first in the frame; listed last to keep the values of the others.)
+    BeforeTaa,
 };
 
 /// @brief What a render pass callback gets: the frame's graph and its textures.
@@ -431,7 +435,7 @@ private:
 ///        AO where the GPU has ray tracing, and shadow maps where it does not.
 ///
 /// Each frame is a RenderGraph: `[skinned shapes] → [TLAS build] → [shadow maps] → forward (sky,
-/// opaque, see-through; HDR, its ambient share, motion) → [SSAO] → [ray/path traced view] → [TAA]
+/// opaque, see-through; HDR, its ambient share, motion) → [SSAO] → [ray/path traced view] → BeforeTaa passes → [TAA]
 /// → AfterOpaque passes → post-process passes (HDR) → BeforeTonemap passes → [bloom] → [auto
 /// exposure] → tonemap → [FXAA] (output) → AfterTonemap passes → [debug lines]`. The graph moves
 /// textures between states, drops passes nothing needs and makes the transient textures (shadow
