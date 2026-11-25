@@ -438,10 +438,26 @@ Já implementado:
   - A média fica num RGBA32F por view e recomeça quando muda algo que ela vê: câmera, objetos, materiais, ossos, luzes, céu ou opções (uma chave FNV de tudo isso). Ela para em `pathTracerMaxSamples` (4096), e `RenderStats::pathSamples` traz a contagem.
   - Converge quando a cena está parada; com física rodando, recomeça a cada frame. O TAA não se aplica a essa visualização.
 
+- **shaders de RT do jogo:** `.rgen`, `.rmiss`, `.rchit` e `.rahit` vêm da `ShaderLibrary`, compilados em runtime com recarga a quente, ou pré-compilados com `nova_add_game_shaders`. `Renderer::rayTracingPipeline(RayTracingShaders)` monta o pipeline e a shader binding table, guarda em cache e reconstrói quando algum shader recarrega. Os passes do jogo (`addRenderPasses`) recebem `RenderGraphFrame::tlas` e `instances`, e o push padrão (`gpu::RtPush`, em `nova/raytracing.glsl`) tem `inputs[4]` (índices bindless) e `params` livres para o jogo. `RenderSettings::rayTracingScene` constrói a TLAS mesmo quando a engine não traça nada. O `rt_alpha.rahit` e o `rt_shadow.rmiss` da engine podem ser reaproveitados como shaders pré-compilados.
+
+```cpp
+nova::RayTracingShaders ao;
+ao.rayGen = renderer().shaders().load("rtao.rgen");
+ao.miss = {renderer().shaders().load("rtao.rmiss")};
+ao.hitGroups = {{{}, renderer().shaders().load("rt_alpha.rahit", {.source = nova::ShaderSource::Precompiled})}};
+renderer().settings().rayTracingScene = true;
+renderer().addRenderPasses(nova::RenderStage::BeforeTonemap, [&](nova::RenderGraphFrame& f) {
+    auto pipeline = renderer().rayTracingPipeline(ao);
+    if (!pipeline || !f.tlas) return;
+    // f.graph.addPass(...).sample(f.color).storage(out).execute(... ctx.cmd.traceRays(w, h) ...)
+});
+```
+
+  O Sandbox tem um exemplo completo: AO traçado por raios com shaders próprios (`sandbox/shaders/rtao.*`), ligado com a tecla **O**, o checkbox "RT AO" ou `--rtao`.
+
 Próximos passos:
-1. Shaders de RT do jogo (raygen/miss/hit pela `ShaderLibrary`).
-2. Reflexos e AO por ray query no mesmo pass forward.
-3. Compactação de BLAS e refit da TLAS para cenas grandes.
+1. Reflexos e AO por ray query no mesmo pass forward.
+2. Compactação de BLAS e refit da TLAS para cenas grandes.
 
 ## Roadmap geral
 
@@ -455,7 +471,7 @@ Próximos passos:
 - **Mundo grande contínuo por blocos** (planejado): blocos de 4096 m, dormência e carregamento com histerese (carrega no 5×5, descarrega fora do 7×7) e eventos de bloco para o jogo. As posições já são `int64`.
 - Modelo anterior (substituído): **Mundos grandes** com posições globais inteiras (ponto fixo em `int64`, escala ajustável, bordas com volta ou barreira). O histórico está em [docs/WORLD_SPACE.md](docs/WORLD_SPACE.md).
 - **Renderização circular**: feita como opção de compilação (`NOVA_WRAP_RENDER_MODES`, `RenderSettings::wrapShift` / `wrapRepeat`). Falta conferir em GPU e fazer o picking ciente das cópias.
-- Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, e shaders de RT do jogo (raygen/miss/hit; o pipeline de RT já existe no RHI).
+- Shaders do jogo, próximos passos: vertex shaders de material (deslocamento de vértices), materiais transparentes/blend, profundidade no pós-processamento, passes compute dentro do frame do renderer, (shaders de RT do jogo: feitos, `Renderer::rayTracingPipeline`).
 - Editor: receitas para IA / servidor MCP (fase 5).
 - Renderer: materiais completos (feitos: mapas de normal, metálico/rugosidade, oclusão e emissivo, recorte e transparência por alfa, dois lados). Shadow maps em cascata como fallback sem RT, render graph, culling na GPU por frustum e oclusão (Hi-Z em duas fases), sombras de point lights, bloom, mistura entre cascatas, exposição automática, SSAO, FXAA e TAA (feitos). Próximo: backend D3D12.
 - Cena: hierarquia de transforms (feita: `ParentComponent`, `Entity::setParent`, árvore na *Hierarchy*; modelos glTF instanciados com a árvore dos nós, sob uma raiz com o nome do arquivo).

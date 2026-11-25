@@ -248,6 +248,9 @@ struct RenderSettings {
     bool ssao = true;
     f32 ssaoRadius = 0.5f;    ///< How far around a point is looked at (m).
     f32 ssaoIntensity = 1.5f; ///< How dark it gets (the occlusion raised to this power).
+    /// @brief Build the ray tracing scene (TLAS) every frame even when nothing of the engine traces
+    ///        it, for the game's ray tracing passes (RenderGraphFrame::tlas). Needs ray tracing.
+    bool rayTracingScene = false;
     u32 pathTracerBounces = 4;      ///< DebugView::PathTraced: bounces after the first hit (0: direct light only).
     u32 pathTracerMaxSamples = 4096; ///< DebugView::PathTraced: it stops adding paths after this many per pixel.
     f32 shadowBias = 0.02f;                      ///< Shadow ray origin offset along the normal (world units).
@@ -318,6 +321,26 @@ struct RenderGraphFrame {
     RGTexture color;
     RGTexture depth;          ///< The forward pass's depth (Renderer::kDepthFormat).
     u64 frameData = 0;        ///< Device address of the frame's FrameData (`nova/common.glsl`).
+    /// @brief The frame's TLAS (one instance per drawn object, instanceCustomIndex = its InstanceData),
+    ///        0 when none was built (RenderSettings::rayTracingScene).
+    u64 tlas = 0;
+    u64 instances = 0;        ///< Device address of the frame's InstanceData array.
+};
+
+/// @brief One hit group of a game ray tracing pipeline (Renderer::rayTracingPipeline).
+struct RayTracingHitGroup {
+    ShaderHandle closestHit; ///< `.rchit` (may be invalid: none).
+    ShaderHandle anyHit;     ///< `.rahit` (may be invalid: none).
+};
+
+/// @brief The shaders of a game ray tracing pipeline, from Renderer::shaders(). The engine's own
+///        `rt_alpha.rahit` (cut-outs let rays through) and `rt_shadow.rmiss` load as precompiled
+///        shaders, to reuse.
+struct RayTracingShaders {
+    ShaderHandle rayGen;                     ///< `.rgen`.
+    std::vector<ShaderHandle> miss;          ///< `.rmiss`, by miss index.
+    std::vector<RayTracingHitGroup> hitGroups; ///< By SBT record offset (TLAS instances use offset 0).
+    u32 maxRecursionDepth = 1;               ///< Deepest nesting of traceRayEXT.
 };
 
 /// @brief Adds passes to each frame's graph (Renderer::addRenderPasses).
@@ -459,6 +482,12 @@ public:
     ///        and rebuilt after the shader reloads: for passes added with addRenderPasses().
     /// @return Invalid handle while the shader is not ready. Fetch it every frame.
     rhi::PipelineHandle postProcessPipeline(ShaderHandle shader);
+    /// @brief Ray tracing pipeline (and shader binding table) from game shaders, cached and rebuilt
+    ///        after any of them reloads: for passes added with addRenderPasses() that call
+    ///        CommandList::traceRays with `nova/raytracing.glsl`'s push (gpu::RtPush).
+    /// @return Invalid handle without rayTracingPipelineAvailable() or while a shader is not ready.
+    ///         Fetch it every frame.
+    rhi::PipelineHandle rayTracingPipeline(const RayTracingShaders& shaders);
     /// @brief True if `shader` currently has a working material pipeline (false: drawn with the default).
     bool materialReady(ShaderHandle shader) const { return m_shaders.ready(shader); }
     /// @}
@@ -644,6 +673,11 @@ private:
     std::unordered_map<u32, MaterialPipelines> m_materialPipelines; // key: ShaderHandle::id
     std::unordered_map<u32, VersionedPipeline> m_postPipelines;     // key: ShaderHandle::id
     std::unordered_map<u32, VersionedPipeline> m_computePipelines;  // key: ShaderHandle::id
+    struct GameRtPipeline {
+        std::vector<u32> versions; // of every shader, in the key's order
+        rhi::PipelineHandle pipeline;
+    };
+    std::unordered_map<std::string, GameRtPipeline> m_rtGamePipelines; // key: the shader ids and recursion depth
     void expandDraws(const RenderScene& scene, const glm::mat4& viewProj);
 #if NOVA_WRAP_RENDER_MODES
     WrapShift wrapMode() const;

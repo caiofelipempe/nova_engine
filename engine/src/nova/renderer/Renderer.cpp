@@ -220,6 +220,8 @@ Renderer::~Renderer() {
     for (auto& variants : m_defaultVariants)
         for (int k = 1; k < 4; ++k) // [0] are the forward pipelines, destroyed above
             if (variants[k]) m_device.destroyPipeline(variants[k]);
+    for (auto& [key, gp] : m_rtGamePipelines)
+        if (gp.pipeline) m_device.destroyPipeline(gp.pipeline);
     for (auto* map : {&m_postPipelines, &m_computePipelines})
         for (auto& [id, vp] : *map)
             if (vp.pipeline) m_device.destroyPipeline(vp.pipeline);
@@ -566,6 +568,43 @@ PipelineHandle Renderer::postProcessPipeline(ShaderHandle shader) {
     return rebuild(vp, shader, &desc) ? vp.pipeline : PipelineHandle{};
 }
 
+PipelineHandle Renderer::rayTracingPipeline(const RayTracingShaders& shaders) {
+    if (!m_device.caps().rayTracingPipeline) return {};
+    // Every shader in a fixed order (invalid optional ones as such), for the key and the versions.
+    std::vector<ShaderHandle> all{shaders.rayGen};
+    for (ShaderHandle m : shaders.miss) all.push_back(m);
+    for (const RayTracingHitGroup& g : shaders.hitGroups) {
+        all.push_back(g.closestHit);
+        all.push_back(g.anyHit);
+    }
+    std::string key = std::to_string(shaders.maxRecursionDepth) + ":" + std::to_string(shaders.miss.size()) + ":";
+    std::vector<u32> versions;
+    for (ShaderHandle h : all) {
+        key += std::to_string(h.id) + ",";
+        if (!h) { // an optional shader left out
+            versions.push_back(0);
+            continue;
+        }
+        if (!m_shaders.ready(h)) return {}; // not compiled (yet)
+        versions.push_back(m_shaders.version(h));
+    }
+    if (!m_shaders.ready(shaders.rayGen)) return {};
+    GameRtPipeline& entry = m_rtGamePipelines[key];
+    if (entry.pipeline && entry.versions == versions) return entry.pipeline;
+    if (entry.pipeline) m_device.destroyPipeline(entry.pipeline); // deferred: frames in flight keep it
+    auto descOf = [this](ShaderHandle h) { return h ? m_shaders.desc(h) : ShaderDesc{}; };
+    RayTracingPipelineDesc desc;
+    desc.rayGen = descOf(shaders.rayGen);
+    for (ShaderHandle m : shaders.miss) desc.miss.push_back(descOf(m));
+    for (const RayTracingHitGroup& g : shaders.hitGroups) desc.hitGroups.push_back({descOf(g.closestHit), descOf(g.anyHit)});
+    desc.maxRecursionDepth = shaders.maxRecursionDepth;
+    const std::string name = m_shaders.path(shaders.rayGen).filename().string();
+    desc.debugName = name.c_str();
+    entry.pipeline = m_device.createRayTracingPipeline(desc);
+    entry.versions = std::move(versions);
+    return entry.pipeline;
+}
+
 PipelineHandle Renderer::computePipeline(ShaderHandle shader) {
     if (!m_shaders.ready(shader) || m_shaders.stage(shader) != ShaderStage::Compute) return {};
     VersionedPipeline& vp = m_computePipelines[shader.id];
@@ -883,7 +922,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     // The ray traced reference view traces the TLAS too (built for it even without ray-traced shadows).
     const bool rtView = s.debugView == DebugView::RayTraced && m_rtPipeline && !m_tlas.empty();
     const bool ptView = s.debugView == DebugView::PathTraced && m_ptPipeline && !m_tlas.empty();
-    const bool buildTlas = useRt || rtView || ptView;
+    const bool buildTlas = useRt || rtView || ptView || (s.rayTracingScene && !m_tlas.empty()); // the game's passes too
 
     // GPU culling statistics, counted by the GPU the last time this frame slot ran (it has finished).
     if (!m_cullCountersRead && !m_cullCounters.empty()) {
@@ -1627,7 +1666,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         view.m_taaFrame = frameCounter;
     }
 
-    RenderGraphFrame frame{graph, scene, extent, sceneColor, depthTex, frameAddress};
+    RenderGraphFrame frame{graph, scene, extent, sceneColor, depthTex, frameAddress, builtTlas, instAlloc.gpu};
     runGraphCallbacks(RenderStage::AfterOpaque, frame);
 
     // ---- post-process: each pass reads the image so far and writes a new transient one (the

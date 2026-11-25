@@ -212,8 +212,11 @@ struct RtPush {
     f32 bias;         ///< Secondary rays start this far off the surface (m).
     u32 sampleIndex = 0; ///< Path tracer: samples already in the image (0: start over).
     u32 bounces = 0;     ///< Path tracer: bounces after the first hit.
+    u32 inputs[4] = {};  ///< Game shaders: free bindless indices (textures, images) they read.
+    u32 _pad[2] = {};
+    glm::vec4 params{0.0f}; ///< Game shaders: free parameters.
 };
-static_assert(sizeof(RtPush) == 40);
+static_assert(sizeof(RtPush) == 80 && offsetof(RtPush, params) == 64);
 
 /// @brief Push constants of taa.frag.
 struct TaaPush {

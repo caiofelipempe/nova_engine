@@ -4,6 +4,7 @@
 // into it and watch colliders and contacts. Each scenario prints its own measurements, and
 // "Check determinism" runs the scenario twice in hidden scenes and compares the state hashes.
 #include <nova/Nova.h>
+#include <nova/renderer/GpuTypes.h> // gpu::RtPush (the game's ray tracing pass)
 
 #include "Scenarios.h"
 #include "Shapes.h"
@@ -82,6 +83,7 @@ public:
         if (s_noAa) r.settings().antiAliasing = nova::AntiAliasing::None;
         if (s_taa) r.settings().antiAliasing = nova::AntiAliasing::TAA;
         if (s_paused) m_paused = true;
+        setupRayTracedAo();
         if (s_debugView >= 0) r.settings().debugView = static_cast<nova::DebugView>(s_debugView);
 #if NOVA_WRAP_RENDER_MODES
         if (s_wrapShift >= 0) r.settings().wrapShift = static_cast<nova::WrapShift>(s_wrapShift);
@@ -109,6 +111,7 @@ public:
     static inline bool s_noAa = false;
     static inline bool s_taa = false;
     static inline bool s_paused = false; // --paused: the simulation starts paused
+    static inline bool s_rtao = false;   // --rtao: ray traced AO from the game's shaders
     static inline int s_debugView = -1; // --debug-view N (nova::DebugView)
     static inline int s_quitAfterFrames = -1; // --frames N: quit after N frames (smoke tests)
     static inline std::string s_screenshot;   // --screenshot <file.png>: the last frame before quitting
@@ -159,6 +162,10 @@ public:
             if (Input::isKeyPressed(Key::N)) m_paused = m_stepOnce = true;
             if (Input::isKeyPressed(Key::R)) load(m_current, true);
             if (Input::isKeyPressed(Key::C)) m_showColliders = !m_showColliders;
+            if (Input::isKeyPressed(Key::O) && renderer().rayTracingPipelineAvailable()) {
+                m_rtao = !m_rtao;
+                renderer().settings().rayTracingScene = m_rtao;
+            }
             for (int i = 0; i < std::min(10, static_cast<int>(scenarios().size())); ++i) { // keys 1..9, then 0
                 const Key key = i == 9 ? Key::D0 : static_cast<Key>(static_cast<int>(Key::D1) + i);
                 if (Input::isKeyPressed(key)) load(i, false);
@@ -213,6 +220,10 @@ public:
         if (renderer().rayTracingAvailable()) {
             ImGui::SameLine();
             ImGui::Checkbox("RT shadows", &renderer().settings().rayTracedShadows);
+        }
+        if (renderer().rayTracingPipelineAvailable()) {
+            ImGui::SameLine();
+            if (ImGui::Checkbox("RT AO (game shaders, O)", &m_rtao)) renderer().settings().rayTracingScene = m_rtao;
         }
         ImGui::SameLine();
         ImGui::Checkbox("GPU culling", &renderer().settings().gpuCulling);
@@ -283,6 +294,41 @@ private:
         m_yaw = e.y;
         if (!keep) m_orbitYaw = 0.0f, m_orbitPitch = -0.35f;
         if (simulating) scene().startSimulation();
+    }
+
+    // Ray traced ambient occlusion from the game's own ray tracing shaders (shaders/rtao.rgen and
+    // .rmiss, built by nova_add_game_shaders; the engine's rt_alpha.rahit lets rays through cut-outs):
+    // a pass before the tonemap reads depth and the image and writes the image darkened.
+    void setupRayTracedAo() {
+        nova::Renderer& r = renderer();
+        if (!r.rayTracingPipelineAvailable()) return;
+        m_rtaoShaders.rayGen = r.shaders().load("rtao.rgen");
+        m_rtaoShaders.miss = {r.shaders().load("rtao.rmiss")};
+        m_rtaoShaders.hitGroups = {{{}, r.shaders().load("rt_alpha.rahit", {.source = nova::ShaderSource::Precompiled})}};
+        if (s_rtao) m_rtao = true;
+        r.settings().rayTracingScene = m_rtao;
+        r.addRenderPasses(nova::RenderStage::BeforeTonemap, [this](nova::RenderGraphFrame& f) {
+            if (!m_rtao || !f.tlas) return;
+            const nova::rhi::PipelineHandle pipeline = renderer().rayTracingPipeline(m_rtaoShaders);
+            if (!pipeline) return;
+            const nova::RGTexture source = f.color, depth = f.depth;
+            const nova::RGTexture out = f.graph.create({f.extent.width, f.extent.height, nova::Renderer::kHdrFormat, "rt ao"});
+            nova::gpu::RtPush push{f.frameData, f.instances, f.tlas, 0u, 0.02f};
+            // A fixed noise pattern: this stage runs after TAA, so a pattern changing each frame would flicker.
+            push.sampleIndex = 0;
+            push.params = glm::vec4(1.0f, 8.0f, 0.8f, 0.0f); // radius (m), rays per pixel, strength
+            const nova::Extent2D size = f.extent;
+            f.graph.addPass("RT AO (game)").sample(source).sample(depth).storage(out).execute([=, this](nova::RenderPassContext& ctx) {
+                nova::gpu::RtPush p = push;
+                p.outputImage = app().device().storageIndex(ctx.texture(out));
+                p.inputs[0] = ctx.bindlessIndex(depth);
+                p.inputs[1] = ctx.bindlessIndex(source);
+                ctx.cmd.bindPipeline(pipeline);
+                ctx.cmd.pushConstants(p);
+                ctx.cmd.traceRays(size.width, size.height);
+            });
+            f.color = out;
+        });
     }
 
     // Player 0 flies the camera: WASD to move, hold RMB to look (yaw/pitch rebuilt in YXZ order).
@@ -482,6 +528,8 @@ private:
     bool m_showColliders = false, m_showContacts = true;
     nova::Entity m_camera;
     float m_yaw = 0.0f, m_pitch = 0.0f;           // fly camera
+    bool m_rtao = false;                           // ray traced AO (game shaders)
+    nova::RayTracingShaders m_rtaoShaders;
     int m_paceFrames = 0;                          // --frames: frame times, logged at the end
     std::vector<float> m_frameTimes;
     float m_orbitYaw = 0.0f, m_orbitPitch = -0.35f; // character camera
@@ -506,6 +554,7 @@ int main(int argc, char** argv) {
         else if (arg == "--no-aa") PhysicsBench::s_noAa = true;
         else if (arg == "--taa") PhysicsBench::s_taa = true;
         else if (arg == "--paused") PhysicsBench::s_paused = true;
+        else if (arg == "--rtao") PhysicsBench::s_rtao = true;
         else if (arg == "--debug-view" && hasValue) PhysicsBench::s_debugView = std::atoi(argv[++i]);
         else if (arg == "--frames" && hasValue) PhysicsBench::s_quitAfterFrames = std::atoi(argv[++i]);
         else if (arg == "--screenshot" && hasValue) PhysicsBench::s_screenshot = argv[++i];

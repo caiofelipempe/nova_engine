@@ -1,0 +1,63 @@
+#version 460
+// Sandbox: ambient occlusion traced by a GAME ray tracing pipeline (Renderer::rayTracingPipeline),
+// added before the tonemap with Renderer::addRenderPasses. Per pixel: the surface from the depth
+// buffer (position, and a normal from the neighbors), a few short rays in its hemisphere through
+// the frame's TLAS, and the image darkened by the share of them that hit something.
+//   pc.inputs[0] = depth (sampled), pc.inputs[1] = the HDR image (sampled), pc.outputImage = result
+//   pc.params    = (radius m, rays per pixel, strength 0..1, -), pc.sampleIndex = noise seed
+#include "nova/raytracing.glsl"
+
+layout(location = 0) rayPayloadEXT float open; // rtao.rmiss sets 1: the ray escaped
+
+float depthAt(ivec2 p) {
+    const ivec2 size = ivec2(gl_LaunchSizeEXT.xy);
+    return texelFetch(g_textures[nonuniformEXT(pc.inputs[0])], clamp(p, ivec2(0), size - 1), 0).r;
+}
+
+vec3 positionAt(ivec2 p) {
+    const vec2 ndc = (vec2(p) + 0.5) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
+    const vec4 v = pc.frame.data.invViewProj * vec4(ndc, depthAt(p), 1.0);
+    return v.xyz / v.w;
+}
+
+uint pcg(inout uint s) {
+    s = s * 747796405u + 2891336453u;
+    const uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+float random(inout uint s) { return float(pcg(s)) * (1.0 / 4294967296.0); }
+
+void main() {
+    const ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+    const vec3 color = texelFetch(g_textures[nonuniformEXT(pc.inputs[1])], pixel, 0).rgb;
+    if (depthAt(pixel) >= 1.0) { // the sky
+        imageStore(g_images[nonuniformEXT(pc.outputImage)], pixel, vec4(color, 1.0));
+        return;
+    }
+    const vec3 P = positionAt(pixel);
+    const vec3 l = positionAt(pixel - ivec2(1, 0)), r = positionAt(pixel + ivec2(1, 0));
+    const vec3 u = positionAt(pixel - ivec2(0, 1)), d = positionAt(pixel + ivec2(0, 1));
+    const vec3 dx = distance(r, P) < distance(P, l) ? r - P : P - l;
+    const vec3 dy = distance(d, P) < distance(P, u) ? d - P : P - u;
+    vec3 N = normalize(cross(dy, dx));
+    if (dot(N, pc.frame.data.cameraPos.xyz - P) < 0.0) N = -N;
+    const vec3 helper = abs(N.y) < 0.99 ? vec3(0, 1, 0) : vec3(1, 0, 0);
+    const vec3 T = normalize(cross(helper, N)), B = cross(N, T);
+
+    uint seed = (uint(pixel.x) * 1973u + uint(pixel.y) * 9277u + pc.sampleIndex * 26699u) | 1u;
+    const uint rays = max(uint(pc.params.y), 1u);
+    // Off the surface by more the farther it is (the depth buffer's precision falls with distance).
+    const vec3 origin = P + N * (pc.bias + 0.002 * distance(P, pc.frame.data.cameraPos.xyz));
+    float hits = 0.0;
+    for (uint i = 0u; i < rays; ++i) {
+        const float u1 = random(seed), u2 = random(seed);
+        const float radius = sqrt(u1), phi = 6.2831853 * u2;
+        const vec3 dir = normalize(T * (radius * cos(phi)) + B * (radius * sin(phi)) + N * sqrt(max(1.0 - u1, 0.0)));
+        open = 0.0;
+        traceRayEXT(accelerationStructureEXT(pc.tlas), gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+                    0xFF, 0, 1, 0, origin, 0.0, dir, pc.params.x, 0);
+        hits += 1.0 - open;
+    }
+    const float ao = 1.0 - hits / float(rays);
+    imageStore(g_images[nonuniformEXT(pc.outputImage)], pixel, vec4(color * mix(1.0, ao, pc.params.z), 1.0));
+}

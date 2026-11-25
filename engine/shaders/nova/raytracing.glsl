@@ -1,4 +1,6 @@
 // Ray tracing pipeline shaders (ray generation, miss, closest hit, any hit). C++: gpu::RtPush.
+// Public: game shaders include it too (Renderer::rayTracingPipeline; the push's inputs[] and
+// params are theirs; the engine's rt_alpha.rahit and rt_shadow.rmiss load as precompiled shaders).
 // The frame's TLAS has one instance per drawn object (instanceCustomIndex = its InstanceData);
 // the pipelines have two ray types: 0 = primary (hit group 0, miss 0), 1 = shadow (hit group 1,
 // miss 1): traceRayEXT(..., sbtRecordOffset = ray type, sbtRecordStride = 2, missIndex = ray type).
@@ -15,6 +17,9 @@ layout(push_constant) uniform RtPush {
     float bias;       // offset of secondary rays along the normal (m)
     uint sampleIndex; // path tracer: samples already in the image (0 = start over)
     uint bounces;     // path tracer: bounces after the first hit
+    uint inputs[4];   // game shaders: free bindless indices (textures, images)
+    uint _pad0, _pad1;
+    vec4 params;      // game shaders: free parameters
 } pc;
 
 // Bindless storage images (set 0, binding 1).
