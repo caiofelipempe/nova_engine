@@ -176,11 +176,15 @@ void CoreCommandsPlugin::onRegister(Registry& r) {
     r.menuBarWidget([](EditorContext& ctx) {
         ImGui::Separator();
         const PlayState s = ctx.playState();
+        // An ID scope of their own: the "Play" menu (the Play/... commands) is in the same menu bar,
+        // and a "Play" item here would share its ID.
+        ImGui::PushID("play_controls");
         if (s != PlayState::Play && ImGui::MenuItem(s == PlayState::Pause ? "Resume" : "Play")) ctx.play();
         if (s == PlayState::Play && ImGui::MenuItem("Pause")) ctx.pause();
         ImGui::BeginDisabled(s == PlayState::Edit);
         if (ImGui::MenuItem("Stop")) ctx.stop();
         ImGui::EndDisabled();
+        ImGui::PopID();
         const ImVec4 color = s == PlayState::Edit ? ImVec4(0.6f, 0.6f, 0.65f, 1) : ImVec4(0.4f, 0.9f, 0.5f, 1);
         ImGui::TextColored(color, "%s", s == PlayState::Edit ? "EDIT" : s == PlayState::Play ? "PLAYING" : "PAUSED");
         ImGui::Separator();

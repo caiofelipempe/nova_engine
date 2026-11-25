@@ -306,7 +306,12 @@ void EditorLayer::drawMainMenu() {
         ImGui::EndMenu();
     }
 
-    for (size_t i = 0; i < m_registry.menuBarWidgets().size(); ++i) m_registry.menuBarWidgets()[i].draw(m_context);
+    // Each widget in an ID scope of its own: its items may share labels with the menus ("Play").
+    for (size_t i = 0; i < m_registry.menuBarWidgets().size(); ++i) {
+        ImGui::PushID(static_cast<int>(i) + 0x4D42); // "MB": apart from the menus' own IDs
+        m_registry.menuBarWidgets()[i].draw(m_context);
+        ImGui::PopID();
+    }
     ImGui::EndMainMenuBar();
 }
 
