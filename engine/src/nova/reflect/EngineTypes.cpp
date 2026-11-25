@@ -53,6 +53,7 @@ void registerEngineTypes() {
         .field("uvRotation", &Material::uvRotation, {.degrees = true})
         .field("uvOffset", &Material::uvOffset, {.speed = 0.01f})
         .field("shader", &Material::shader, {.tooltip = "Game material shader (nova/material.glsl); empty = default shading"})
+        .field("vertexShader", &Material::vertexShader, {.tooltip = "Game vertex shader (nova/vertex.glsl): moves the vertices; empty = the mesh as it is"})
         .field("customParams", &Material::customParams, {.speed = 0.01f, .tooltip = "Surface::custom in the material shader"})
         .field("customTexture", &Material::customTexture, {.tooltip = "nova_customTexture(uv) in the material shader"});
 

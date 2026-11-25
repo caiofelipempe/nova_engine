@@ -224,6 +224,9 @@ Renderer::~Renderer() {
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_fxaaPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
+    for (auto& [id, cp] : m_casterPipelines)
+        for (VersionedPipeline& vp : cp.pipelines)
+            if (vp.pipeline) m_device.destroyPipeline(vp.pipeline);
     for (auto& [id, mp] : m_materialPipelines)
         for (int k = 0; k < 4; ++k)
             for (PipelineHandle p : {mp.fill[k].pipeline, mp.rq[k].pipeline})
@@ -287,7 +290,9 @@ void Renderer::createPipelines() {
         shadow.cullMode = CullMode::None; // thin and single-sided things cast too
         shadow.debugName = "pipeline.shadow";
         m_shadowPipeline = m_device.createGraphicsPipeline(shadow);
-        shadow.fragment = loadShader("shadow.frag"); // cut-out casters: discarded where transparent
+        m_shadowDesc = shadow; // objects with a material vertex shader get their own (casterPipeline)
+        m_shadowMaskFS = loadShader("shadow.frag");
+        shadow.fragment = m_shadowMaskFS; // cut-out casters: discarded where transparent
         shadow.debugName = "pipeline.shadow.mask";
         m_shadowMaskPipeline = m_device.createGraphicsPipeline(shadow);
 
@@ -564,22 +569,76 @@ PipelineHandle Renderer::defaultPipeline(bool rayQuery, u32 state) {
     return p;
 }
 
-PipelineHandle Renderer::materialPipeline(ShaderHandle shader, bool rayQuery, u32 state) {
-    if (!m_shaders.ready(shader)) return {};
+// The vertex shader a material's pipelines use: in builds with NOVA_WRAP_RENDER_MODES its variant
+// compiled with that define (as the engine's forward.vert), so the seams are cut the same way.
+ShaderHandle Renderer::vertexShaderVariant(ShaderHandle vs) {
+    if (!vs || !m_shaders.valid(vs)) return {};
+#if NOVA_WRAP_RENDER_MODES
+    auto it = m_wrapVertexShaders.find(vs.id);
+    if (it == m_wrapVertexShaders.end())
+        it = m_wrapVertexShaders.emplace(vs.id, m_shaders.variant(vs, {"NOVA_WRAP_RENDER_MODES=1"}, "wrap")).first;
+    return it->second;
+#else
+    return vs;
+#endif
+}
+
+// A material's pipeline: its fragment shader (or the engine's) and its vertex shader (or the
+// engine's), for a pipeline state; rebuilt when either shader reloads.
+PipelineHandle Renderer::materialPipeline(ShaderHandle shader, ShaderHandle vertexShader, bool rayQuery, u32 state) {
+    if (shader && !m_shaders.ready(shader)) return {};
+    const ShaderHandle vs = vertexShader ? vertexShaderVariant(vertexShader) : ShaderHandle{};
+    const bool customVertex = vs && m_shaders.ready(vs); // not compiled (yet): the engine's
+    if (!shader && !customVertex) return {};             // nothing of the game's: the default pipeline
     state &= 3u;
-    MaterialPipelines& mp = m_materialPipelines[shader.id];
-    const GraphicsPipelineDesc desc = withState(m_forwardDesc, state);
-    if (rayQuery) {
-        if (!mp.rqRequested) { // compiled on first use: games without RT never pay for it
+    const u64 key = u64(shader.id) | (u64(customVertex ? vs.id : ~0u) << 32);
+    MaterialPipelines& mp = m_materialPipelines[key];
+    GraphicsPipelineDesc desc = withState(m_forwardDesc, state);
+    if (customVertex) desc.vertex = m_shaders.desc(vs);
+    // Builds (or keeps) a variant from a fragment shader of the game's, or the engine's default one.
+    auto variant = [&](VersionedPipeline& vp, ShaderHandle fragment, const GraphicsPipelineDesc& engineDefault) -> PipelineHandle {
+        const u32 version = (fragment ? m_shaders.version(fragment) : 0u) * 65599u + (customVertex ? m_shaders.version(vs) : 0u) + 1u;
+        if (vp.pipeline && vp.version == version) return vp.pipeline;
+        if (vp.pipeline) m_device.destroyPipeline(vp.pipeline); // deferred: frames in flight keep it
+        GraphicsPipelineDesc d = desc;
+        d.fragment = fragment ? m_shaders.desc(fragment) : engineDefault.fragment;
+        const std::string name = (fragment ? m_shaders.path(fragment).filename().string() : std::string("forward")) +
+                                 (customVertex ? " + " + m_shaders.path(vs).filename().string() : std::string());
+        d.debugName = name.c_str();
+        vp.pipeline = m_device.createGraphicsPipeline(d);
+        vp.version = version;
+        return vp.pipeline;
+    };
+    if (rayQuery && m_forwardRtPipeline) {
+        if (shader && !mp.rqRequested) { // compiled on first use: games without RT never pay for it
             mp.rqRequested = true;
             mp.rqShader = m_shaders.variant(shader, {"NOVA_RAY_QUERY=1"}, "rq");
             if (!mp.rqShader)
                 NOVA_CORE_WARN("Renderer: material '{}' has no ray query variant; drawn without ray-traced shadows",
                                m_shaders.path(shader).filename().string());
         }
-        if (mp.rqShader && rebuild(mp.rq[state], mp.rqShader, &desc)) return mp.rq[state].pipeline;
+        if (!shader) return variant(mp.rq[state], {}, m_defaultDescs[1]);
+        if (mp.rqShader && m_shaders.ready(mp.rqShader)) return variant(mp.rq[state], mp.rqShader, m_defaultDescs[1]);
     }
-    return rebuild(mp.fill[state], shader, &desc) ? mp.fill[state].pipeline : PipelineHandle{};
+    return variant(mp.fill[state], shader, m_defaultDescs[0]);
+}
+
+// The depth-only pipelines (plain, alpha-tested) of shadow maps for objects with a vertex shader.
+PipelineHandle Renderer::casterPipeline(ShaderHandle vertexShader, bool cutout) {
+    const ShaderHandle vs = vertexShaderVariant(vertexShader);
+    if (!vs || !m_shaders.ready(vs)) return {};
+    CasterPipelines& cp = m_casterPipelines[vs.id];
+    VersionedPipeline& vp = cp.pipelines[cutout ? 1 : 0];
+    const u32 version = m_shaders.version(vs);
+    if (vp.pipeline && vp.version == version) return vp.pipeline;
+    if (vp.pipeline) m_device.destroyPipeline(vp.pipeline);
+    GraphicsPipelineDesc d = m_shadowDesc;
+    d.vertex = m_shaders.desc(vs);
+    if (cutout) d.fragment = m_shadowMaskFS;
+    d.debugName = "pipeline.shadow.vertexShader";
+    vp.pipeline = m_device.createGraphicsPipeline(d);
+    vp.version = version;
+    return vp.pipeline;
 }
 
 PipelineHandle Renderer::postProcessPipeline(ShaderHandle shader) {
@@ -848,8 +907,9 @@ void Renderer::drawCasters(CommandList& cmd, const RenderScene& scene, const std
         const WrapInstance& di = m_instances[i];
         const DrawItem& d = scene.draws[di.draw];
         if (!d.castShadows || d.material.alphaMode == AlphaMode::Blend) continue;
-        const PipelineHandle want =
-            d.material.alphaMode == AlphaMode::Mask && m_shadowMaskPipeline ? m_shadowMaskPipeline : m_shadowPipeline;
+        const bool cutout = d.material.alphaMode == AlphaMode::Mask && m_shadowMaskPipeline;
+        PipelineHandle want = d.material.vertexShader ? casterPipeline(d.material.vertexShader, cutout) : PipelineHandle{};
+        if (!want) want = cutout ? m_shadowMaskPipeline : m_shadowPipeline;
         if (!(want == bound)) {
             cmd.bindPipeline(want);
             bound = want;
@@ -1304,9 +1364,11 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             continue;
         }
         PipelineHandle p = wireframe ? m_wireframePipeline : PipelineHandle{};
-        if (!p && d.material.shader) p = materialPipeline(d.material.shader, useRt, state);
+        if (!p && (d.material.shader || d.material.vertexShader))
+                    p = materialPipeline(d.material.shader, d.material.vertexShader, useRt, state);
         if (!p) p = defaultPipeline(useRt, state);
-        if (gpuCull && !wi.triangles && d.jointCount == 0)
+        // GPU culling tests the mesh's bounds: a vertex shader may move the vertices out of them.
+        if (gpuCull && !wi.triangles && d.jointCount == 0 && !d.material.vertexShader)
             cullEntries.push_back({p.key(), d.mesh.id, i, p,
                                    d.material.alphaMode == AlphaMode::Mask ? 0u : d.material.doubleSided ? 2u : 1u});
         else m_drawOrder.emplace_back(p.key(), i);
@@ -1511,7 +1573,8 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             if (pipelineKey != boundPipeline || pipelineKey == ~0ull) {
                 const u32 state = pipelineState(d.material);
                 PipelineHandle p = wireframe ? m_wireframePipeline : PipelineHandle{};
-                if (!p && d.material.shader) p = materialPipeline(d.material.shader, useRt, state);
+                if (!p && (d.material.shader || d.material.vertexShader))
+                    p = materialPipeline(d.material.shader, d.material.vertexShader, useRt, state);
                 if (!p) p = defaultPipeline(useRt, state);
                 if (p.key() != boundPipeline) cmd.bindPipeline(p);
                 boundPipeline = p.key();

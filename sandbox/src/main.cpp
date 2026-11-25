@@ -87,6 +87,16 @@ public:
         if (s_rqAo) r.settings().rayTracedAo = true;
         if (s_noVsync) app().device().setVSync(false);
         if (s_prepass) r.settings().depthPrepass = true;
+        if (s_wave) { // a flag above the scene: a subdivided plane moved by wave.vert (and its shadow with it)
+            nova::Entity flag = scene().createEntity("Flag");
+            auto& mesh = flag.add<nova::MeshComponent>(r.createMesh(nova::MeshData::plane(1.0f, 48), "Flag"));
+            mesh.material.vertexShader = r.shaders().load("wave.vert");
+            mesh.material.doubleSided = true;
+            mesh.material.baseColor = {0.85f, 0.25f, 0.2f, 1.0f};
+            flag.transform().position = {-5.0f, 6.0f, -2.0f};
+            flag.transform().setEulerDegrees({90.0f, 55.0f, 0.0f}); // upright, turned to show the ripples
+            flag.transform().scale = {4.0f, 1.0f, 2.5f};
+        }
         if (s_fog)
             r.settings().postProcess.push_back({.name = "Fog", .shader = r.shaders().load("fog.frag"), .params = {0.04f, 8.0f, 0.85f, 0.0f}});
         if (s_noReflections) r.settings().rayTracedReflections = false;
@@ -122,6 +132,7 @@ public:
     static inline bool s_noVsync = false; // --no-vsync: frames as fast as they go (measuring cost)
     static inline bool s_prepass = false; // --prepass: RenderSettings::depthPrepass
     static inline bool s_fog = false;     // --fog: assets/shaders/fog.frag as a post effect (reads depth)
+    static inline bool s_wave = false;    // --wave: a flag waving by a material vertex shader (assets/shaders/wave.vert)
     static inline bool s_rqAo = false, s_noReflections = false; // --rq-ao, --no-reflections (ray query in the forward pass)
     static inline int s_debugView = -1; // --debug-view N (nova::DebugView)
     static inline int s_quitAfterFrames = -1; // --frames N: quit after N frames (smoke tests)
@@ -601,6 +612,7 @@ int main(int argc, char** argv) {
         else if (arg == "--no-vsync") PhysicsBench::s_noVsync = true;
         else if (arg == "--prepass") PhysicsBench::s_prepass = true;
         else if (arg == "--fog") PhysicsBench::s_fog = true;
+        else if (arg == "--wave") PhysicsBench::s_wave = true;
         else if (arg == "--size" && hasValue) { // WxH
             char* end = nullptr;
             width = static_cast<nova::u32>(std::strtoul(argv[++i], &end, 10));

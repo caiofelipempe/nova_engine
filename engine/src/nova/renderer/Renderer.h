@@ -613,7 +613,9 @@ private:
     FrameAllocation allocate(u64 size, u64 alignment = 256);
     void renderInternal(rhi::CommandList& cmd, const RenderScene& scene, RenderView& view, rhi::TextureHandle output,
                         std::optional<rhi::ResourceState> outputState);
-    rhi::PipelineHandle materialPipeline(ShaderHandle shader, bool rayQuery, u32 state = 0);
+    rhi::PipelineHandle materialPipeline(ShaderHandle shader, ShaderHandle vertexShader, bool rayQuery, u32 state = 0);
+    ShaderHandle vertexShaderVariant(ShaderHandle vertexShader);
+    rhi::PipelineHandle casterPipeline(ShaderHandle vertexShader, bool cutout);
     rhi::PipelineHandle defaultPipeline(bool rayQuery, u32 state);
     bool rebuild(VersionedPipeline& vp, ShaderHandle shader, const rhi::GraphicsPipelineDesc* graphics);
 
@@ -698,7 +700,14 @@ private:
     rhi::GraphicsPipelineDesc m_forwardDesc;                      // template of material pipelines
     rhi::GraphicsPipelineDesc m_defaultDescs[2];                  // the default material: raster, ray query
     rhi::PipelineHandle m_defaultVariants[2][4];                  // ... by pipeline state (0: the ones above)
-    std::unordered_map<u32, MaterialPipelines> m_materialPipelines; // key: ShaderHandle::id
+    std::unordered_map<u64, MaterialPipelines> m_materialPipelines; // key: fragment shader id | vertex shader id << 32
+    std::unordered_map<u32, ShaderHandle> m_wrapVertexShaders;      // vertex shader id -> its NOVA_WRAP_RENDER_MODES variant
+    struct CasterPipelines {
+        VersionedPipeline pipelines[2]; // shadow maps with a material vertex shader: plain, alpha-tested
+    };
+    std::unordered_map<u32, CasterPipelines> m_casterPipelines; // key: vertex shader (variant) id
+    rhi::GraphicsPipelineDesc m_shadowDesc;                       // template of the shadow map pipelines
+    rhi::ShaderDesc m_shadowMaskFS;                               // shadow.frag (alpha-tested casters)
     std::unordered_map<u32, VersionedPipeline> m_postPipelines;     // key: ShaderHandle::id
     std::unordered_map<u32, VersionedPipeline> m_computePipelines;  // key: ShaderHandle::id
     struct GameRtPipeline {

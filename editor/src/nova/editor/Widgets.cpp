@@ -183,7 +183,16 @@ bool reflectedField(const reflect::TypeInfo& owner, const reflect::FieldInfo& f,
                 if (current.empty()) current = lib.path(sh).filename().string();
                 if (current.empty()) current = "<shader " + std::to_string(sh.id) + ">";
             }
+            // Material::vertexShader takes vertex shaders; the other shader fields fragment ones.
+            const ShaderStage wanted = f.name.find("vertex") != std::string::npos ? ShaderStage::Vertex : ShaderStage::Fragment;
+            auto stageOf = [](const std::filesystem::path& path) {
+                ShaderStage stage = ShaderStage::Fragment;
+                ShaderLibrary::stageFromPath(path, stage);
+                return stage;
+            };
             auto pick = [&](AssetGuid guid) {
+                const AssetRecord* rec = db.find(guid);
+                if (rec && stageOf(rec->path) != wanted) return;
                 if (const AssetData* d = db.load(guid); d && !d->shaders.empty()) {
                     sh = d->shaders[0];
                     changed = true;
@@ -196,8 +205,7 @@ bool reflectedField(const reflect::TypeInfo& owner, const reflect::FieldInfo& f,
                 }
                 for (const AssetRecord& r : db.assets()) {
                     if (r.type != "Shader") continue;
-                    ShaderStage stage{};
-                    if (ShaderLibrary::stageFromPath(r.path, stage) && stage != ShaderStage::Fragment) continue;
+                    if (stageOf(r.path) != wanted) continue;
                     if (ImGui::Selectable(r.path.generic_string().c_str(), sh && db.shaderRef(sh) == AssetDatabase::makeRef(r.guid)))
                         pick(r.guid);
                 }

@@ -151,7 +151,10 @@ struct Material {
     /// @brief Optional game material: a fragment shader written against `nova/material.glsl`
     ///        (invalid = the engine's default shading).
     ShaderHandle shader;
-    glm::vec4 customParams{0.0f};     ///< Free parameters for `shader` (`Surface::custom` in GLSL).
+    /// @brief Optional game vertex shader written against `nova/vertex.glsl` (moves the vertices:
+    ///        wind, waves); invalid = the mesh as it is. Also used for the object's shadow maps.
+    ShaderHandle vertexShader;
+    glm::vec4 customParams{0.0f};     ///< Free parameters for `shader` and `vertexShader` (`Surface::custom`, `nova_custom`).
     rhi::TextureHandle customTexture; ///< Extra texture for `shader` (`nova_customTexture(uv)` in GLSL).
 };
 
