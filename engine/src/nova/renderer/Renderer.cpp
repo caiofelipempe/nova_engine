@@ -167,6 +167,16 @@ void RenderView::destroy() {
 // ---------------------------------------------------------------- Renderer --
 Renderer::Renderer(Device& device) : m_device(device), m_graphPool(makeScope<RenderGraphPool>(device)) {
     createPipelines();
+    // Pipelines otherwise made on first use, a hitch in the first frames: the default material's
+    // states (both variants), the tonemap and FXAA for the formats they write, the debug lines.
+    for (int rq = 0; rq < (m_forwardRtPipeline ? 2 : 1); ++rq)
+        for (u32 state = 1; state < 4; ++state) defaultPipeline(rq == 1, state);
+    const Format output = m_device.backbufferFormat();
+    tonemapPipeline(output);
+    tonemapPipeline(Format::RGBA8_UNORM);
+    fxaaPipeline(output);
+    linePipeline(output, false);
+    linePipeline(output, true);
 
     const u32 frames = device.caps().framesInFlight;
     BufferUsage usage = BufferUsage::Storage | BufferUsage::TransferSrc; // a source of copies: GPU culling's commands

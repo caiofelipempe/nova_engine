@@ -302,6 +302,9 @@ struct DeviceDesc {
     bool enableValidation = false; ///< Enable API validation layers (debug messages go to the log).
     bool vsync = true;             ///< Present synchronized to the display.
     bool enableRayTracing = true;  ///< Request ray tracing extensions when the GPU supports them.
+    /// @brief File where the backend keeps compiled pipelines between runs (loaded at creation,
+    ///        saved at destruction; empty: none). Data from another GPU or driver is ignored.
+    std::string pipelineCacheFile;
 };
 
 /// @brief What the selected GPU and backend support.

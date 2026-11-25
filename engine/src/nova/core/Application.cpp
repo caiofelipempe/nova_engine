@@ -1,4 +1,5 @@
 #include "nova/core/Application.h"
+#include "nova/platform/FileSystem.h"
 
 #include "nova/core/Log.h"
 #include "nova/platform/Input.h"
@@ -30,6 +31,7 @@ Application::Application(const ApplicationDesc& desc) : m_desc(desc) {
     dd.enableValidation = desc.validation;
     dd.vsync = desc.vsync;
     dd.enableRayTracing = desc.rayTracing;
+    dd.pipelineCacheFile = (fs::executableDir() / "shader_cache" / "pipelines.bin").string(); // beside the shader cache
     m_device = rhi::Device::create(desc.rhiBackend, dd, *m_window);
 
     if (desc.imgui) initImGui();

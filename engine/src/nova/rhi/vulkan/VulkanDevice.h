@@ -226,6 +226,8 @@ private:
     void pickPhysicalDevice();
     void createLogicalDevice();
     void createAllocator();
+    void createPipelineCache(const std::string& file);
+    void savePipelineCache();
     void createBindlessLayout();
     void createFrames();
     void createSamplers();
@@ -263,6 +265,8 @@ private:
     VkDescriptorPool m_bindlessPool = VK_NULL_HANDLE;
     VkDescriptorSet m_bindlessSet = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
+    VkPipelineCache m_pipelineCache = VK_NULL_HANDLE; // every pipeline is created through it
+    std::string m_pipelineCacheFile;
     IndexAllocator m_sampledSlots;
     IndexAllocator m_storageSlots;
     VkSampler m_defaultSampler = VK_NULL_HANDLE;

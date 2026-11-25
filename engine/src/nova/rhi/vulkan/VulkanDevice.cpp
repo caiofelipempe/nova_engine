@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 
 namespace nova::rhi::vk {
 
@@ -126,6 +128,7 @@ VulkanDevice::VulkanDevice(const DeviceDesc& desc, platform::Window& window)
     createBindlessLayout();
     createFrames();
     createSwapchain();
+    createPipelineCache(desc.pipelineCacheFile);
 
     NOVA_CORE_INFO("RHI: {} on '{}'", m_caps.apiName, m_caps.deviceName);
     NOVA_CORE_INFO("RHI: ray query {} | RT pipeline {} | bindless textures {}",
@@ -158,6 +161,8 @@ VulkanDevice::~VulkanDevice() {
     m_buffers.forEach([&](BufferHandle, VulkanBuffer& b) { destroyBufferNow(b); });
     if (leaks) NOVA_CORE_WARN("RHI: {} GPU resources were not destroyed before device shutdown", leaks);
 
+    savePipelineCache();
+    vkDestroyPipelineCache(m_device, m_pipelineCache, nullptr);
     vkDestroyCommandPool(m_device, m_uploadPool, nullptr);
     vkDestroyFence(m_device, m_uploadFence, nullptr);
     vkDestroySampler(m_device, m_defaultSampler, nullptr);
@@ -423,6 +428,38 @@ void VulkanDevice::createLogicalDevice() {
     m_caps.unusedAttachments = unusedAttachments;
     m_caps.framesInFlight = kFramesInFlight;
     m_caps.maxPushConstantSize = std::min(kPushConstantSize, m_properties.limits.maxPushConstantsSize);
+}
+
+// Compiled pipelines kept between runs: the file's data seeds the cache (the driver ignores data from
+// another GPU or driver version), and the cache is written back at shutdown.
+void VulkanDevice::createPipelineCache(const std::string& file) {
+    m_pipelineCacheFile = file;
+    std::vector<char> data;
+    if (!file.empty()) {
+        std::ifstream in(file, std::ios::binary);
+        if (in) data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+    ci.initialDataSize = data.size();
+    ci.pInitialData = data.empty() ? nullptr : data.data();
+    if (vkCreatePipelineCache(m_device, &ci, nullptr, &m_pipelineCache) != VK_SUCCESS) { // unusable data: start empty
+        ci.initialDataSize = 0;
+        ci.pInitialData = nullptr;
+        VK_CHECK(vkCreatePipelineCache(m_device, &ci, nullptr, &m_pipelineCache));
+    }
+    if (!data.empty()) NOVA_CORE_INFO("RHI: pipeline cache loaded ({} KB)", data.size() / 1024);
+}
+
+void VulkanDevice::savePipelineCache() {
+    if (m_pipelineCacheFile.empty() || !m_pipelineCache) return;
+    size_t size = 0;
+    if (vkGetPipelineCacheData(m_device, m_pipelineCache, &size, nullptr) != VK_SUCCESS || size == 0) return;
+    std::vector<char> data(size);
+    if (vkGetPipelineCacheData(m_device, m_pipelineCache, &size, data.data()) != VK_SUCCESS) return;
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(m_pipelineCacheFile).parent_path(), ec);
+    std::ofstream out(m_pipelineCacheFile, std::ios::binary | std::ios::trunc);
+    if (out) out.write(data.data(), static_cast<std::streamsize>(size));
 }
 
 void VulkanDevice::createAllocator() {
@@ -1095,7 +1132,7 @@ PipelineHandle VulkanDevice::createGraphicsPipeline(const GraphicsPipelineDesc& 
 
     VulkanPipeline p;
     p.bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    VK_CHECK(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pci, nullptr, &p.pipeline));
+    VK_CHECK(vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &pci, nullptr, &p.pipeline));
     vkDestroyShaderModule(m_device, vs, nullptr);
     if (fs) vkDestroyShaderModule(m_device, fs, nullptr);
     setDebugName(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<u64>(p.pipeline), desc.debugName);
@@ -1110,7 +1147,7 @@ PipelineHandle VulkanDevice::createComputePipeline(const ComputePipelineDesc& de
     ci.layout = m_pipelineLayout;
     VulkanPipeline p;
     p.bindPoint = VK_PIPELINE_BIND_POINT_COMPUTE;
-    VK_CHECK(vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &ci, nullptr, &p.pipeline));
+    VK_CHECK(vkCreateComputePipelines(m_device, m_pipelineCache, 1, &ci, nullptr, &p.pipeline));
     vkDestroyShaderModule(m_device, cs, nullptr);
     setDebugName(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<u64>(p.pipeline), desc.debugName);
     return m_pipelines.insert(p);
@@ -1158,7 +1195,7 @@ PipelineHandle VulkanDevice::createRayTracingPipeline(const RayTracingPipelineDe
     ci.layout = m_pipelineLayout;
     VulkanPipeline p;
     p.bindPoint = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR;
-    VK_CHECK(m_ext.vkCreateRayTracingPipelinesKHR(m_device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &ci, nullptr, &p.pipeline));
+    VK_CHECK(m_ext.vkCreateRayTracingPipelinesKHR(m_device, VK_NULL_HANDLE, m_pipelineCache, 1, &ci, nullptr, &p.pipeline));
     for (VkShaderModule m : modules) vkDestroyShaderModule(m_device, m, nullptr);
     setDebugName(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<u64>(p.pipeline), desc.debugName);
 

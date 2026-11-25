@@ -131,6 +131,7 @@ public:
             if (++m_paceFrames > 10) {
                 m_frameTimes.push_back(dt * 1000.0f);
                 m_renderCpu += renderer().stats().cpuMs; // the previous frame's
+                m_renderCpus.push_back(renderer().stats().cpuMs);
             }
         }
         if (s_quitAfterFrames >= 0 && s_quitAfterFrames-- == 0) {
@@ -148,10 +149,13 @@ public:
                 std::string spikes; // frames over twice the median (index after the first 10), the first few
                 for (size_t i = 0, n = 0; i < m_frameTimes.size() && n < 8; ++i)
                     if (m_frameTimes[i] > 2.0f * t[t.size() / 2]) {
-                        spikes += std::to_string(i + 10) + ":" + std::to_string(static_cast<int>(m_frameTimes[i])) + "ms ";
+                        // The render CPU time comes with the next frame's stats: the spike's own.
+                        const float cpu = i + 1 < m_renderCpus.size() ? m_renderCpus[i + 1] : 0.0f;
+                        spikes += std::to_string(i + 10) + ":" + std::to_string(static_cast<int>(m_frameTimes[i])) + "ms(cpu " +
+                                  std::to_string(static_cast<int>(cpu * 10.0f) / 10.0f).substr(0, 4) + ") ";
                         ++n;
                     }
-                if (!spikes.empty()) NOVA_INFO("[frames] spikes (frame:time): {}", spikes);
+                if (!spikes.empty()) NOVA_INFO("[frames] spikes (frame:time(render cpu ms)): {}", spikes);
             }
             const nova::RenderStats& st = renderer().stats();
             NOVA_INFO("[frames] draws {} | graph passes {} ({} dropped) | auto exposure {:.3f} | path samples {}", st.drawCalls,
@@ -549,6 +553,7 @@ private:
     int m_paceFrames = 0;                          // --frames: frame times, logged at the end
     std::vector<float> m_frameTimes;
     double m_renderCpu = 0.0; // sum of RenderStats::cpuMs over the run
+    std::vector<float> m_renderCpus; // per frame (the previous frame's render CPU)
     float m_orbitYaw = 0.0f, m_orbitPitch = -0.35f; // character camera
     std::vector<nova::Entity> m_spawned;      // scenario actions (bullets, dropped boxes)
     std::vector<nova::Entity> m_projectiles;  // shots
@@ -557,6 +562,7 @@ private:
 };
 
 int main(int argc, char** argv) {
+    nova::u32 width = 1280, height = 720; // --size WxH (measuring GPU cost at a larger size)
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
         const bool hasValue = i + 1 < argc;
@@ -574,6 +580,11 @@ int main(int argc, char** argv) {
         else if (arg == "--rtao") PhysicsBench::s_rtao = true;
         else if (arg == "--rq-ao") PhysicsBench::s_rqAo = true;
         else if (arg == "--no-vsync") PhysicsBench::s_noVsync = true;
+        else if (arg == "--size" && hasValue) { // WxH
+            char* end = nullptr;
+            width = static_cast<nova::u32>(std::strtoul(argv[++i], &end, 10));
+            if (end && *end == 'x') height = static_cast<nova::u32>(std::strtoul(end + 1, nullptr, 10));
+        }
         else if (arg == "--no-reflections") PhysicsBench::s_noReflections = true;
         else if (arg == "--debug-view" && hasValue) PhysicsBench::s_debugView = std::atoi(argv[++i]);
         else if (arg == "--frames" && hasValue) PhysicsBench::s_quitAfterFrames = std::atoi(argv[++i]);
@@ -585,6 +596,6 @@ int main(int argc, char** argv) {
             PhysicsBench::s_cropCamera = v == "crop-camera";
         }
     }
-    const int code = nova::run<PhysicsBench>({.name = "Nova Physics Bench", .width = 1280, .height = 720});
+    const int code = nova::run<PhysicsBench>({.name = "Nova Physics Bench", .width = width, .height = height});
     return code != 0 ? code : PhysicsBench::s_checkFailed ? 1 : 0;
 }
