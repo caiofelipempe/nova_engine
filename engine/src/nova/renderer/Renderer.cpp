@@ -9,6 +9,8 @@
 #include <glm/gtx/quaternion.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstring>
 
 namespace nova {
@@ -129,6 +131,9 @@ void RenderView::destroy() {
     if (m_hiz) d.destroyBuffer(m_hiz);
     m_hiz = {};
     m_hizValid = false;
+    if (m_exposure) d.destroyBuffer(m_exposure);
+    m_exposure = {};
+    m_exposureValid = false;
     m_hdr = m_depth = m_output = {};
 }
 
@@ -144,6 +149,9 @@ Renderer::Renderer(Device& device) : m_device(device), m_graphPool(makeScope<Ren
             device.createBuffer({kFrameBufferSize, usage, MemoryUsage::CpuToGpu, "renderer.frameUpload"}));
         m_cullCounters.push_back(device.createBuffer({16, BufferUsage::TransferDst, MemoryUsage::CpuToGpu, "renderer.cullCounters"}));
         std::memset(device.mappedPointer(m_cullCounters.back()), 0, 16);
+        m_exposureReadback.push_back(
+            device.createBuffer({16, BufferUsage::TransferDst, MemoryUsage::CpuToGpu, "renderer.exposureReadback"}));
+        std::memset(device.mappedPointer(m_exposureReadback.back()), 0, 16);
         m_cullBuffers.push_back({});
         if (device.caps().accelerationStructures)
             m_tlas.push_back(device.createTLAS({kMaxInstances, "renderer.tlas"}));
@@ -164,13 +172,14 @@ Renderer::~Renderer() {
     for (TextureHandle t : m_textures) m_device.destroyTexture(t);
     for (BufferHandle b : m_frameBuffers) m_device.destroyBuffer(b);
     for (BufferHandle b : m_cullCounters) m_device.destroyBuffer(b);
+    for (BufferHandle b : m_exposureReadback) m_device.destroyBuffer(b);
     for (CullBuffer& b : m_cullBuffers)
         if (b.buffer) m_device.destroyBuffer(b.buffer);
     for (AccelStructHandle t : m_tlas) m_device.destroyAccelStruct(t);
     for (auto& [key, shape] : m_skinnedShapes) releaseSkinnedShape(shape);
     m_skinnedShapes.clear();
     for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline,
-                             m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline, m_hizPipeline, m_bloomPipeline})
+                             m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline, m_hizPipeline, m_bloomPipeline, m_exposurePipeline})
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
@@ -259,6 +268,10 @@ void Renderer::createPipelines() {
         hiz.compute = loadShader("hiz.comp");
         hiz.debugName = "pipeline.hiz";
         m_hizPipeline = m_device.createComputePipeline(hiz);
+        ComputePipelineDesc exposure;
+        exposure.compute = loadShader("exposure.comp");
+        exposure.debugName = "pipeline.exposure";
+        m_exposurePipeline = m_device.createComputePipeline(exposure);
     }
 
     if (m_device.caps().accelerationStructures) {
@@ -746,6 +759,8 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         m_stats.gpuTested = counters[1];
         m_stats.gpuOccluded = counters[2];
         counters[0] = counters[1] = counters[2] = 0;
+        if (!m_exposureReadback.empty() && s.autoExposure)
+            std::memcpy(&m_stats.autoExposure, m_device.mappedPointer(m_exposureReadback[m_device.frameIndex()]), sizeof(f32));
     }
 
     auto& fd = *static_cast<gpu::FrameData*>(frameAlloc.cpu);
@@ -1336,6 +1351,69 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         }
     }
 
+    // ---- auto exposure: a histogram of the image's luminance, then its average eased toward
+    // (exposure.comp), into the view's state that the tonemap reads
+    u64 exposureAddress = 0;
+    if (s.autoExposure && m_exposurePipeline) {
+        if (!view.m_exposure) {
+            view.m_exposure = m_device.createBuffer({sizeof(gpu::ExposureState), BufferUsage::Storage | BufferUsage::TransferDst |
+                                                                                     BufferUsage::TransferSrc,
+                                                     MemoryUsage::GpuOnly, "view.exposure"});
+            view.m_exposureValid = false;
+        }
+        const f64 now = std::chrono::duration<f64>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        const f64 dt = view.m_exposureValid ? std::clamp(now - view.m_exposureTime, 0.0, 0.5) : 0.0;
+        FrameAllocation reset; // a new state: empty histogram, no average yet
+        if (!view.m_exposureValid) {
+            reset = allocate(sizeof(gpu::ExposureState), 16);
+            if (reset.cpu) {
+                gpu::ExposureState init{};
+                init.adaptedLog2 = std::nanf("");
+                init.exposure = 1.0f;
+                std::memcpy(reset.cpu, &init, sizeof(init));
+            }
+        }
+        if (view.m_exposureValid || reset.cpu) {
+            view.m_exposureValid = true;
+            view.m_exposureTime = now;
+            exposureAddress = m_device.deviceAddress(view.m_exposure);
+            gpu::ExposurePush push{};
+            push.state = exposureAddress;
+            push.size = glm::uvec2(extent.width, extent.height);
+            push.minLog2 = -12.0f;
+            push.rangeLog2 = 24.0f; // luminance from 2^-12 to 2^12
+            push.adapt = s.autoExposureSpeed > 0.0f ? static_cast<f32>(1.0 - std::exp(-dt * s.autoExposureSpeed)) : 1.0f;
+            push.key = std::max(s.autoExposureKey, 1e-4f);
+            push.minExposure = std::max(s.autoExposureMin, 1e-4f);
+            push.maxExposure = std::max(s.autoExposureMax, push.minExposure);
+            push.lowPercentile = 0.4f;
+            push.highPercentile = 0.95f;
+            const RGTexture source = frame.color;
+            const BufferHandle state = view.m_exposure, upload = m_frameBuffers[m_device.frameIndex()];
+            const BufferHandle exposureReadback = m_exposureReadback.empty() ? BufferHandle{} : m_exposureReadback[m_device.frameIndex()];
+            const u64 resetSource = reset.cpu ? reset.offset : ~0ull;
+            graph.addPass("Auto exposure").sample(source).sideEffect().execute([=, this](RenderPassContext& ctx) {
+                ctx.cmd.globalBarrier(); // last frame's tonemap read the state
+                if (resetSource != ~0ull) {
+                    ctx.cmd.copyBuffer(upload, state, sizeof(gpu::ExposureState), resetSource, 0);
+                    ctx.cmd.globalBarrier();
+                }
+                ctx.cmd.bindPipeline(m_exposurePipeline);
+                gpu::ExposurePush p = push;
+                p.hdrTexture = ctx.bindlessIndex(source);
+                p.mode = 0;
+                ctx.cmd.pushConstants(p);
+                ctx.cmd.dispatch((p.size.x + 15) / 16, (p.size.y + 15) / 16);
+                ctx.cmd.globalBarrier();
+                p.mode = 1;
+                ctx.cmd.pushConstants(p);
+                ctx.cmd.dispatch(1);
+                ctx.cmd.globalBarrier(); // before the tonemap reads it
+                if (exposureReadback) ctx.cmd.copyBuffer(state, exposureReadback, 4, offsetof(gpu::ExposureState, exposure), 0);
+            });
+        }
+    }
+
     // ---- tonemap
     {
         const RGTexture source = frame.color;
@@ -1345,12 +1423,15 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         RenderPassBuilder tm = graph.addPass("Tonemap");
         tm.sample(source);
         if (bloomTex) tm.sample(bloomTex);
-        tm.color(outputTex, LoadOp::DontCare).execute([tonemap, source, exposure, op, bloomTex, bloomStrength](RenderPassContext& ctx) {
-            ctx.cmd.bindPipeline(tonemap);
-            ctx.cmd.pushConstants(gpu::TonemapPush{ctx.bindlessIndex(source), exposure, op,
-                                                   bloomTex ? ctx.bindlessIndex(bloomTex) : ~0u, bloomTex ? bloomStrength : 0.0f});
-            ctx.cmd.draw(3);
-        });
+        tm.color(outputTex, LoadOp::DontCare)
+            .execute([tonemap, source, exposure, op, bloomTex, bloomStrength, exposureAddress](RenderPassContext& ctx) {
+                ctx.cmd.bindPipeline(tonemap);
+                gpu::TonemapPush push{ctx.bindlessIndex(source), exposure, op, bloomTex ? ctx.bindlessIndex(bloomTex) : ~0u,
+                                      bloomTex ? bloomStrength : 0.0f};
+                push.autoExposure = exposureAddress;
+                ctx.cmd.pushConstants(push);
+                ctx.cmd.draw(3);
+            });
     }
     frame.color = outputTex;
     runGraphCallbacks(RenderStage::AfterTonemap, frame);

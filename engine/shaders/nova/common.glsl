@@ -89,6 +89,13 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Jo
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer VertexBuffer { Vertex items[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer IndexBuffer { uint items[]; };
 
+// A view's auto exposure (exposure.comp; the tonemap reads `exposure`). C++: gpu::ExposureState.
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer ExposureBuffer {
+    uint histogram[256]; // log2 luminance; bin 0 = black
+    float adaptedLog2;   // the eased average log2 luminance (NaN: none yet)
+    float exposure;      // the multiplier that brings it to the key value
+};
+
 // Bindless resources (set 0). See rhi/vulkan/VulkanCommon.h.
 layout(set = 0, binding = 0) uniform sampler2D g_textures[];
 

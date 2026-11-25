@@ -199,7 +199,15 @@ struct RenderSettings {
     bool wireframe = false;                      ///< Draw meshes as lines (needs DeviceCaps::wireframe).
     DebugView debugView = DebugView::Lit;        ///< Debug visualization.
     Tonemapper tonemapper = Tonemapper::ACES;    ///< Tonemapping operator.
-    f32 exposure = 1.0f;                         ///< Linear exposure multiplier applied before tonemapping.
+    f32 exposure = 1.0f;                         ///< Linear exposure multiplier applied before tonemapping (with autoExposure: on top of it).
+    /// @brief Auto exposure (eye adaptation): each view measures its image (a histogram of the
+    ///        luminance, the darkest 40% and brightest 5% left out) and eases its exposure toward
+    ///        the one that brings the average to autoExposureKey.
+    bool autoExposure = false;
+    f32 autoExposureKey = 0.18f;     ///< Luminance the average is brought to (middle gray).
+    f32 autoExposureSpeed = 1.5f;    ///< How fast the eye adapts (1/s; 0: at once).
+    f32 autoExposureMin = 0.03f;     ///< Lowest exposure it may choose (bright scenes).
+    f32 autoExposureMax = 16.0f;     ///< Highest exposure it may choose (dark scenes).
     /// @brief Bloom: light bleeding around bright things, from a chain of ever smaller blurred
     ///        copies of the HDR image, mixed in before the tonemap.
     bool bloom = true;
@@ -252,6 +260,9 @@ struct RenderStats {
     ///        ago (read back without waiting).
     u32 gpuTested = 0, gpuVisible = 0;
     u32 gpuOccluded = 0; ///< Of the tested, hidden by other geometry (occlusion culling).
+    /// @brief The auto exposure the GPU chose (RenderSettings::autoExposure; 0 when off), read back a
+    ///        few frames later: of the last view rendered.
+    f32 autoExposure = 0.0f;
 };
 
 /// @brief Where in the frame Renderer::addRenderPasses adds passes.
@@ -315,6 +326,10 @@ private:
     bool m_hizValid = false;
     glm::mat4 m_prevViewProj{1.0f};
     GlobalPosition m_prevOrigin;
+    // Auto exposure: the view's ExposureState (histogram, eased luminance) and when it was last measured.
+    rhi::BufferHandle m_exposure;
+    bool m_exposureValid = false;
+    f64 m_exposureTime = 0.0;
 };
 
 /// @brief Hybrid forward renderer: rasterized PBR shading with ray-queried shadows.
@@ -506,6 +521,8 @@ private:
     rhi::PipelineHandle m_cullPipeline;       // cull.comp: GPU frustum and occlusion culling
     rhi::PipelineHandle m_hizPipeline;        // hiz.comp: the depth pyramid
     rhi::PipelineHandle m_bloomPipeline;      // bloom.frag (HDR targets)
+    rhi::PipelineHandle m_exposurePipeline;   // exposure.comp: auto exposure
+    std::vector<rhi::BufferHandle> m_exposureReadback; // per frame in flight: the exposure chosen, read back later
     std::vector<rhi::BufferHandle> m_cullCounters; // per frame in flight: GPU culling statistics, read back later
     // Per frame in flight: what GPU culling writes (draw commands, visible lists, states, counters),
     // in the GPU's own memory: its atomics and the vertex shader's reads stay off the bus.

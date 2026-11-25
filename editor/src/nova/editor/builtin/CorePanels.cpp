@@ -457,6 +457,18 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     int tm = static_cast<int>(s.tonemapper);
     if (ImGui::Combo("Tonemapper", &tm, tms, 3)) s.tonemapper = static_cast<Tonemapper>(tm);
     ImGui::SliderFloat("Exposure", &s.exposure, 0.05f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+    if (ImGui::TreeNode("Auto exposure")) {
+        ImGui::Checkbox("Enabled", &s.autoExposure);
+        if (s.autoExposure) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(now %.3f)", st.autoExposure);
+        }
+        ImGui::SliderFloat("Key", &s.autoExposureKey, 0.02f, 1.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
+        ImGui::SliderFloat("Speed", &s.autoExposureSpeed, 0.0f, 10.0f, "%.2f /s");
+        ImGui::SliderFloat("Min", &s.autoExposureMin, 0.001f, 1.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
+        ImGui::SliderFloat("Max", &s.autoExposureMax, 1.0f, 100.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
+        ImGui::TreePop();
+    }
     if (ImGui::TreeNode("Bloom")) {
         ImGui::Checkbox("Enabled", &s.bloom);
         ImGui::SliderFloat("Strength", &s.bloomStrength, 0.0f, 0.5f, "%.3f");

@@ -1,7 +1,5 @@
 #version 460
-#extension GL_EXT_nonuniform_qualifier : require
-
-layout(set = 0, binding = 0) uniform sampler2D g_textures[];
+#include "nova/common.glsl"
 
 layout(push_constant) uniform TonemapPush {
     uint hdrTexture;
@@ -9,6 +7,8 @@ layout(push_constant) uniform TonemapPush {
     uint tonemapper; // 0 ACES (fitted), 1 Reinhard, 2 none
     uint bloomTexture; // ~0u = no bloom
     float bloomStrength;
+    uint _pad0;
+    ExposureBuffer autoExposure; // 0 = fixed exposure; else times the view's auto exposure
 } pc;
 
 layout(location = 0) in vec2 vUV;
@@ -27,6 +27,7 @@ void main() {
         hdr = mix(hdr, bloom, pc.bloomStrength);
     }
     hdr *= pc.exposure;
+    if (uint64_t(pc.autoExposure) != 0ul) hdr *= pc.autoExposure.exposure;
     vec3 c;
     if (pc.tonemapper == 0u) c = acesFitted(hdr);
     else if (pc.tonemapper == 1u) c = hdr / (1.0 + hdr);

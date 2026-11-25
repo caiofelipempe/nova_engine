@@ -1,0 +1,75 @@
+#version 460
+// Auto exposure, in two dispatches over a view's ExposureBuffer:
+//  mode 0: a histogram of the HDR image's log2 luminance (256 bins; bin 0 = black), 16 × 16 pixels
+//          per workgroup, gathered in shared memory and then added to the buffer;
+//  mode 1: one workgroup of 256: the average log luminance of the pixels between two percentiles
+//          (the darkest and the brightest few do not decide), eased toward from the last frame's
+//          (eye adaptation), and the exposure that brings it to the key value. Clears the histogram.
+#include "nova/common.glsl"
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(push_constant) uniform ExposurePush {
+    ExposureBuffer state;
+    uint hdrTexture;    // bindless index of the HDR image (mode 0)
+    uint mode;          // 0 histogram, 1 average
+    uvec2 size;         // the image's size
+    float minLog2;      // log2 luminance of bin 1
+    float rangeLog2;    // log2 luminance range of bins 1..255
+    float adapt;        // how far toward the new average this frame goes (1 = all the way)
+    float key;          // luminance the average is brought to
+    float minExposure;  // the exposure's limits
+    float maxExposure;
+    float lowPercentile, highPercentile; // the part of the pixels averaged (0..1, darkest first)
+} pc;
+
+shared uint bins[256];
+
+uint binOf(vec3 c) {
+    const float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    if (!(l > 1e-6)) return 0u; // black (or NaN)
+    const float t = clamp((log2(l) - pc.minLog2) / pc.rangeLog2, 0.0, 1.0);
+    return uint(t * 254.0) + 1u;
+}
+
+void main() {
+    const uint i = gl_LocalInvocationIndex;
+    if (pc.mode == 0u) {
+        bins[i] = 0u;
+        barrier();
+        const uvec2 p = gl_GlobalInvocationID.xy;
+        if (p.x < pc.size.x && p.y < pc.size.y)
+            atomicAdd(bins[binOf(texelFetch(g_textures[nonuniformEXT(pc.hdrTexture)], ivec2(p), 0).rgb)], 1u);
+        barrier();
+        if (bins[i] != 0u) atomicAdd(pc.state.histogram[i], bins[i]);
+        return;
+    }
+
+    bins[i] = pc.state.histogram[i];
+    pc.state.histogram[i] = 0u; // empty for the next frame
+    barrier();
+    if (i != 0u) return;
+    float total = 0.0;
+    for (uint k = 1u; k < 256u; ++k) total += float(bins[k]);
+    const float lo = total * pc.lowPercentile, hi = total * pc.highPercentile;
+    float below = 0.0, sum = 0.0, weight = 0.0;
+    for (uint k = 1u; k < 256u; ++k) {
+        const float count = float(bins[k]);
+        const float a = max(below, lo), b = min(below + count, hi); // the part of this bin inside [lo, hi]
+        below += count;
+        if (b > a) {
+            sum += (b - a) * (pc.minLog2 + (float(k) - 0.5) / 254.0 * pc.rangeLog2);
+            weight += b - a;
+        }
+    }
+    const float previous = pc.state.adaptedLog2;
+    float adapted = previous;
+    if (weight > 0.0) {
+        const float average = sum / weight;
+        adapted = isnan(previous) || pc.adapt >= 1.0 ? average : mix(previous, average, pc.adapt);
+    } else if (isnan(previous)) {
+        adapted = log2(pc.key); // an all-black first frame: exposure 1
+    }
+    pc.state.adaptedLog2 = adapted;
+    pc.state.exposure = clamp(pc.key / exp2(adapted), pc.minExposure, pc.maxExposure);
+}

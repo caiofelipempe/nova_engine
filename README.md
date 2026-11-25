@@ -56,7 +56,7 @@ Requisitos: Visual Studio 2022, CMake ≥ 3.25, Vulkan SDK (glslc), vcpkg com `V
 cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
-build\bin\Debug\Sandbox.exe       # bancada de física (--check: determinismo de todos os cenários)
+build\bin\Debug\Sandbox.exe       # bancada de física (--check: determinismo de todos os cenários; --frames N: sai após N frames e grava as estatísticas de render no nova.log)
 ctest --preset debug              # testes headless (física, cenas, assets, shaders, espaço do mundo, tempo, cenários, input, editor, hot reload)
 doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
@@ -382,6 +382,13 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 - a volta para cima soma, em cada nível, um filtro tenda 3×3 do nível menor (`bloomRadius`);
 - o resultado é misturado ao HDR no tonemap (`bloomStrength`, padrão 0,04). Sem limiar, tudo brilha um pouco, como numa lente real; `bloomThreshold` > 0 limita o efeito ao que passa desse brilho, com transição suave;
 - todas as imagens são transitórias do render graph, e o painel Renderer do editor tem os controles. `Sandbox --no-bloom` desliga para comparar.
+
+**Exposição automática** (`RenderSettings::autoExposure`, desligada por padrão), a adaptação do olho:
+- cada view mede a própria imagem HDR antes do tonemap (`exposure.comp`): um histograma de 256 faixas do log da luminância, de 2⁻¹² a 2¹², montado em memória compartilhada;
+- a média sai dos pixels entre 40% e 95% do histograma, então nem as sombras nem alguns pontos muito brilhantes decidem sozinhos;
+- a exposição vai aos poucos (`autoExposureSpeed`, 1,5/s) até a que leva essa média a `autoExposureKey` (0,18, cinza médio), dentro de `autoExposureMin`..`autoExposureMax`;
+- o estado fica num buffer da view, e o tonemap o lê direto na GPU, sem esperar a CPU. `exposure` continua valendo, como compensação por cima;
+- `RenderStats::autoExposure` traz o valor escolhido (lido de volta alguns frames depois), e o painel Renderer mostra os controles. `Sandbox --auto-exposure` liga a opção.
 
 `RenderStats` traz os passes executados e descartados e as texturas transitórias, e `Renderer::lastGraph()` descreve o último frame, um passe por linha. O painel **Renderer** do editor e o sandbox mostram as duas coisas. A compilação do graph não precisa de GPU e tem testes próprios (`tests/RenderGraphTests.cpp`).
 

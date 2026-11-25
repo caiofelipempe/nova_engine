@@ -77,6 +77,7 @@ public:
         if (s_noCull) r.settings().gpuCulling = false;
         if (s_noOcclusion) r.settings().occlusionCulling = false;
         if (s_noBloom) r.settings().bloom = false;
+        if (s_autoExposure) r.settings().autoExposure = true;
 #if NOVA_WRAP_RENDER_MODES
         if (s_wrapShift >= 0) r.settings().wrapShift = static_cast<nova::WrapShift>(s_wrapShift);
         if (s_wrapShift == 3) r.settings().wrapCrop = s_cropCamera ? nova::WrapCrop::Camera : nova::WrapCrop::World;
@@ -98,12 +99,21 @@ public:
     static inline bool s_noCull = false;
     static inline bool s_noOcclusion = false;
     static inline bool s_noBloom = false;
+    static inline bool s_autoExposure = false;
+    static inline int s_quitAfterFrames = -1; // --frames N: quit after N frames (smoke tests)
     static inline std::string s_startScenario;              // --scenario "<name>"
     static inline int s_wrapShift = -1, s_wrapRepeat = -1; // --wrap triangle|object|split|crop|crop-camera, --laps N
     static inline bool s_cropCamera = false;
 
     // Like GameLayer::onUpdate, plus pause, single step and time scale.
     void onUpdate(float dt) override {
+        if (s_quitAfterFrames >= 0 && s_quitAfterFrames-- == 0) {
+            const nova::RenderStats& st = renderer().stats();
+            NOVA_INFO("[frames] draws {} | graph passes {} ({} dropped) | auto exposure {:.3f}", st.drawCalls, st.graphPasses,
+                      st.graphCulled, st.autoExposure);
+            NOVA_INFO("[frames] graph:\n{}", renderer().lastGraph());
+            app().quit();
+        }
         onTick(dt);
         if (!m_paused) scene().update(app().frameDuration().scaled(m_timeScale));
         else if (m_stepOnce) scene().update(scene().fixedTimeStep); // exactly one physics step
@@ -460,7 +470,9 @@ int main(int argc, char** argv) {
         else if (arg == "--no-rt") PhysicsBench::s_noRt = true;
         else if (arg == "--no-cull") PhysicsBench::s_noCull = true;
         else if (arg == "--no-occlusion") PhysicsBench::s_noOcclusion = true;
-        else if (arg == "--no-bloom") PhysicsBench::s_noBloom = true; // shadow maps instead of rays
+        else if (arg == "--no-bloom") PhysicsBench::s_noBloom = true;
+        else if (arg == "--auto-exposure") PhysicsBench::s_autoExposure = true;
+        else if (arg == "--frames" && hasValue) PhysicsBench::s_quitAfterFrames = std::atoi(argv[++i]);
         else if (arg == "--laps" && hasValue) PhysicsBench::s_wrapRepeat = std::atoi(argv[++i]);
         else if (arg == "--wrap" && hasValue) {
             const std::string_view v = argv[++i];

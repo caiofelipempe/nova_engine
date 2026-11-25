@@ -153,7 +153,33 @@ struct TonemapPush {
     u32 tonemapper; ///< Tonemapper value.
     u32 bloomTexture = ~0u; ///< Bindless index of the bloom image (~0u: none).
     f32 bloomStrength = 0.0f; ///< How much of it is mixed in.
+    u32 _pad0 = 0;            ///< Padding (the address below is 8-aligned).
+    u64 autoExposure = 0;     ///< The view's ExposureState (0: fixed exposure).
 };
+static_assert(sizeof(TonemapPush) == 32 && offsetof(TonemapPush, autoExposure) == 24);
+
+/// @brief A view's auto exposure (`ExposureBuffer` in common.glsl).
+struct ExposureState {
+    u32 histogram[256]; ///< log2 luminance; bin 0 = black.
+    f32 adaptedLog2;    ///< The eased average log2 luminance (NaN: none yet).
+    f32 exposure;       ///< The multiplier that brings it to the key value.
+    f32 _pad[2];
+};
+static_assert(sizeof(ExposureState) == 1040);
+
+/// @brief Push constants of exposure.comp.
+struct ExposurePush {
+    u64 state;            ///< Address of the view's ExposureState.
+    u32 hdrTexture;       ///< Bindless index of the HDR image.
+    u32 mode;             ///< 0 histogram, 1 average.
+    glm::uvec2 size;      ///< The image's size.
+    f32 minLog2, rangeLog2; ///< log2 luminance of bin 1 and the range of bins 1..255.
+    f32 adapt;            ///< How far toward the new average this frame goes (1: all the way).
+    f32 key;              ///< Luminance the average is brought to.
+    f32 minExposure, maxExposure;
+    f32 lowPercentile, highPercentile;
+};
+static_assert(sizeof(ExposurePush) == 56);
 
 /// @brief Push constants of bloom.frag.
 struct BloomPush {
