@@ -158,7 +158,8 @@ nova_add_shader(NovaShaders ${SH}/ssao.frag       DEPENDS ${NOVA_SHADER_INCLUDES
 nova_add_shader(NovaShaders ${SH}/fxaa.frag       DEPENDS ${NOVA_SHADER_INCLUDES}) # anti-aliasing
 nova_add_shader(NovaShaders ${SH}/taa.frag        DEPENDS ${NOVA_SHADER_INCLUDES}) # temporal anti-aliasing
 # Ray tracing pipeline: the ray traced reference view (DebugView::RayTraced)
-foreach(_rt rt_reference.rgen rt_reference.rmiss rt_shadow.rmiss rt_reference.rchit rt_alpha.rahit)
+foreach(_rt rt_reference.rgen rt_reference.rmiss rt_shadow.rmiss rt_reference.rchit rt_alpha.rahit
+            pt_reference.rgen pt_surface.rmiss pt_surface.rchit) # and the path tracer (DebugView::PathTraced)
     nova_add_shader(NovaShaders ${SH}/${_rt} DEPENDS ${NOVA_SHADER_INCLUDES})
 endforeach()
 nova_add_shader(NovaShaders ${SH}/cull.comp       DEPENDS ${NOVA_SHADER_INCLUDES}) # GPU frustum culling

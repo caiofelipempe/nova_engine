@@ -56,7 +56,7 @@ Requisitos: Visual Studio 2022, CMake ≥ 3.25, Vulkan SDK (glslc), vcpkg com `V
 cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
-build\bin\Debug\Sandbox.exe       # bancada de física (--check: determinismo de todos os cenários; --frames N: sai após N frames e grava as estatísticas de render no nova.log)
+build\bin\Debug\Sandbox.exe       # bancada de física (--check: determinismo de todos os cenários; --frames N: sai após N frames e grava as estatísticas de render no nova.log; --paused: começa com a simulação pausada)
 ctest --preset debug              # testes headless (física, cenas, assets, shaders, espaço do mundo, tempo, cenários, input, editor, hot reload)
 doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
@@ -430,11 +430,17 @@ Já implementado:
   - Cada pixel dispara um raio primário. O closest hit lê o triângulo e o material (cor base e textura, xadrez, metálico/rugosidade, emissivo) e lança raios de sombra para o sol e para cada point light. O any hit deixa passar o que é transparente nos materiais recortados, e o miss mostra o céu.
   - A TLAS é construída também sem as sombras por ray query. As malhas com esqueleto aparecem na pose, porque a instância aponta para os vértices deformados.
 
+- **path tracer de referência** (`DebugView::PathTraced`, ou "Path traced (reference)" no painel Renderer; `Sandbox --debug-view 7 --paused`): iluminação global sobre o mesmo pipeline de RT (`pt_reference.rgen`).
+  - A cada frame, cada pixel ganha um caminho, que começa num ponto aleatório do pixel e quica até `pathTracerBounces` vezes (padrão 4).
+  - Em cada ponto atingido, o sol e as point lights são amostrados diretamente com raios de sombra. A próxima direção sai da BRDF: lóbulo especular GGX ou difuso por cosseno, escolhidos pela refletância de Fresnel. A partir do 3º quique, a roleta russa corta caminhos fracos sem viés.
+  - Quem escapa vê o céu. O disco do sol só conta no raio da câmera, porque nos quiques o sol já entrou pela amostragem direta. Como luz, o céu é escalado por `ambientIntensity`, como a luz ambiente da rasterização, para que as duas imagens sejam comparáveis. Superfícies emissivas iluminam o que o caminho encontra.
+  - A média fica num RGBA32F por view e recomeça quando muda algo que ela vê: câmera, objetos, materiais, ossos, luzes, céu ou opções (uma chave FNV de tudo isso). Ela para em `pathTracerMaxSamples` (4096), e `RenderStats::pathSamples` traz a contagem.
+  - Converge quando a cena está parada; com física rodando, recomeça a cada frame. O TAA não se aplica a essa visualização.
+
 Próximos passos:
-1. Um path tracer de referência (vários quiques, acumulação entre frames) sobre o pipeline de RT.
-2. Shaders de RT do jogo (raygen/miss/hit pela `ShaderLibrary`).
-3. Reflexos e AO por ray query no mesmo pass forward.
-4. Compactação de BLAS e refit da TLAS para cenas grandes.
+1. Shaders de RT do jogo (raygen/miss/hit pela `ShaderLibrary`).
+2. Reflexos e AO por ray query no mesmo pass forward.
+3. Compactação de BLAS e refit da TLAS para cenas grandes.
 
 ## Roadmap geral
 

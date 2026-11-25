@@ -145,6 +145,10 @@ enum class DebugView : u32 {
     ///        shadow rays to every light. A reference for the rasterized image; needs
     ///        Renderer::rayTracingPipelineAvailable() (otherwise the normal image).
     RayTraced,
+    /// @brief A reference path tracer (a ray tracing pipeline): light bounced around the scene
+    ///        (RenderSettings::pathTracerBounces), averaged over frames while nothing changes
+    ///        (camera, objects, lights, sky): it converges when the scene holds still.
+    PathTraced,
 };
 
 /// @brief HDR → display mapping.
@@ -244,6 +248,8 @@ struct RenderSettings {
     bool ssao = true;
     f32 ssaoRadius = 0.5f;    ///< How far around a point is looked at (m).
     f32 ssaoIntensity = 1.5f; ///< How dark it gets (the occlusion raised to this power).
+    u32 pathTracerBounces = 4;      ///< DebugView::PathTraced: bounces after the first hit (0: direct light only).
+    u32 pathTracerMaxSamples = 4096; ///< DebugView::PathTraced: it stops adding paths after this many per pixel.
     f32 shadowBias = 0.02f;                      ///< Shadow ray origin offset along the normal (world units).
     f32 ambientIntensity = 0.3f;                 ///< Strength of the hemisphere ambient light.
     glm::vec3 skyZenith{0.22f, 0.42f, 0.85f};    ///< Sky color straight up (also the ambient's upper color).
@@ -292,6 +298,7 @@ struct RenderStats {
     /// @brief The auto exposure the GPU chose (RenderSettings::autoExposure; 0 when off), read back a
     ///        few frames later: of the last view rendered.
     f32 autoExposure = 0.0f;
+    u32 pathSamples = 0; ///< DebugView::PathTraced: paths per pixel averaged so far (last view rendered).
 };
 
 /// @brief Where in the frame Renderer::addRenderPasses adds passes.
@@ -371,6 +378,11 @@ private:
     glm::mat4 m_prevViewProjNoJitter{1.0f};
     std::unordered_map<u64, glm::mat4> m_prevModels, m_models;
     std::unordered_map<u64, std::vector<glm::mat4>> m_prevJoints, m_joints; // skinned: the joint matrices (TAA)
+    // Path tracer: the running average (RGBA32F), its paths per pixel, and a key of everything it
+    // depends on (camera, objects, lights, sky, options): another key starts it over.
+    rhi::TextureHandle m_accumulation;
+    u32 m_pathSamples = 0;
+    u64 m_pathKey = 0;
 };
 
 /// @brief Hybrid forward renderer: rasterized PBR shading with ray-queried shadows.
@@ -575,6 +587,7 @@ private:
     rhi::PipelineHandle m_ssaoApplyPipeline;  // ssao.frag: applied to the image (HDR)
     rhi::PipelineHandle m_taaPipeline;        // taa.frag: the temporal resolve (HDR)
     rhi::PipelineHandle m_rtPipeline;         // rt_*: the ray traced reference view (ray tracing pipeline)
+    rhi::PipelineHandle m_ptPipeline;         // pt_*: the reference path tracer (ray tracing pipeline)
     std::vector<rhi::BufferHandle> m_exposureReadback; // per frame in flight: the exposure chosen, read back later
     std::vector<rhi::BufferHandle> m_cullCounters; // per frame in flight: GPU culling statistics, read back later
     // Per frame in flight: what GPU culling writes (draw commands, visible lists, states, counters),

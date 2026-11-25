@@ -450,10 +450,18 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     bool vsync = dev.vsync();
     if (ImGui::Checkbox("VSync", &vsync)) dev.setVSync(vsync);
 
-    const char* views[] = {"Lit", "Normals", "Sun shadows", "Albedo", "Ambient occlusion", "Motion (TAA)", "Ray traced (reference)"};
-    const int viewCount = ctx.renderer().rayTracingPipelineAvailable() ? 7 : 6; // the last needs RT pipelines
+    const char* views[] = {"Lit",          "Normals",       "Sun shadows", "Albedo", "Ambient occlusion",
+                           "Motion (TAA)", "Ray traced (reference)", "Path traced (reference)"};
+    const int viewCount = ctx.renderer().rayTracingPipelineAvailable() ? 8 : 6; // the last two need RT pipelines
     int dv = static_cast<int>(s.debugView);
     if (ImGui::Combo("Debug view", &dv, views, viewCount)) s.debugView = static_cast<DebugView>(dv);
+    if (s.debugView == DebugView::PathTraced) {
+        ImGui::Text("Path tracer: %u paths per pixel (still scenes converge)", st.pathSamples);
+        int bounces = static_cast<int>(s.pathTracerBounces), maxSamples = static_cast<int>(s.pathTracerMaxSamples);
+        if (ImGui::SliderInt("Bounces", &bounces, 0, 16)) s.pathTracerBounces = static_cast<u32>(bounces);
+        if (ImGui::SliderInt("Max paths", &maxSamples, 1, 65536, "%d", ImGuiSliderFlags_Logarithmic))
+            s.pathTracerMaxSamples = static_cast<u32>(maxSamples);
+    }
     if (ImGui::TreeNode("Ambient occlusion (SSAO)")) {
         ImGui::Checkbox("Enabled", &s.ssao);
         ImGui::SliderFloat("Radius", &s.ssaoRadius, 0.05f, 3.0f, "%.2f m");

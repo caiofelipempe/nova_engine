@@ -4,8 +4,9 @@
 #define NOVA_SKY_GLSL
 #include "nova/common.glsl"
 
-// Radiance seen along `dir` (unit), from the frame's sky colors and sun.
-vec3 nova_skyColor(FrameBuffer frame, vec3 dir) {
+// Radiance seen along `dir` (unit), from the frame's sky colors and sun; `sunDisc` false leaves
+// out the sun's disc (rays that bounced, when the sun is sampled directly).
+vec3 nova_skyRadiance(FrameBuffer frame, vec3 dir, bool sunDisc) {
     vec3 zenith = frame.data.skyZenith.rgb;
     vec3 horizon = frame.data.skyHorizon.rgb;
     vec3 ground = frame.data.groundColor.rgb;
@@ -14,8 +15,10 @@ vec3 nova_skyColor(FrameBuffer frame, vec3 dir) {
     vec3 L = -normalize(frame.data.sunDirection.xyz);
     float s = max(dot(dir, L), 0.0);
     vec3 sun = frame.data.sunColor.rgb * frame.data.sunDirection.w;
-    color += sun * (smoothstep(0.9994, 0.9997, s) * 8.0 + pow(s, 96.0) * 0.15);
+    color += sun * ((sunDisc ? smoothstep(0.9994, 0.9997, s) * 8.0 : 0.0) + pow(s, 96.0) * 0.15);
     return color;
 }
+
+vec3 nova_skyColor(FrameBuffer frame, vec3 dir) { return nova_skyRadiance(frame, dir, true); }
 
 #endif // NOVA_SKY_GLSL

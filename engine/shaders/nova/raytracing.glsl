@@ -13,6 +13,8 @@ layout(push_constant) uniform RtPush {
     uint64_t tlas;
     uint outputImage; // storage image (set 0, binding 1)
     float bias;       // offset of secondary rays along the normal (m)
+    uint sampleIndex; // path tracer: samples already in the image (0 = start over)
+    uint bounces;     // path tracer: bounces after the first hit
 } pc;
 
 // Bindless storage images (set 0, binding 1).
@@ -25,6 +27,18 @@ layout(set = 0, binding = 1, rgba16f) uniform image2D g_images[];
 struct NovaPrimaryPayload {
     vec3 color; // radiance along the ray
     float hitT; // distance to the hit, < 0 = missed
+};
+
+// What the path tracer's closest hit reports: the surface, shaded by the ray generation shader.
+struct NovaSurfacePayload {
+    vec3 position;
+    float hitT; // < 0 = missed
+    vec3 normal;
+    float metallic;
+    vec3 albedo;
+    float roughness;
+    vec3 emissive;
+    float _pad;
 };
 
 // What a ray hit: the triangle's interpolated attributes, through the instance's transform.
@@ -47,6 +61,32 @@ NovaHit nova_hitSurface(InstanceData inst, uint primitive, vec2 bary, vec3 rayOr
     if (dot(h.normal, rayDir) > 0.0) h.normal = -h.normal;
     h.uv = nova_materialUv(inst, vec2(a.u, a.v) * w.x + vec2(b.u, b.v) * w.y + vec2(c.u, c.v) * w.z);
     return h;
+}
+
+// The material at a hit: base color (and its texture), checker, metallic-roughness, emissive.
+struct NovaHitMaterial {
+    vec3 albedo;
+    float metallic;
+    vec3 emissive;
+    float roughness;
+};
+
+NovaHitMaterial nova_hitMaterial(InstanceData inst, NovaHit hit, vec3 originTiled) {
+    NovaHitMaterial m;
+    const int tex = int(inst.params.w);
+    m.albedo = inst.baseColor.rgb * (tex >= 0 ? textureLod(g_textures[nonuniformEXT(tex)], hit.uv, 0.0).rgb : vec3(1.0));
+    if ((floatBitsToUint(inst.params.z) & MATERIAL_FLAG_CHECKER) != 0u) {
+        const vec2 cell = floor((hit.position + originTiled).xz);
+        m.albedo *= mod(cell.x + cell.y, 2.0) < 1.0 ? 1.0 : 0.6;
+    }
+    const int mrTex = int(inst.maps.y);
+    const vec4 mr = mrTex >= 0 ? textureLod(g_textures[nonuniformEXT(mrTex)], hit.uv, 0.0) : vec4(1.0);
+    m.metallic = clamp(inst.params.x * mr.b, 0.0, 1.0);
+    m.roughness = clamp(inst.params.y * mr.g, 0.04, 1.0);
+    const int emTex = int(inst.maps.w);
+    m.emissive = inst.emissive.rgb * inst.emissive.w *
+                 (emTex >= 0 ? textureLod(g_textures[nonuniformEXT(emTex)], hit.uv, 0.0).rgb : vec3(1.0));
+    return m;
 }
 
 // Cut-out materials (alpha Mask): false where the surface is transparent (the any hit ignores it).

@@ -24,19 +24,9 @@ void main() {
     const NovaHit hit = nova_hitSurface(inst, gl_PrimitiveID, bary, gl_WorldRayOriginEXT, gl_WorldRayDirectionEXT, gl_HitTEXT);
     const vec3 N = hit.normal, V = -gl_WorldRayDirectionEXT, P = hit.position;
 
-    const int tex = int(inst.params.w);
-    vec3 albedo = inst.baseColor.rgb * (tex >= 0 ? textureLod(g_textures[nonuniformEXT(tex)], hit.uv, 0.0).rgb : vec3(1.0));
-    if ((floatBitsToUint(inst.params.z) & MATERIAL_FLAG_CHECKER) != 0u) {
-        const vec2 cell = floor((P + pc.frame.data.originTiled.xyz).xz);
-        albedo *= mod(cell.x + cell.y, 2.0) < 1.0 ? 1.0 : 0.6;
-    }
-    const int mrTex = int(inst.maps.y);
-    const vec4 mr = mrTex >= 0 ? textureLod(g_textures[nonuniformEXT(mrTex)], hit.uv, 0.0) : vec4(1.0);
-    const float metallic = clamp(inst.params.x * mr.b, 0.0, 1.0);
-    const float roughness = clamp(inst.params.y * mr.g, 0.04, 1.0);
-    const int emTex = int(inst.maps.w);
-    const vec3 emissive = inst.emissive.rgb * inst.emissive.w *
-                          (emTex >= 0 ? textureLod(g_textures[nonuniformEXT(emTex)], hit.uv, 0.0).rgb : vec3(1.0));
+    const NovaHitMaterial mat = nova_hitMaterial(inst, hit, pc.frame.data.originTiled.xyz);
+    const vec3 albedo = mat.albedo, emissive = mat.emissive;
+    const float metallic = mat.metallic, roughness = mat.roughness;
 
     const vec3 origin = P + N * pc.bias;
     vec3 color = emissive;

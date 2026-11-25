@@ -33,6 +33,19 @@ ShaderDesc loadShader(const char* name) {
     return desc;
 }
 
+// FNV-1a over bytes: the path tracer's key of what its image depends on.
+struct KeyHasher {
+    u64 value = 1469598103934665603ull;
+    void add(const void* data, size_t size) {
+        const auto* bytes = static_cast<const u8*>(data);
+        for (size_t i = 0; i < size; ++i) value = (value ^ bytes[i]) * 1099511628211ull;
+    }
+    template <class T>
+    void add(const T& v) {
+        add(&v, sizeof(T));
+    }
+};
+
 void toInstanceTransform(const glm::mat4& m, f32 out[3][4]) {
     for (int r = 0; r < 3; ++r)
         for (int c = 0; c < 4; ++c) out[r][c] = m[c][r]; // glm is column-major; AS wants row-major 3x4
@@ -144,6 +157,9 @@ void RenderView::destroy() {
         h = {};
     }
     m_historyValid = false;
+    if (m_accumulation) d.destroyTexture(m_accumulation);
+    m_accumulation = {};
+    m_pathSamples = 0;
     m_hdr = m_depth = m_output = {};
 }
 
@@ -191,7 +207,8 @@ Renderer::~Renderer() {
     m_skinnedShapes.clear();
     for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline,
                              m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline, m_hizPipeline, m_bloomPipeline, m_exposurePipeline,
-                             m_ssaoPipeline, m_ssaoApplyPipeline, m_taaPipeline, m_rtPipeline})
+                             m_ssaoPipeline, m_ssaoApplyPipeline, m_taaPipeline, m_rtPipeline,
+                             m_ptPipeline})
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_fxaaPipelines) m_device.destroyPipeline(p);
@@ -317,6 +334,14 @@ void Renderer::createPipelines() {
         rt.maxRecursionDepth = 2; // shadow rays from the closest hit
         rt.debugName = "pipeline.rt.reference";
         m_rtPipeline = m_device.createRayTracingPipeline(rt);
+
+        RayTracingPipelineDesc pt; // the path tracer: every ray from its ray generation shader
+        pt.rayGen = loadShader("pt_reference.rgen");
+        pt.miss = {loadShader("pt_surface.rmiss"), loadShader("rt_shadow.rmiss")};
+        pt.hitGroups = {{loadShader("pt_surface.rchit"), alpha}, {ShaderDesc{}, alpha}};
+        pt.maxRecursionDepth = 1;
+        pt.debugName = "pipeline.pt.reference";
+        m_ptPipeline = m_device.createRayTracingPipeline(pt);
     }
 
     if (m_device.caps().rayQuery) {
@@ -822,7 +847,8 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
 
     // ---- per-frame constants
     // TAA: the projection moved by a sub-pixel amount, different every frame (Halton 2, 3; 8 steps).
-    const bool taa = s.antiAliasing == AntiAliasing::TAA && m_taaPipeline;
+    // (Not for the path tracer: it jitters its own paths and averages them itself.)
+    const bool taa = s.antiAliasing == AntiAliasing::TAA && m_taaPipeline && s.debugView != DebugView::PathTraced;
     glm::vec2 jitter(0.0f); // NDC
     if (taa) {
         auto halton = [](u32 i, u32 base) {
@@ -856,7 +882,8 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     const bool useRt = s.rayTracedShadows && m_device.caps().rayQuery && !m_tlas.empty();
     // The ray traced reference view traces the TLAS too (built for it even without ray-traced shadows).
     const bool rtView = s.debugView == DebugView::RayTraced && m_rtPipeline && !m_tlas.empty();
-    const bool buildTlas = useRt || rtView;
+    const bool ptView = s.debugView == DebugView::PathTraced && m_ptPipeline && !m_tlas.empty();
+    const bool buildTlas = useRt || rtView || ptView;
 
     // GPU culling statistics, counted by the GPU the last time this frame slot ran (it has finished).
     if (!m_cullCountersRead && !m_cullCounters.empty()) {
@@ -1030,6 +1057,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         tlasRecords = static_cast<AccelStructInstance*>(tlasAlloc.cpu);
     }
     u32 tlasCount = 0;
+    KeyHasher pathKey; // the path tracer's: objects here, then the camera, lights and sky
     for (u32 i = 0; i < drawCount; ++i) {
         const WrapInstance& di = m_instances[i];
         const DrawItem& d = scene.draws[di.draw];
@@ -1037,6 +1065,17 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         glm::mat4 model = d.transform;
         model[3] += glm::vec4(di.offset, 0.0f); // a copy in another lap: whole laps over
         inst.model = model;
+        if (ptView) { // what the path tracer sees of it
+            pathKey.add(model);
+            pathKey.add(d.mesh.id);
+            pathKey.add(d.material.baseColor);
+            pathKey.add(d.material.emissive);
+            pathKey.add(d.material.emissiveStrength);
+            pathKey.add(d.material.metallic);
+            pathKey.add(d.material.roughness);
+            pathKey.add(d.material.baseColorTexture);
+            pathKey.add(d.castShadows);
+        }
         // Where it was last frame (from this frame's origin, in the same lap); still if unknown.
         glm::mat4 prevModel = model;
         if (d.objectKey) {
@@ -1502,6 +1541,53 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             ctx.cmd.traceRays(size.width, size.height);
         });
         sceneColor = traced;
+    }
+
+    // ---- the reference path tracer: one more path per pixel into the view's running average,
+    // started over when anything it sees changes; the average is the image from here on
+    if (ptView) {
+        pathKey.add(viewProjNoJitter);
+        for (int i = 0; i < 3; ++i) pathKey.add(scene.camera.origin.raw(i));
+        pathKey.add(scene.sun);
+        for (const PointLightData& l : scene.pointLights) { // field by field: the struct has padding
+            pathKey.add(l.position);
+            pathKey.add(l.radius);
+            pathKey.add(l.color);
+            pathKey.add(l.intensity);
+            pathKey.add(l.castShadows);
+        }
+        if (!scene.joints.empty()) pathKey.add(scene.joints.data(), scene.joints.size() * sizeof(glm::mat4));
+        pathKey.add(s.skyZenith);
+        pathKey.add(s.skyHorizon);
+        pathKey.add(s.groundColor);
+        pathKey.add(s.pathTracerBounces);
+        pathKey.add(extent);
+        if (!view.m_accumulation) {
+            view.m_accumulation = m_device.createTexture({extent.width, extent.height, 1, Format::RGBA32_FLOAT,
+                                                          TextureUsage::Storage | TextureUsage::Sampled, "view.pathTracer"});
+            view.m_pathSamples = 0;
+        }
+        if (pathKey.value != view.m_pathKey) {
+            view.m_pathKey = pathKey.value;
+            view.m_pathSamples = 0;
+        }
+        const RGTexture accumulation = graph.import("path traced", view.m_accumulation, extent, Format::RGBA32_FLOAT);
+        if (view.m_pathSamples < std::max(s.pathTracerMaxSamples, 1u)) {
+            gpu::RtPush push{frameAddress, instAlloc.gpu, builtTlas, 0u, std::max(s.shadowBias, 1e-3f)};
+            push.sampleIndex = view.m_pathSamples++;
+            push.bounces = std::min(s.pathTracerBounces, 32u);
+            const PipelineHandle pipeline = m_ptPipeline;
+            const Extent2D size = extent;
+            graph.addPass("Path traced").storage(accumulation).execute([=, this](RenderPassContext& ctx) {
+                gpu::RtPush p = push;
+                p.outputImage = m_device.storageIndex(ctx.texture(accumulation));
+                ctx.cmd.bindPipeline(pipeline);
+                ctx.cmd.pushConstants(p);
+                ctx.cmd.traceRays(size.width, size.height);
+            });
+        }
+        m_stats.pathSamples = view.m_pathSamples;
+        sceneColor = accumulation;
     }
 
     // ---- TAA: this frame blended into the view's history (two images, written in turn); the

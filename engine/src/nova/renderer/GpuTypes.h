@@ -210,8 +210,10 @@ struct RtPush {
     u64 tlas;         ///< The frame's TLAS.
     u32 outputImage;  ///< Storage image index of the result.
     f32 bias;         ///< Secondary rays start this far off the surface (m).
+    u32 sampleIndex = 0; ///< Path tracer: samples already in the image (0: start over).
+    u32 bounces = 0;     ///< Path tracer: bounces after the first hit.
 };
-static_assert(sizeof(RtPush) == 32);
+static_assert(sizeof(RtPush) == 40);
 
 /// @brief Push constants of taa.frag.
 struct TaaPush {
