@@ -6,6 +6,7 @@
 #include "nova/editor/Tool.h"
 #include "nova/editor/Widgets.h"
 #include "nova/editor/builtin/CoreTools.h"
+#include "nova/platform/Input.h"
 
 #include <imgui.h> // must precede ImGuizmo.h
 #include <ImGuizmo.h>
@@ -88,7 +89,7 @@ ViewportPanel::ViewportPanel() : Panel("Viewport", DockSlot::Center) { noPadding
 void ViewportPanel::onAttach(EditorContext& ctx) { m_view = ctx.renderer().createView({1280, 720}); }
 
 void ViewportPanel::onDetach(EditorContext& ctx) {
-    if (ctx.inputCaptured()) ctx.app().window().setCursorCaptured(false);
+    if (ctx.inputCaptured()) Input::setCursorCaptured(false);
     ctx.setInputCaptured(false);
     m_view.reset();
 }
@@ -99,7 +100,7 @@ void ViewportPanel::onUpdate(EditorContext& ctx, f32 dt) {
 
     const bool wasActive = ctx.inputCaptured();
     const bool active = ctx.camera().update(dt, m_hovered);
-    if (active != wasActive) ctx.app().window().setCursorCaptured(active);
+    if (active != wasActive) Input::setCursorCaptured(active);
     ctx.setInputCaptured(active);
 }
 
@@ -449,6 +450,7 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     ImGui::EndDisabled();
     bool vsync = dev.vsync();
     if (ImGui::Checkbox("VSync", &vsync)) dev.setVSync(vsync);
+    ImGui::SliderFloat("Look sensitivity", &ctx.camera().lookSensitivity, 0.0001f, 0.005f, "%.4f rad", ImGuiSliderFlags_Logarithmic);
 
     const char* views[] = {"Lit",          "Normals",       "Sun shadows", "Albedo", "Ambient occlusion",
                            "Motion (TAA)", "Ray traced (reference)", "Path traced (reference)"};

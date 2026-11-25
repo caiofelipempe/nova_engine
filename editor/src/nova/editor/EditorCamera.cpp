@@ -19,7 +19,7 @@ bool EditorCamera::update(f32 dt, bool hovered) {
         return false;
     }
     m_active = true;
-    glm::vec2 d = Input::mouseDelta() * 0.0025f;
+    glm::vec2 d = Input::mouseDelta() * lookSensitivity;
     yaw -= d.x;
     pitch = glm::clamp(pitch - d.y, -1.55f, 1.55f);
 

@@ -127,7 +127,14 @@ public:
     /// @brief Cursor position in window coordinates.
     static glm::vec2 mousePosition();
     /// @brief Cursor movement since the previous frame, in pixels, screen convention (+Y = down).
+    ///        With the cursor captured, raw mouse counts where the platform has them.
     static glm::vec2 mouseDelta();
+    /// @brief Hides and locks the cursor for mouse look (unbounded movement, raw counts without
+    ///        the OS pointer acceleration where available), or gives it back. The jump the platform
+    ///        makes when it moves the cursor is not reported as motion.
+    static void setCursorCaptured(bool captured);
+    /// @brief True while setCursorCaptured(true) holds.
+    static bool cursorCaptured();
     /// @brief Wheel movement during the last frame (positive = away from the user).
     static f32 scrollDelta();
     /// @}

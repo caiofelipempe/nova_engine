@@ -56,7 +56,7 @@ Requisitos: Visual Studio 2022, CMake ≥ 3.25, Vulkan SDK (glslc), vcpkg com `V
 cmake --preset windows-vs2022
 cmake --build --preset debug      # ou release
 build\bin\Debug\NovaEditor.exe
-build\bin\Debug\Sandbox.exe       # bancada de física (--check: determinismo de todos os cenários; --frames N: sai após N frames e grava as estatísticas de render no nova.log; --paused: começa com a simulação pausada)
+build\bin\Debug\Sandbox.exe       # bancada de física (--check: determinismo de todos os cenários; --frames N: sai após N frames e grava no nova.log as estatísticas de render e os tempos de frame (média, mínimo, mediana, p99, máximo, frames irregulares); --paused: começa com a simulação pausada)
 ctest --preset debug              # testes headless (física, cenas, assets, shaders, espaço do mundo, tempo, cenários, input, editor, hot reload)
 doxygen docs/Doxyfile             # referência da API em build/docs/html (requer Doxygen)
 ```
@@ -126,6 +126,7 @@ for (nova::u32 p = 0; p < nova::Input::playerCount(); ++p) {
 - Analógicos com **zona morta radial** reescalada (padrão 0.15) e +Y = cima; gatilhos de 0 a 1 com zona morta própria.
 - Consultas diretas por dispositivo continuam disponíveis (`isKeyPressed`, `isMouseButtonPressed`, `isGamepadButtonPressed`, `gamepadLeftStick`, `gamepadDpad`…); controles sem mapeamento (volantes, manches) via `Input::joystickState` (eixos, botões e hats crus); mapeamentos extras com `Input::addGamepadMappings`.
 - Conexões e desconexões aparecem no log; no cenário Gamepads do Sandbox, cada gamepad conectado ganha uma bola controlável.
+- **Olhar com o mouse:** `Input::setCursorCaptured(true)` esconde e trava o cursor. O movimento fica sem limite de tela e vem em contagens brutas do mouse, sem a aceleração do ponteiro do sistema; o salto que a plataforma faz ao reposicionar o cursor não conta como movimento. O editor e o Sandbox capturam enquanto o botão direito está pressionado e giram 0,0008 rad por contagem, perto do padrão dos jogos. Valores bem maiores fazem cada contagem andar vários pixels na tela, e a rotação fica espaçada em movimentos lentos. No editor, a opção é `EditorCamera::lookSensitivity`, também no painel Renderer.
 
 ## Editor extensível
 

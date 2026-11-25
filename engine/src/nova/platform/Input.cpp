@@ -20,6 +20,7 @@ glm::vec2 g_lastMouse{0.0f};
 glm::vec2 g_mouseDelta{0.0f};
 f32 g_scroll = 0.0f;
 bool g_firstFrame = true;
+bool g_cursorCaptured = false;
 std::array<bool, static_cast<size_t>(Key::Count)> g_prevKeys{};
 std::array<bool, static_cast<size_t>(Key::Count)> g_currKeys{};
 std::array<bool, static_cast<size_t>(MouseButton::Count)> g_prevMouse{};
@@ -97,6 +98,7 @@ const ActionBinding* findAction(const std::string& name) {
 void Input::setWindow(platform::Window* window) {
     s_window = window;
     g_firstFrame = true;
+    g_cursorCaptured = false;
     g_pads.clear();
     g_prevKeys = g_currKeys = {};
     g_prevMouse = g_currMouse = {};
@@ -205,6 +207,15 @@ bool Input::isMouseButtonPressed(MouseButton button) {
 }
 glm::vec2 Input::mousePosition() { return s_window ? s_window->mousePosition() : glm::vec2(0.0f); }
 glm::vec2 Input::mouseDelta() { return g_mouseDelta; }
+
+void Input::setCursorCaptured(bool captured) {
+    if (!s_window || captured == g_cursorCaptured) return;
+    g_cursorCaptured = captured;
+    s_window->setCursorCaptured(captured);
+    g_lastMouse = s_window->mousePosition(); // the platform moved the cursor: no motion from that
+}
+
+bool Input::cursorCaptured() { return g_cursorCaptured; }
 f32 Input::scrollDelta() { return g_scroll; }
 
 // ---------------------------------------------------------------- gamepads --

@@ -18,6 +18,9 @@ public:
     f32 pitch = -0.3f;                     ///< Radians; positive looks up.
     f32 fovY = glm::radians(60.0f);        ///< Vertical field of view in radians.
     f32 speed = 6.0f;                      ///< Movement speed in units per second.
+    /// @brief Radians turned per mouse count (raw input while looking). 0.0008 ≈ a common game
+    ///        default; higher is faster but each count moves the image further (steppier).
+    f32 lookSensitivity = 0.0008f;
 
     /// @brief World-space view direction.
     glm::vec3 forward() const;

@@ -21,7 +21,7 @@ void bindControls() {
     using nova::Input;
     Input::bindAxis("Move", {.up = nova::Key::W, .down = nova::Key::S, .left = nova::Key::A, .right = nova::Key::D,
                              .stick = nova::GamepadStick::Left});
-    Input::bindAxis("Look", {.mouseDelta = true, .mouseScale = 0.003f});
+    Input::bindAxis("Look", {.mouseDelta = true, .mouseScale = 0.0008f}); // radians per raw mouse count
     Input::bindAction("Fast", {.keys = {nova::Key::LeftShift}});
     Input::bindAction("Shoot", {.keys = {nova::Key::F}, .mouseButtons = {nova::MouseButton::Left}});
     Input::bindAction("Jump", {.keys = {nova::Key::Space}, .gamepadButtons = {nova::GamepadButton::A}});
@@ -119,7 +119,21 @@ public:
     // Like GameLayer::onUpdate, plus pause, single step and time scale.
     void onUpdate(float dt) override {
         if (s_quitAfterFrames == 1 && !s_screenshot.empty()) renderer().captureNextFrame(s_screenshot);
+        if (s_quitAfterFrames >= 0) { // frame pacing over the run (the first frames, loading, left out)
+            if (++m_paceFrames > 10) m_frameTimes.push_back(dt * 1000.0f);
+        }
         if (s_quitAfterFrames >= 0 && s_quitAfterFrames-- == 0) {
+            if (!m_frameTimes.empty()) {
+                std::vector<float> t = m_frameTimes;
+                std::sort(t.begin(), t.end());
+                float sum = 0.0f;
+                for (float v : t) sum += v;
+                const float mean = sum / static_cast<float>(t.size());
+                int uneven = 0; // frames off the mean by more than half of it
+                for (float v : m_frameTimes) uneven += std::abs(v - mean) > 0.5f * mean;
+                NOVA_INFO("[frames] frame time ms: mean {:.2f} | min {:.2f} | median {:.2f} | p99 {:.2f} | max {:.2f} | uneven {} of {}",
+                          mean, t.front(), t[t.size() / 2], t[t.size() * 99 / 100], t.back(), uneven, t.size());
+            }
             const nova::RenderStats& st = renderer().stats();
             NOVA_INFO("[frames] draws {} | graph passes {} ({} dropped) | auto exposure {:.3f} | path samples {}", st.drawCalls,
                       st.graphPasses, st.graphCulled, st.autoExposure, st.pathSamples);
@@ -137,6 +151,8 @@ public:
         using nova::Input, nova::Key;
         const Scenario& sc = scenarios()[m_current];
         const bool keyboard = !ImGui::GetIO().WantCaptureKeyboard, mouse = !ImGui::GetIO().WantCaptureMouse;
+        // Mouse look while RMB is held: the cursor captured (raw counts, no OS acceleration, no screen edge).
+        nova::Input::setCursorCaptured(nova::Input::isMouseButtonDown(nova::MouseButton::Right));
         if (keyboard) {
             if (Input::isKeyPressed(Key::Escape)) app().quit();
             if (Input::isKeyPressed(Key::P)) m_paused = !m_paused;
@@ -466,6 +482,8 @@ private:
     bool m_showColliders = false, m_showContacts = true;
     nova::Entity m_camera;
     float m_yaw = 0.0f, m_pitch = 0.0f;           // fly camera
+    int m_paceFrames = 0;                          // --frames: frame times, logged at the end
+    std::vector<float> m_frameTimes;
     float m_orbitYaw = 0.0f, m_orbitPitch = -0.35f; // character camera
     std::vector<nova::Entity> m_spawned;      // scenario actions (bullets, dropped boxes)
     std::vector<nova::Entity> m_projectiles;  // shots
