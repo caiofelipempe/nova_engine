@@ -1,9 +1,11 @@
 #version 460
 // Screen-space ambient occlusion, from the depth buffer alone (the forward renderer keeps no
 // normals): positions and normals are rebuilt from depth.
-//  mode 0: the occlusion (R8): 16 samples in the normal's hemisphere, within `radius` (m),
-//          rotated per pixel (interleaved gradient noise; with TAA also per frame); 1 = open.
-//  mode 1: applies it (HDR): the occlusion blurred over 5 × 5 pixels of similar depth, then the
+//  mode 0: the occlusion (R8, half resolution: each texel for the full-resolution pixel 2·p): 16
+//          samples in the normal's hemisphere, within `radius` (m), rotated per pixel
+//          (interleaved gradient noise; with TAA also per frame); 1 = open.
+//  mode 1: applies it (HDR): the occlusion blurred over 3 × 3 half-resolution texels of similar
+//          depth (6 × 6 pixels), then the
 //          ambient light's share of the image (the forward pass's second output) darkened by it.
 //  mode 2: the blurred occlusion as gray (DebugView::AmbientOcclusion).
 #include "nova/common.glsl"
@@ -80,19 +82,24 @@ float occlusion(ivec2 pixel) {
     return pow(clamp(1.0 - occluded / float(kSamples), 0.0, 1.0), pc.intensity);
 }
 
-// The occlusion over 5 × 5 pixels, each weighted by how near its depth is to this one's.
+// The half-resolution occlusion over the 3 × 3 texels around this pixel, each weighted by how
+// near the depth of the pixel it was computed for is to this one's.
 float blurredOcclusion(ivec2 pixel) {
     const float depth = depthAt(pixel);
     if (depth >= 1.0) return 1.0;
     const float z = viewPosition((vec2(pixel) + 0.5) * pc.texel, depth).z;
     float sum = 0.0, weight = 0.0;
-    const ivec2 size = ivec2(round(1.0 / pc.texel));
-    for (int y = -2; y <= 2; ++y)
-        for (int x = -2; x <= 2; ++x) {
-            const ivec2 q = clamp(pixel + ivec2(x, y), ivec2(0), size - 1);
+    const ivec2 halfSize = (ivec2(round(1.0 / pc.texel)) + 1) / 2;
+    const ivec2 center = pixel / 2;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            const ivec2 h = clamp(center + ivec2(x, y), ivec2(0), halfSize - 1);
+            const ivec2 q = h * 2; // the pixel this texel's occlusion was computed for
             const float qz = viewPosition((vec2(q) + 0.5) * pc.texel, depthAt(q)).z;
+            // Even weights (a box: it also hides the noise pattern; a tent toward the nearest texel
+            // let it show), times the depth match.
             const float w = exp(-abs(qz - z) / (0.02 * abs(z) + 0.01));
-            sum += texelFetch(g_textures[nonuniformEXT(pc.aoTexture)], q, 0).r * w;
+            sum += texelFetch(g_textures[nonuniformEXT(pc.aoTexture)], h, 0).r * w;
             weight += w;
         }
     return sum / max(weight, 1e-4);
@@ -100,8 +107,8 @@ float blurredOcclusion(ivec2 pixel) {
 
 void main() {
     const ivec2 pixel = ivec2(gl_FragCoord.xy);
-    if (pc.mode == 0u) {
-        outColor = vec4(occlusion(pixel), 0.0, 0.0, 1.0);
+    if (pc.mode == 0u) { // half resolution
+        outColor = vec4(occlusion(pixel * 2), 0.0, 0.0, 1.0);
         return;
     }
     const float ao = blurredOcclusion(pixel);

@@ -1582,7 +1582,8 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     // ---- SSAO: the occlusion from depth, then the image with its ambient share darkened by it
     RGTexture sceneColor = hdrTex;
     if (ssao) {
-        const RGTexture aoTex = graph.create({extent.width, extent.height, Format::R8_UNORM, "ssao"});
+        // The occlusion at half resolution (a quarter of the pixels), blurred back up when applied.
+        const RGTexture aoTex = graph.create({(extent.width + 1) / 2, (extent.height + 1) / 2, Format::R8_UNORM, "ssao"});
         const RGTexture applied = graph.create({extent.width, extent.height, kHdrFormat, "ssao applied"});
         gpu::SsaoPush push{};
         push.frame = frameAddress;

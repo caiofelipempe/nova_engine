@@ -397,8 +397,8 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 
 **SSAO**, a oclusão ambiente em espaço de tela (`RenderSettings::ssao`, ligada por padrão):
 - o passe forward tem uma segunda saída, a parte da luz ambiente em cada pixel (`outAmbient` em `nova/material.glsl`; materiais do jogo a recebem sem mudar nada);
-- `ssao.frag` calcula a oclusão só a partir da profundidade, porque o renderer forward não guarda normais: posições e normais são reconstruídas dela. São 16 amostras no hemisfério da normal, até `ssaoRadius` (0,5 m), giradas por pixel;
-- outro passe desfoca a oclusão em 5 × 5 pixels de profundidade parecida e escurece só a parte ambiente da imagem (`ssaoIntensity`). Sol e point lights continuam com as próprias sombras;
+- `ssao.frag` calcula a oclusão só a partir da profundidade, porque o renderer forward não guarda normais: posições e normais são reconstruídas dela. São 16 amostras no hemisfério da normal, até `ssaoRadius` (0,5 m), giradas por pixel, em **meia resolução** (um quarto dos pixels: a 1080p, o SSAO custa cerca de 0,3 ms);
+- outro passe desfoca a oclusão em 3 × 3 texels de meia resolução de profundidade parecida e escurece só a parte ambiente da imagem (`ssaoIntensity`). Sol e point lights continuam com as próprias sombras;
 - `DebugView::AmbientOcclusion` mostra a oclusão. `Sandbox --no-ssao` desliga a opção, e `--debug-view 4` mostra a oclusão;
 - sem SSAO, a segunda saída fica sem textura (`DeviceCaps::unusedAttachments`, `VK_EXT_dynamic_rendering_unused_attachments`). Nas GPUs sem essa extensão, ela recebe uma textura transitória que ninguém lê.
 
