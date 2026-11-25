@@ -181,6 +181,21 @@ struct ExposurePush {
 };
 static_assert(sizeof(ExposurePush) == 56);
 
+/// @brief Push constants of ssao.frag.
+struct SsaoPush {
+    u64 frame;            ///< Address of FrameData.
+    u32 depthTexture;     ///< Bindless index of the depth buffer.
+    u32 mode;             ///< 0 occlusion, 1 apply, 2 show the occlusion.
+    u32 colorTexture;     ///< Modes 1, 2: the HDR image.
+    u32 ambientTexture;   ///< Modes 1, 2: the ambient light's share of it.
+    u32 aoTexture;        ///< Modes 1, 2: the occlusion.
+    u32 _pad0;
+    glm::vec2 texel;      ///< 1 / the image's size.
+    f32 radius;           ///< Sampling radius (m).
+    f32 intensity;        ///< The occlusion raised to this power.
+};
+static_assert(sizeof(SsaoPush) == 48);
+
 /// @brief Push constants of bloom.frag.
 struct BloomPush {
     u32 source, lower, mode; ///< mode: 0 first downsample, 1 downsample, 2 upsample.

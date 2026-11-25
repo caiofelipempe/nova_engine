@@ -450,9 +450,15 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     bool vsync = dev.vsync();
     if (ImGui::Checkbox("VSync", &vsync)) dev.setVSync(vsync);
 
-    const char* views[] = {"Lit", "Normals", "Sun shadows", "Albedo"};
+    const char* views[] = {"Lit", "Normals", "Sun shadows", "Albedo", "Ambient occlusion"};
     int dv = static_cast<int>(s.debugView);
-    if (ImGui::Combo("Debug view", &dv, views, 4)) s.debugView = static_cast<DebugView>(dv);
+    if (ImGui::Combo("Debug view", &dv, views, 5)) s.debugView = static_cast<DebugView>(dv);
+    if (ImGui::TreeNode("Ambient occlusion (SSAO)")) {
+        ImGui::Checkbox("Enabled", &s.ssao);
+        ImGui::SliderFloat("Radius", &s.ssaoRadius, 0.05f, 3.0f, "%.2f m");
+        ImGui::SliderFloat("Intensity", &s.ssaoIntensity, 0.25f, 4.0f, "%.2f");
+        ImGui::TreePop();
+    }
     const char* tms[] = {"ACES", "Reinhard", "None"};
     int tm = static_cast<int>(s.tonemapper);
     if (ImGui::Combo("Tonemapper", &tm, tms, 3)) s.tonemapper = static_cast<Tonemapper>(tm);

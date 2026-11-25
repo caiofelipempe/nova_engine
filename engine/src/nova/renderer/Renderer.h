@@ -12,6 +12,7 @@
 #include <glm/glm.hpp>
 
 #include <array>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -134,6 +135,7 @@ enum class DebugView : u32 {
     Normals, ///< World-space normals as colors.
     Shadows, ///< Sun visibility (white = lit).
     Albedo,  ///< Base color only.
+    AmbientOcclusion, ///< Screen-space ambient occlusion (RenderSettings::ssao; white = open).
 };
 
 /// @brief HDR → display mapping.
@@ -215,6 +217,11 @@ struct RenderSettings {
     f32 bloomThreshold = 0.0f;   ///< Brightness where blooming starts (0: everything blooms, physically).
     f32 bloomRadius = 1.0f;      ///< Size of the blur at each level (texels).
     u32 bloomLevels = 6;         ///< Levels of the chain (each half the size of the previous).
+    /// @brief Screen-space ambient occlusion: creases, corners and contact darken the ambient light
+    ///        (only it: the sun and point lights keep their own shadows), from the depth buffer.
+    bool ssao = true;
+    f32 ssaoRadius = 0.5f;    ///< How far around a point is looked at (m).
+    f32 ssaoIntensity = 1.5f; ///< How dark it gets (the occlusion raised to this power).
     f32 shadowBias = 0.02f;                      ///< Shadow ray origin offset along the normal (world units).
     f32 ambientIntensity = 0.3f;                 ///< Strength of the hemisphere ambient light.
     glm::vec3 skyZenith{0.22f, 0.42f, 0.85f};    ///< Sky color straight up (also the ambient's upper color).
@@ -435,6 +442,10 @@ public:
     const std::string& lastGraph() const { return m_lastGraph; }
     /// @}
 
+    /// @brief Saves the next render call's output (tonemapped, with the debug lines) as a PNG at
+    ///        `path`, once the GPU has finished it: for tests and bug reports.
+    void captureNextFrame(std::filesystem::path path);
+
     /// @brief Debug lines for this frame (drawn by every render call, cleared by beginFrame()).
     DebugDraw& debugDraw() { return m_debugDraw; }
 
@@ -522,6 +533,8 @@ private:
     rhi::PipelineHandle m_hizPipeline;        // hiz.comp: the depth pyramid
     rhi::PipelineHandle m_bloomPipeline;      // bloom.frag (HDR targets)
     rhi::PipelineHandle m_exposurePipeline;   // exposure.comp: auto exposure
+    rhi::PipelineHandle m_ssaoPipeline;       // ssao.frag: the occlusion (R8)
+    rhi::PipelineHandle m_ssaoApplyPipeline;  // ssao.frag: applied to the image (HDR)
     std::vector<rhi::BufferHandle> m_exposureReadback; // per frame in flight: the exposure chosen, read back later
     std::vector<rhi::BufferHandle> m_cullCounters; // per frame in flight: GPU culling statistics, read back later
     // Per frame in flight: what GPU culling writes (draw commands, visible lists, states, counters),
@@ -591,6 +604,17 @@ private:
 
     Scope<RenderView> m_backbufferView;
     GlobalPosition m_lastOrigin;
+
+    // captureNextFrame: requested, then copied into a buffer and written once the GPU is done.
+    std::filesystem::path m_capturePath;
+    struct PendingCapture {
+        rhi::BufferHandle buffer;
+        Extent2D extent;
+        bool bgra = false;
+        std::filesystem::path path;
+    };
+    std::optional<PendingCapture> m_pendingCapture;
+    void finishCapture();
 };
 
 } // namespace nova

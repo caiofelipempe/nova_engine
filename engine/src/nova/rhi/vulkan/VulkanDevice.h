@@ -111,6 +111,7 @@ public:
     void transition(TextureHandle texture, ResourceState state) override;
     void globalBarrier() override;
     void copyBuffer(BufferHandle src, BufferHandle dst, u64 size, u64 srcOffset, u64 dstOffset) override;
+    void copyTextureToBuffer(TextureHandle src, BufferHandle dst, u64 dstOffset) override;
     void buildTLAS(AccelStructHandle tlas, u64 instanceAddress, u32 instanceCount) override;
     void updateBLAS(AccelStructHandle blas) override;
     void beginDebugLabel(const char* name) override;

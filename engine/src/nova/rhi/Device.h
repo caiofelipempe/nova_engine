@@ -69,6 +69,9 @@ public:
     virtual void globalBarrier() = 0;
     /// @brief Copies `size` bytes between buffers.
     virtual void copyBuffer(BufferHandle src, BufferHandle dst, u64 size, u64 srcOffset = 0, u64 dstOffset = 0) = 0;
+    /// @brief Copies a texture's first mip into a buffer, rows tightly packed (the texture needs
+    ///        TextureUsage::TransferSrc and ends in ResourceState::CopySrc).
+    virtual void copyTextureToBuffer(TextureHandle src, BufferHandle dst, u64 dstOffset = 0) = 0;
 
     /// @brief (Re)builds a TLAS from an array of AccelStructInstance records in GPU memory.
     ///

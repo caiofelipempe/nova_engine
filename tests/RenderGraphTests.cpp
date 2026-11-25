@@ -149,6 +149,20 @@ void reuse() {
     });
 }
 
+void unusedColorSlot() {
+    // An invalid texture leaves a color slot unused (a pipeline's second output, not wanted this
+    // frame): the pass still compiles and its other attachments keep their dependencies.
+    RenderGraph g;
+    const RGTexture out = g.import("output", rhi::TextureHandle{}, kSize, Format::BGRA8_UNORM, ResourceState::ShaderRead);
+    const RGTexture hdr = g.create({kSize.width, kSize.height, Format::RGBA16_FLOAT, "hdr"});
+    g.addPass("Forward").color(hdr).color(RGTexture{});
+    g.addPass("Tonemap").sample(hdr).color(out, LoadOp::DontCare);
+    g.compile();
+    CHECK(g.culledCount() == 0 && g.transientCount() == 1);
+    CHECK(g.passes()[0].raster() && g.passes()[0].uses.size() == 2);
+    CHECK(g.describe().find("color (unused)") != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -158,6 +172,7 @@ int main() {
         {"loaded attachments depend on their writer; outputs keep their writers", loadsAndOutputs},
         {"transients share textures when their lifetimes do not overlap", aliasing},
         {"a graph is rebuilt every frame", reuse},
+        {"an invalid color texture leaves the slot unused", unusedColorSlot},
     };
     for (auto& [name, fn] : tests) {
         const int before = g_failures;

@@ -78,6 +78,9 @@ private:
 class RenderPassBuilder {
 public:
     /// @brief Draws into `t` as a color attachment (the graph begins and ends the rendering).
+    ///        Attachments are numbered in the order they are declared; an invalid `t` (RGTexture{})
+    ///        leaves that slot unused: the pipeline's writes to it are discarded (needs
+    ///        rhi::DeviceCaps::unusedAttachments).
     RenderPassBuilder& color(RGTexture t, rhi::LoadOp load = rhi::LoadOp::Clear, rhi::StoreOp store = rhi::StoreOp::Store,
                              std::array<f32, 4> clear = {0.0f, 0.0f, 0.0f, 1.0f});
     /// @brief Uses `t` as the depth attachment.

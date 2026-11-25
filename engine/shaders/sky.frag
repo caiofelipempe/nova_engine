@@ -5,6 +5,7 @@ layout(push_constant) uniform SkyPush { FrameBuffer frame; } pc;
 
 layout(location = 0) in vec2 vUV;
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outAmbient; // none: the sky is not occluded (forward pass's second output)
 
 void main() {
     vec2 ndc = vUV * 2.0 - 1.0;
@@ -24,4 +25,5 @@ void main() {
     color += sun * (smoothstep(0.9994, 0.9997, s) * 8.0 + pow(s, 96.0) * 0.15);
 
     outColor = vec4(color, 1.0);
+    outAmbient = vec4(0.0);
 }

@@ -383,6 +383,15 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 - o resultado é misturado ao HDR no tonemap (`bloomStrength`, padrão 0,04). Sem limiar, tudo brilha um pouco, como numa lente real; `bloomThreshold` > 0 limita o efeito ao que passa desse brilho, com transição suave;
 - todas as imagens são transitórias do render graph, e o painel Renderer do editor tem os controles. `Sandbox --no-bloom` desliga para comparar.
 
+**SSAO**, a oclusão ambiente em espaço de tela (`RenderSettings::ssao`, ligada por padrão):
+- o passe forward tem uma segunda saída, a parte da luz ambiente em cada pixel (`outAmbient` em `nova/material.glsl`; materiais do jogo a recebem sem mudar nada);
+- `ssao.frag` calcula a oclusão só a partir da profundidade, porque o renderer forward não guarda normais: posições e normais são reconstruídas dela. São 16 amostras no hemisfério da normal, até `ssaoRadius` (0,5 m), giradas por pixel;
+- outro passe desfoca a oclusão em 5 × 5 pixels de profundidade parecida e escurece só a parte ambiente da imagem (`ssaoIntensity`). Sol e point lights continuam com as próprias sombras;
+- `DebugView::AmbientOcclusion` mostra a oclusão. `Sandbox --no-ssao` desliga a opção, e `--debug-view 4` mostra a oclusão;
+- sem SSAO, a segunda saída fica sem textura (`DeviceCaps::unusedAttachments`, `VK_EXT_dynamic_rendering_unused_attachments`). Nas GPUs sem essa extensão, ela recebe uma textura transitória que ninguém lê.
+
+**Captura:** `Renderer::captureNextFrame("shot.png")` grava a saída da próxima renderização, depois do tonemap e com as linhas de debug, num PNG, assim que a GPU termina. `Sandbox --frames 120 --screenshot shot.png` usa isso.
+
 **Exposição automática** (`RenderSettings::autoExposure`, desligada por padrão), a adaptação do olho:
 - cada view mede a própria imagem HDR antes do tonemap (`exposure.comp`): um histograma de 256 faixas do log da luminância, de 2⁻¹² a 2¹², montado em memória compartilhada;
 - a média sai dos pixels entre 40% e 95% do histograma, então nem as sombras nem alguns pontos muito brilhantes decidem sozinhos;

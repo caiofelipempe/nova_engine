@@ -209,7 +209,7 @@ enum class StoreOp : u8 { Store, DontCare };
 
 /// @brief A color attachment of a render pass.
 struct ColorAttachment {
-    TextureHandle texture;                       ///< Target (needs TextureUsage::RenderTarget).
+    TextureHandle texture;                       ///< Target (needs TextureUsage::RenderTarget); invalid: an unused slot, writes to it discarded (needs DeviceCaps::unusedAttachments).
     LoadOp load = LoadOp::Clear;                 ///< Load operation.
     StoreOp store = StoreOp::Store;              ///< Store operation.
     std::array<f32, 4> clear{0.0f, 0.0f, 0.0f, 1.0f}; ///< Clear color when `load == Clear`.
@@ -297,6 +297,9 @@ struct DeviceCaps {
     bool clipDistance = false;           ///< Vertex shaders can write gl_ClipDistance.
     bool drawIndirectFirstInstance = false; ///< Indirect draws may start at an instance other than 0.
     bool multiDrawIndirect = false;      ///< Indirect draws of more than one record per call.
+    /// @brief A ColorAttachment may be left without a texture (writes to it discarded) while the
+    ///        pipeline still has a format for that slot.
+    bool unusedAttachments = false;
     u32 framesInFlight = 2;              ///< Frames the CPU may record ahead of the GPU.
     u32 maxBindlessTextures = 0;         ///< Size of the bindless sampled-texture array.
     u32 maxPushConstantSize = 128;       ///< Push constant bytes available to every stage.

@@ -202,12 +202,13 @@ void RenderGraph::execute(CommandList& cmd, RenderGraphPool& pool) {
         if (p.culled) continue;
         cmd.beginDebugLabel(p.name.c_str());
         for (const TextureUse& u : p.uses)
-            if ((u.access == Access::Sample || u.access == Access::Storage) && m_textures[u.texture.id].handle)
+            if ((u.access == Access::Sample || u.access == Access::Storage) && u.texture.id < m_textures.size() &&
+                m_textures[u.texture.id].handle)
                 cmd.transition(m_textures[u.texture.id].handle, u.state());
         if (p.raster()) {
             RenderingDesc desc;
             for (const TextureUse& u : p.uses) {
-                const TextureHandle h = m_textures[u.texture.id].handle;
+                const TextureHandle h = u.texture.id < m_textures.size() ? m_textures[u.texture.id].handle : TextureHandle{};
                 if (u.access == Access::Color) desc.colors.push_back({h, u.load, u.store, u.clearColor});
                 else if (u.access == Access::Depth) desc.depth = DepthAttachment{h, u.load, u.store, u.clearDepth};
             }
@@ -254,7 +255,7 @@ std::string RenderGraph::describe() const {
             out += " ";
             out += kAccess[static_cast<int>(u.access)];
             out += " ";
-            out += u.texture.id < m_textures.size() ? m_textures[u.texture.id].name : "?";
+            out += u.texture.id < m_textures.size() ? m_textures[u.texture.id].name : "(unused)";
             if (u.access == Access::Color || u.access == Access::Depth)
                 out += u.load == LoadOp::Load ? "(load)" : u.load == LoadOp::Clear ? "(clear)" : "";
         }

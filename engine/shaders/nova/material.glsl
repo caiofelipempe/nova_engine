@@ -26,6 +26,9 @@ layout(location = 2) in vec2 vUV;
 layout(location = 3) flat in uint vInstance;
 
 layout(location = 0) out vec4 outColor;
+// The ambient light's share of outColor, for screen-space ambient occlusion (RenderSettings::ssao;
+// the renderer leaves this output unused when it is off).
+layout(location = 1) out vec4 outAmbient;
 
 struct Surface {
     vec3 albedo;      // linear base color
@@ -117,18 +120,21 @@ void main() {
     float metallic = clamp(s.metallic, 0.0, 1.0);
     float roughness = clamp(s.roughness, 0.04, 1.0);
     float sunShadow = 1.0;
+    vec3 ambient = vec3(0.0);
     vec3 color = s.unlit ? s.albedo
-                         : nova_shadeOccluded(vWorldPos, N, s.viewDir, s.albedo, metallic, roughness,
-                                              clamp(s.occlusion, 0.0, 1.0), sunShadow);
+                         : nova_shadeParts(vWorldPos, N, s.viewDir, s.albedo, metallic, roughness,
+                                           clamp(s.occlusion, 0.0, 1.0), sunShadow, ambient);
     color += s.emissive;
 
     switch (pc.debugView) {
-        case 1u: color = N * 0.5 + 0.5; break;
-        case 2u: color = vec3(sunShadow); break;
-        case 3u: color = s.albedo; break;
+        case 1u: color = N * 0.5 + 0.5; ambient = vec3(0.0); break;
+        case 2u: color = vec3(sunShadow); ambient = vec3(0.0); break;
+        case 3u: color = s.albedo; ambient = vec3(0.0); break;
         default: break;
     }
-    outColor = vec4(color, alphaMode == 2u ? clamp(s.alpha, 0.0, 1.0) : 1.0);
+    const float alpha = alphaMode == 2u ? clamp(s.alpha, 0.0, 1.0) : 1.0;
+    outColor = vec4(color, alpha);
+    outAmbient = vec4(ambient, alpha); // blended as the color is (see-through surfaces)
 }
 
 #endif // NOVA_MATERIAL_GLSL

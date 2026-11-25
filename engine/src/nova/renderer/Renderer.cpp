@@ -8,6 +8,10 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBI_MSC_SECURE_CRT
+#include <stb_image_write.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -120,7 +124,8 @@ void RenderView::create() {
          "view.depth"}); // sampled: the occlusion culling's pyramid
     if (m_withOutput)
         m_output = d.createTexture({m_size.width, m_size.height, 1, d.backbufferFormat(),
-                                    TextureUsage::RenderTarget | TextureUsage::Sampled, "view.output"});
+                                    TextureUsage::RenderTarget | TextureUsage::Sampled | TextureUsage::TransferSrc,
+                                    "view.output"}); // a copy source: Renderer::captureNextFrame
 }
 
 void RenderView::destroy() {
@@ -164,6 +169,7 @@ Renderer::Renderer(Device& device) : m_device(device), m_graphPool(makeScope<Ren
 
 Renderer::~Renderer() {
     m_device.waitIdle();
+    finishCapture();
     m_backbufferView.reset();
     m_graph.clear();
     m_graphPool.reset();
@@ -179,7 +185,8 @@ Renderer::~Renderer() {
     for (auto& [key, shape] : m_skinnedShapes) releaseSkinnedShape(shape);
     m_skinnedShapes.clear();
     for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline,
-                             m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline, m_hizPipeline, m_bloomPipeline, m_exposurePipeline})
+                             m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline, m_hizPipeline, m_bloomPipeline, m_exposurePipeline,
+                             m_ssaoPipeline, m_ssaoApplyPipeline})
         if (p) m_device.destroyPipeline(p);
     for (auto& [fmt, p] : m_tonemapPipelines) m_device.destroyPipeline(p);
     for (auto& [key, p] : m_linePipelines) m_device.destroyPipeline(p);
@@ -206,7 +213,7 @@ void Renderer::createPipelines() {
     GraphicsPipelineDesc sky;
     sky.vertex = m_fullscreenVS;
     sky.fragment = loadShader("sky.frag");
-    sky.colorFormats = {kHdrFormat};
+    sky.colorFormats = {kHdrFormat, kHdrFormat}; // the forward pass: color, and the ambient's share (SSAO)
     sky.depthFormat = kDepthFormat;
     sky.cullMode = CullMode::None;
     sky.depthTest = false;
@@ -217,7 +224,7 @@ void Renderer::createPipelines() {
     GraphicsPipelineDesc fwd;
     fwd.vertex = forwardVS;
     fwd.fragment = loadShader("forward.frag");
-    fwd.colorFormats = {kHdrFormat};
+    fwd.colorFormats = {kHdrFormat, kHdrFormat}; // color, and the ambient's share (material.glsl's outAmbient)
     fwd.depthFormat = kDepthFormat;
     fwd.debugName = "pipeline.forward";
     m_forwardPipeline = m_device.createGraphicsPipeline(fwd);
@@ -257,6 +264,14 @@ void Renderer::createPipelines() {
         bloom.depthWrite = false;
         bloom.debugName = "pipeline.bloom";
         m_bloomPipeline = m_device.createGraphicsPipeline(bloom);
+
+        GraphicsPipelineDesc ssao = bloom; // fullscreen too
+        ssao.fragment = loadShader("ssao.frag");
+        ssao.debugName = "pipeline.ssao.apply";
+        m_ssaoApplyPipeline = m_device.createGraphicsPipeline(ssao);
+        ssao.colorFormats = {Format::R8_UNORM};
+        ssao.debugName = "pipeline.ssao";
+        m_ssaoPipeline = m_device.createGraphicsPipeline(ssao);
     }
 
     { // GPU frustum culling
@@ -493,7 +508,35 @@ PipelineHandle Renderer::computePipeline(ShaderHandle shader) {
     return rebuild(vp, shader, nullptr) ? vp.pipeline : PipelineHandle{};
 }
 
+void Renderer::captureNextFrame(std::filesystem::path path) { m_capturePath = std::move(path); }
+
+// Writes a capture made last frame (waits for the GPU: captures are for tests and bug reports).
+void Renderer::finishCapture() {
+    if (!m_pendingCapture) return;
+    PendingCapture c = std::move(*m_pendingCapture);
+    m_pendingCapture.reset();
+    m_device.waitIdle();
+    const u8* src = static_cast<const u8*>(m_device.mappedPointer(c.buffer));
+    std::vector<u8> pixels(size_t(c.extent.width) * c.extent.height * 4);
+    for (size_t i = 0; i < pixels.size(); i += 4) {
+        pixels[i + 0] = src[i + (c.bgra ? 2 : 0)];
+        pixels[i + 1] = src[i + 1];
+        pixels[i + 2] = src[i + (c.bgra ? 0 : 2)];
+        pixels[i + 3] = 255;
+    }
+    m_device.destroyBuffer(c.buffer);
+    if (!c.path.parent_path().empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(c.path.parent_path(), ec);
+    }
+    const bool ok = stbi_write_png(c.path.string().c_str(), static_cast<int>(c.extent.width), static_cast<int>(c.extent.height),
+                                   4, pixels.data(), static_cast<int>(c.extent.width * 4)) != 0;
+    if (ok) NOVA_CORE_INFO("Renderer: captured {}", c.path.string());
+    else NOVA_CORE_ERROR("Renderer: could not write {}", c.path.string());
+}
+
 void Renderer::beginFrame() {
+    finishCapture();
     m_shaders.update(); // hot reload: pipelines notice the new version when next used
     m_frameOffset = 0;
     m_cullCountersRead = false;
@@ -1224,9 +1267,18 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             m_stats.triangles += mesh.indexCount / 3;
         }
     };
+    // Screen-space ambient occlusion needs the ambient light's share of the image: the forward
+    // pass's second output (left unused without it).
+    const bool ssao = s.ssao && s.ssaoRadius > 0.0f && m_ssaoPipeline && m_ssaoApplyPipeline &&
+                      (s.debugView == DebugView::Lit || s.debugView == DebugView::AmbientOcclusion);
+    // Without SSAO the slot stays empty, or (GPUs that cannot leave it empty) gets a texture nobody reads.
+    const RGTexture ambientTex = ssao || !m_device.caps().unusedAttachments
+                                     ? graph.create({extent.width, extent.height, kHdrFormat, "ambient"})
+                                     : RGTexture{};
     {
         RenderPassBuilder forward = graph.addPass("Forward");
-        forward.color(hdrTex, LoadOp::DontCare).depth(depthTex); // depth is kept for the debug lines
+        forward.color(hdrTex, LoadOp::DontCare).color(ambientTex, LoadOp::Clear, StoreOp::Store, {0.0f, 0.0f, 0.0f, 0.0f});
+        forward.depth(depthTex); // depth is kept for the debug lines
         if (shadowAtlas) forward.sample(shadowAtlas);
         if (pointShadowAtlas) forward.sample(pointShadowAtlas);
         forward.execute([&record](RenderPassContext& ctx) { record(ctx.cmd, false); });
@@ -1264,7 +1316,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             if (readback) ctx.cmd.copyBuffer(cullBuffer, readback, 16, offCounters, 0);
         });
         RenderPassBuilder late = graph.addPass("Forward (late)");
-        late.color(hdrTex, LoadOp::Load).depth(depthTex, LoadOp::Load);
+        late.color(hdrTex, LoadOp::Load).color(ambientTex, LoadOp::Load).depth(depthTex, LoadOp::Load);
         if (shadowAtlas) late.sample(shadowAtlas);
         if (pointShadowAtlas) late.sample(pointShadowAtlas);
         late.execute([&record](RenderPassContext& ctx) { record(ctx.cmd, true); });
@@ -1276,7 +1328,47 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         m_stats.wrapCopies += drawCount - sources;
     }
 
-    RenderGraphFrame frame{graph, scene, extent, hdrTex, depthTex, frameAddress};
+    // ---- SSAO: the occlusion from depth, then the image with its ambient share darkened by it
+    RGTexture sceneColor = hdrTex;
+    if (ssao) {
+        const RGTexture aoTex = graph.create({extent.width, extent.height, Format::R8_UNORM, "ssao"});
+        const RGTexture applied = graph.create({extent.width, extent.height, kHdrFormat, "ssao applied"});
+        gpu::SsaoPush push{};
+        push.frame = frameAddress;
+        push.texel = glm::vec2(1.0f / f32(extent.width), 1.0f / f32(extent.height));
+        push.radius = s.ssaoRadius;
+        push.intensity = std::max(s.ssaoIntensity, 0.0f);
+        const PipelineHandle occlusionPipeline = m_ssaoPipeline, applyPipeline = m_ssaoApplyPipeline;
+        graph.addPass("SSAO").sample(depthTex).color(aoTex, LoadOp::DontCare).execute([=](RenderPassContext& ctx) {
+            gpu::SsaoPush p = push;
+            p.depthTexture = ctx.bindlessIndex(depthTex);
+            p.mode = 0;
+            ctx.cmd.bindPipeline(occlusionPipeline);
+            ctx.cmd.pushConstants(p);
+            ctx.cmd.draw(3);
+        });
+        const u32 applyMode = s.debugView == DebugView::AmbientOcclusion ? 2u : 1u;
+        graph.addPass("SSAO apply")
+            .sample(hdrTex)
+            .sample(ambientTex)
+            .sample(aoTex)
+            .sample(depthTex)
+            .color(applied, LoadOp::DontCare)
+            .execute([=](RenderPassContext& ctx) {
+                gpu::SsaoPush p = push;
+                p.depthTexture = ctx.bindlessIndex(depthTex);
+                p.mode = applyMode;
+                p.colorTexture = ctx.bindlessIndex(hdrTex);
+                p.ambientTexture = ctx.bindlessIndex(ambientTex);
+                p.aoTexture = ctx.bindlessIndex(aoTex);
+                ctx.cmd.bindPipeline(applyPipeline);
+                ctx.cmd.pushConstants(p);
+                ctx.cmd.draw(3);
+            });
+        sceneColor = applied;
+    }
+
+    RenderGraphFrame frame{graph, scene, extent, sceneColor, depthTex, frameAddress};
     runGraphCallbacks(RenderStage::AfterOpaque, frame);
 
     // ---- post-process: each pass reads the image so far and writes a new transient one (the
@@ -1442,6 +1534,29 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             .color(outputTex, LoadOp::Load)
             .depth(depthTex, LoadOp::Load, StoreOp::DontCare)
             .execute([this, frameAddress, origin](RenderPassContext& ctx) { drawDebugLines(ctx.cmd, frameAddress, origin); });
+    }
+
+    // ---- capture (captureNextFrame): the output copied into a buffer, written next frame
+    if (!m_capturePath.empty() && !m_pendingCapture) {
+        const Format format = m_device.backbufferFormat(); // the output's format
+        const bool fourBytes = format == Format::RGBA8_UNORM || format == Format::RGBA8_SRGB ||
+                               format == Format::BGRA8_UNORM || format == Format::BGRA8_SRGB;
+        if (fourBytes) {
+            PendingCapture c;
+            c.buffer = m_device.createBuffer({u64(extent.width) * extent.height * 4, BufferUsage::TransferDst,
+                                              MemoryUsage::CpuToGpu, "renderer.capture"});
+            c.extent = extent;
+            c.bgra = format == Format::BGRA8_UNORM || format == Format::BGRA8_SRGB;
+            c.path = std::move(m_capturePath);
+            const BufferHandle buffer = c.buffer;
+            graph.addPass("Capture").sideEffect().execute([outputTex, buffer](RenderPassContext& ctx) {
+                ctx.cmd.copyTextureToBuffer(ctx.texture(outputTex), buffer);
+            });
+            m_pendingCapture = std::move(c);
+        } else {
+            NOVA_CORE_WARN("Renderer: cannot capture this output format");
+        }
+        m_capturePath.clear();
     }
 
     graph.compile();

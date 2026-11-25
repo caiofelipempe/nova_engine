@@ -13,12 +13,15 @@ namespace {
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
                                              VkDebugUtilsMessageTypeFlagsEXT,
                                              const VkDebugUtilsMessengerCallbackDataEXT* data, void*) {
+    const char* id = data->pMessageIdName ? data->pMessageIdName : "";
+    // Color slots left empty on purpose (ColorAttachment without a texture): writes to them are dropped.
+    if (std::strcmp(id, "Undefined-Value-ShaderOutputNotConsumed-DynamicRendering") == 0) return VK_FALSE;
     if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
-        NOVA_CORE_ERROR("[vulkan] {}", data->pMessage);
+        NOVA_CORE_ERROR("[vulkan] {} {}", id, data->pMessage);
     else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
-        NOVA_CORE_WARN("[vulkan] {}", data->pMessage);
+        NOVA_CORE_WARN("[vulkan] {} {}", id, data->pMessage);
     else
-        NOVA_CORE_TRACE("[vulkan] {}", data->pMessage);
+        NOVA_CORE_TRACE("[vulkan] {} {}", id, data->pMessage);
     return VK_FALSE;
 }
 
@@ -291,7 +294,15 @@ void VulkanDevice::createLogicalDevice() {
         asSupported.pNext = &rqSupported;
         if (hasRTP) rqSupported.pNext = &rtpSupported;
     }
+    const bool hasUnused = hasExtension(exts, VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME);
+    VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unusedSupported{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT};
+    if (hasUnused) {
+        unusedSupported.pNext = supported.f13.pNext;
+        supported.f13.pNext = &unusedSupported;
+    }
     vkGetPhysicalDeviceFeatures2(m_physicalDevice, &supported.f2);
+    const bool unusedAttachments = hasUnused && unusedSupported.dynamicRenderingUnusedAttachments;
 
     const bool rt = m_rayTracingRequested && hasAS && hasRQ && asSupported.accelerationStructure && rqSupported.rayQuery;
     const bool rtPipeline = rt && hasRTP && rtpSupported.rayTracingPipeline;
@@ -340,6 +351,14 @@ void VulkanDevice::createLogicalDevice() {
             rtpEnable.rayTracingPipeline = VK_TRUE;
             rqEnable.pNext = &rtpEnable;
         }
+    }
+    VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT unusedEnable{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT};
+    if (unusedAttachments) { // color slots left empty (a pipeline output not wanted this frame)
+        enabledExts.push_back(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME);
+        unusedEnable.dynamicRenderingUnusedAttachments = VK_TRUE;
+        unusedEnable.pNext = enable.f13.pNext;
+        enable.f13.pNext = &unusedEnable;
     }
 
     f32 priority = 1.0f;
@@ -390,6 +409,7 @@ void VulkanDevice::createLogicalDevice() {
     m_caps.clipDistance = enable.f2.features.shaderClipDistance == VK_TRUE;
     m_caps.drawIndirectFirstInstance = enable.f2.features.drawIndirectFirstInstance == VK_TRUE;
     m_caps.multiDrawIndirect = enable.f2.features.multiDrawIndirect == VK_TRUE;
+    m_caps.unusedAttachments = unusedAttachments;
     m_caps.framesInFlight = kFramesInFlight;
     m_caps.maxPushConstantSize = std::min(kPushConstantSize, m_properties.limits.maxPushConstantsSize);
 }
@@ -559,6 +579,8 @@ void VulkanDevice::createSwapchain() {
     ci.imageExtent = extent;
     ci.imageArrayLayers = 1;
     ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    const bool copyable = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0; // screenshots
+    if (copyable) ci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ci.preTransform = caps.currentTransform;
     ci.compositeAlpha = alpha;
@@ -586,7 +608,7 @@ void VulkanDevice::createSwapchain() {
         VK_CHECK(vkCreateImageView(m_device, &vi, nullptr, &tex.view));
         tex.format = m_swapchainFormat;
         tex.extent = extent;
-        tex.usage = TextureUsage::RenderTarget | TextureUsage::TransferDst;
+        tex.usage = TextureUsage::RenderTarget | TextureUsage::TransferDst | (copyable ? TextureUsage::TransferSrc : TextureUsage::None);
         tex.ownsImage = false;
         m_swapchainTextures.push_back(m_textures.insert(tex));
 

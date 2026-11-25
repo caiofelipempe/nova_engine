@@ -149,9 +149,10 @@ float nova_pointShadowMap(int slot, vec3 P, vec3 N, vec3 lightPos, float radius)
 }
 
 // Shades a surface with the sun, the point lights and the ambient (darkened by `occlusion`);
-// `sunShadow` receives the sun visibility (for the Shadows debug view).
-vec3 nova_shadeOccluded(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float roughness, float occlusion,
-                        out float sunShadow) {
+// `sunShadow` receives the sun visibility (for the Shadows debug view) and `ambientPart` the
+// ambient's share of the result (screen-space ambient occlusion darkens that part later).
+vec3 nova_shadeParts(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float roughness, float occlusion,
+                     out float sunShadow, out vec3 ambientPart) {
     bool rtShadows = (pc.frame.data.flags & FRAME_FLAG_RT_SHADOWS) != 0u;
     float bias = pc.frame.data.shadowBias;
     vec3 origin = P + N * bias;
@@ -195,8 +196,15 @@ vec3 nova_shadeOccluded(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, flo
     vec3 ground = pc.frame.data.groundColor.rgb;
     vec3 ambient = mix(ground, sky, N.y * 0.5 + 0.5) * pc.frame.data.skyZenith.w;
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
-    color += ambient * (albedo * (1.0 - metallic) + F0 * 0.25) * occlusion;
-    return color;
+    ambientPart = ambient * (albedo * (1.0 - metallic) + F0 * 0.25) * occlusion;
+    return color + ambientPart;
+}
+
+// Same, without the ambient's share.
+vec3 nova_shadeOccluded(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float roughness, float occlusion,
+                        out float sunShadow) {
+    vec3 ambientPart;
+    return nova_shadeParts(P, N, V, albedo, metallic, roughness, occlusion, sunShadow, ambientPart);
 }
 
 // Same, without ambient occlusion.

@@ -10,6 +10,10 @@ void VulkanCommandList::beginRendering(const RenderingDesc& desc) {
     Extent2D extent = desc.extent;
 
     for (const ColorAttachment& c : desc.colors) {
+        if (!c.texture) { // an unused slot: the pipeline's writes to it are discarded
+            colors.push_back({VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO});
+            continue;
+        }
         VulkanTexture* t = m_device.texture(c.texture);
         NOVA_ASSERT(t, "beginRendering: invalid color attachment");
         recordTransition(m_cmd, *t, ResourceState::RenderTarget);
@@ -120,6 +124,18 @@ void VulkanCommandList::copyBuffer(BufferHandle src, BufferHandle dst, u64 size,
     NOVA_ASSERT(s && d, "copyBuffer: invalid buffer");
     VkBufferCopy region{srcOffset, dstOffset, size};
     vkCmdCopyBuffer(m_cmd, s->buffer, d->buffer, 1, &region);
+}
+
+void VulkanCommandList::copyTextureToBuffer(TextureHandle src, BufferHandle dst, u64 dstOffset) {
+    VulkanTexture* t = m_device.texture(src);
+    VulkanBuffer* d = m_device.buffer(dst);
+    NOVA_ASSERT(t && d, "copyTextureToBuffer: invalid texture or buffer");
+    recordTransition(m_cmd, *t, ResourceState::CopySrc);
+    VkBufferImageCopy region{};
+    region.bufferOffset = dstOffset;
+    region.imageSubresource = {t->aspect, 0, 0, 1};
+    region.imageExtent = {t->extent.width, t->extent.height, 1};
+    vkCmdCopyImageToBuffer(m_cmd, t->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, d->buffer, 1, &region);
 }
 
 void VulkanCommandList::buildTLAS(AccelStructHandle h, u64 instanceAddress, u32 instanceCount) {
