@@ -150,7 +150,7 @@ struct SkyPush {
 struct PostProcessPush {
     u64 frame;            ///< Address of FrameData.
     u32 inputTexture;     ///< Bindless index of the HDR input.
-    u32 _pad0;            ///< Padding.
+    u32 depthTexture = ~0u; ///< Bindless index of the depth buffer (nova_depth in GLSL).
     glm::vec2 texelSize;  ///< 1 / resolution.
     glm::vec2 _pad1;      ///< Padding: GLSL aligns the vec4 below to 16 bytes.
     glm::vec4 params;     ///< PostProcessDesc::params.

@@ -17,7 +17,7 @@
 layout(push_constant) uniform PostProcessPush {
     FrameBuffer frame;
     uint inputTexture; // bindless index of the HDR input
-    uint _pad0;
+    uint depthTexture; // bindless index of the depth buffer (the forward pass's)
     vec2 texelSize;    // 1 / resolution
     vec2 _pad1;
     vec4 params;       // PostProcessDesc::params (offset 32)
@@ -32,6 +32,21 @@ vec2 nova_texelSize() { return pc.texelSize; }
 vec4 nova_params() { return pc.params; }
 float nova_time() { return pc.frame.data.cameraPos.w; }
 FrameData nova_frame() { return pc.frame.data; }
+
+// The depth buffer at uv: 0..1, 1 = nothing drawn (the sky). Read exactly (no filtering).
+float nova_depth(vec2 uv) {
+    const ivec2 size = textureSize(g_textures[nonuniformEXT(pc.depthTexture)], 0);
+    return texelFetch(g_textures[nonuniformEXT(pc.depthTexture)], clamp(ivec2(uv * vec2(size)), ivec2(0), size - 1), 0).r;
+}
+// The view-space position at uv (camera at the origin, looking down -Z; meters).
+vec3 nova_viewPosition(vec2 uv) {
+    const mat4 P = pc.frame.data.proj;
+    const float z = -P[3][2] / (nova_depth(uv) + P[2][2]);
+    const vec2 ndc = uv * 2.0 - 1.0;
+    return vec3(ndc.x * -z / P[0][0], ndc.y * -z / P[1][1], z);
+}
+// Distance from the camera plane at uv (m); the far plane where nothing was drawn.
+float nova_linearDepth(vec2 uv) { return -nova_viewPosition(uv).z; }
 
 // Implemented by the effect.
 vec3 postProcess(vec2 uv);

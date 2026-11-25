@@ -1799,14 +1799,17 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         const RGTexture source = frame.color;
         const RGTexture target = graph.create({extent.width, extent.height, kHdrFormat, "post-process"});
         const glm::vec4 params = fx.params;
+        const RGTexture sceneDepth = frame.depth; // nova_depth / nova_viewPosition in the effect
         graph.addPass(fx.name.empty() ? "Post-process" : fx.name)
             .sample(source)
+            .sample(sceneDepth)
             .color(target, LoadOp::DontCare)
-            .execute([p, source, frameAddress, extent, params](RenderPassContext& ctx) {
+            .execute([p, source, sceneDepth, frameAddress, extent, params](RenderPassContext& ctx) {
                 ctx.cmd.bindPipeline(p);
                 gpu::PostProcessPush pushPost{};
                 pushPost.frame = frameAddress;
                 pushPost.inputTexture = ctx.bindlessIndex(source);
+                pushPost.depthTexture = ctx.bindlessIndex(sceneDepth);
                 pushPost.texelSize = glm::vec2(1.0f / f32(extent.width), 1.0f / f32(extent.height));
                 pushPost.params = params;
                 ctx.cmd.pushConstants(pushPost);

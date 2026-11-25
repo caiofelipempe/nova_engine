@@ -87,6 +87,8 @@ public:
         if (s_rqAo) r.settings().rayTracedAo = true;
         if (s_noVsync) app().device().setVSync(false);
         if (s_prepass) r.settings().depthPrepass = true;
+        if (s_fog)
+            r.settings().postProcess.push_back({.name = "Fog", .shader = r.shaders().load("fog.frag"), .params = {0.04f, 8.0f, 0.85f, 0.0f}});
         if (s_noReflections) r.settings().rayTracedReflections = false;
         setupRayTracedAo();
         if (s_debugView >= 0) r.settings().debugView = static_cast<nova::DebugView>(s_debugView);
@@ -119,6 +121,7 @@ public:
     static inline bool s_rtao = false;   // --rtao: ray traced AO from the game's shaders
     static inline bool s_noVsync = false; // --no-vsync: frames as fast as they go (measuring cost)
     static inline bool s_prepass = false; // --prepass: RenderSettings::depthPrepass
+    static inline bool s_fog = false;     // --fog: assets/shaders/fog.frag as a post effect (reads depth)
     static inline bool s_rqAo = false, s_noReflections = false; // --rq-ao, --no-reflections (ray query in the forward pass)
     static inline int s_debugView = -1; // --debug-view N (nova::DebugView)
     static inline int s_quitAfterFrames = -1; // --frames N: quit after N frames (smoke tests)
@@ -597,6 +600,7 @@ int main(int argc, char** argv) {
         else if (arg == "--rq-ao") PhysicsBench::s_rqAo = true;
         else if (arg == "--no-vsync") PhysicsBench::s_noVsync = true;
         else if (arg == "--prepass") PhysicsBench::s_prepass = true;
+        else if (arg == "--fog") PhysicsBench::s_fog = true;
         else if (arg == "--size" && hasValue) { // WxH
             char* end = nullptr;
             width = static_cast<nova::u32>(std::strtoul(argv[++i], &end, 10));

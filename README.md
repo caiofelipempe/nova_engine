@@ -313,7 +313,7 @@ void material(inout Surface s) {
 }
 ```
 
-Um efeito de pós (`#include "nova/postprocess.glsl"`) implementa `vec3 postProcess(vec2 uv)` usando `nova_scene(uv)`, `nova_params()`, `nova_texelSize()` e `nova_time()`. Exemplos: [assets/shaders/hologram.frag](assets/shaders/hologram.frag) e [assets/shaders/vignette.frag](assets/shaders/vignette.frag).
+Um efeito de pós (`#include "nova/postprocess.glsl"`) implementa `vec3 postProcess(vec2 uv)` usando `nova_scene(uv)`, `nova_params()`, `nova_texelSize()`, `nova_time()` e a **profundidade**: `nova_depth(uv)` (0..1, 1 = céu), `nova_linearDepth(uv)` (distância ao plano da câmera, em metros) e `nova_viewPosition(uv)`. Exemplos: [assets/shaders/hologram.frag](assets/shaders/hologram.frag), [assets/shaders/vignette.frag](assets/shaders/vignette.frag) e [assets/shaders/fog.frag](assets/shaders/fog.frag) (neblina por distância; `Sandbox --fog`).
 
 **Pré-compilando no CMake:**
 
@@ -351,12 +351,13 @@ auto blur = renderer().shaders().load("assets/shaders/blur.frag"); // nova/postp
 renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFrame& f) {
     rhi::PipelineHandle p = renderer().postProcessPipeline(blur);
     if (!p) return;
-    const RGTexture src = f.color;
+    const RGTexture src = f.color, depth = f.depth;
     const RGTexture out = f.graph.create({f.extent.width, f.extent.height, Renderer::kHdrFormat, "blur"});
     const u64 frame = f.frameData;
-    f.graph.addPass("Blur").sample(src).color(out, rhi::LoadOp::DontCare).execute([=](RenderPassContext& ctx) {
+    f.graph.addPass("Blur").sample(src).sample(depth).color(out, rhi::LoadOp::DontCare).execute([=](RenderPassContext& ctx) {
         ctx.cmd.bindPipeline(p);
         gpu::PostProcessPush push{frame, ctx.bindlessIndex(src)}; // o push de nova/postprocess.glsl
+        push.depthTexture = ctx.bindlessIndex(depth);             // nova_depth (sampled: declared above)
         ctx.cmd.pushConstants(push);
         ctx.cmd.draw(3);
     });
