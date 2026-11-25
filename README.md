@@ -412,6 +412,8 @@ renderer().addRenderPasses(RenderStage::BeforeTonemap, [&, blur](RenderGraphFram
 - o estado fica num buffer da view, e o tonemap o lê direto na GPU, sem esperar a CPU. `exposure` continua valendo, como compensação por cima;
 - `RenderStats::autoExposure` traz o valor escolhido (lido de volta alguns frames depois), e o painel Renderer mostra os controles. `Sandbox --auto-exposure` liga a opção.
 
+**Tempo de GPU por passe:** `CommandList::beginGpuTimer(nome)` / `endGpuTimer()` medem trechos de comandos com timestamps (aninháveis; `DeviceCaps::gpuTimers`), e `Device::gpuTimings()` devolve os do último frame concluído, lidos sem esperar a GPU. O render graph mede cada passe dentro de um `Render` por view, e a `Application` mede a interface (`UI`). O painel Renderer mostra a árvore (`GPU time`), e `Sandbox --frames` registra a média por frame de cada passe.
+
 `RenderStats` traz os passes executados e descartados, as texturas transitórias e o tempo de CPU gasto montando e gravando o frame (`cpuMs`), e `Renderer::lastGraph()` descreve o último frame, um passe por linha. O painel **Renderer** do editor e o sandbox mostram as duas coisas. A compilação do graph não precisa de GPU e tem testes próprios (`tests/RenderGraphTests.cpp`).
 
 ## Ray tracing

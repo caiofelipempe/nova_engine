@@ -419,6 +419,16 @@ void RendererPanel::onImGui(EditorContext& ctx) {
                 st.gpuTested, st.gpuOccluded);
     ImGui::Text("Graph: %u passes (%u dropped) | %u transients in %u textures", st.graphPasses, st.graphCulled,
                 st.transientTextures, st.pooledTextures);
+    if (caps.gpuTimers) { // GPU time of the last finished frame: the views ("Render") and their passes, the UI
+        const auto& timings = dev.gpuTimings();
+        f32 total = 0.0f;
+        for (const rhi::GpuTiming& t : timings) total += t.depth == 0 ? t.ms : 0.0f;
+        if (ImGui::TreeNode("gpu", "GPU time: %.3f ms", total)) {
+            for (const rhi::GpuTiming& t : timings)
+                ImGui::Text("%*s%-28s %7.3f ms", static_cast<int>(t.depth * 2), "", t.name.c_str(), t.ms);
+            ImGui::TreePop();
+        }
+    }
     if (ImGui::TreeNode("Render graph")) {
         ImGui::TextUnformatted(ctx.renderer().lastGraph().c_str());
         ImGui::TreePop();

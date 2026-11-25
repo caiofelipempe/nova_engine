@@ -137,7 +137,11 @@ void Application::run() {
                                    {0.05f, 0.05f, 0.06f, 1.0f}});
             cmd.beginDebugLabel("UI");
             cmd.beginRendering(pass);
-            if (m_imguiRenderer) m_imguiRenderer->render(cmd);
+            if (m_imguiRenderer) {
+                cmd.beginGpuTimer("UI");
+                m_imguiRenderer->render(cmd);
+                cmd.endGpuTimer();
+            }
             cmd.endRendering();
             cmd.endDebugLabel();
         }

@@ -116,6 +116,8 @@ public:
     void drawIndexedIndirect(BufferHandle args, u64 offset, u32 drawCount, u32 stride) override;
     void dispatch(u32 x, u32 y, u32 z) override;
     void traceRays(u32 width, u32 height, u32 depth) override;
+    void beginGpuTimer(const char* name) override;
+    void endGpuTimer() override;
     void transition(TextureHandle texture, ResourceState state) override;
     void globalBarrier() override;
     void copyBuffer(BufferHandle src, BufferHandle dst, u64 size, u64 srcOffset, u64 dstOffset) override;
@@ -129,6 +131,7 @@ private:
     VulkanDevice& m_device;
     VkCommandBuffer m_cmd = VK_NULL_HANDLE;
     PipelineHandle m_bound; // traceRays uses its shader binding table
+    std::vector<u32> m_openTimers; // GPU timers begun and not ended (their indices)
 };
 
 /// @brief rhi::Device implemented with Vulkan 1.3.
@@ -178,6 +181,12 @@ public:
     Format backbufferFormat() const override { return fromVk(m_swapchainFormat); }
     Extent2D backbufferExtent() const override { return {m_swapchainExtent.width, m_swapchainExtent.height}; }
     u32 frameIndex() const override { return m_frameIndex; }
+    const std::vector<GpuTiming>& gpuTimings() const override { return m_gpuTimings; }
+    /// @brief A new GPU timer of the frame being recorded: its index (queries 2i and 2i+1), or ~0u
+    ///        when timers are off or the frame has no room left.
+    u32 openGpuTimer(const char* name, u32 depth);
+    /// @brief The current frame's timestamp query pool.
+    VkQueryPool timerPool() const { return m_frames[m_frameIndex].timers; }
     u64 frameCounter() const override { return m_frameCounter; }
     void setVSync(bool enabled) override;
     bool vsync() const override { return m_vsync; }
@@ -220,6 +229,8 @@ private:
         VkCommandBuffer cmd = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         VkSemaphore imageAvailable = VK_NULL_HANDLE;
+        VkQueryPool timers = VK_NULL_HANDLE; // timestamps: begin and end of each GPU timer
+        std::vector<GpuTiming> timerInfo;    // name and depth of each timer recorded in this frame
     };
     struct PendingRelease {
         u64 frame; // last frame counter that may still reference the resource
@@ -239,6 +250,8 @@ private:
     void destroySwapchainResources();
     void recreateSwapchain();
     void flushReleases(bool all);
+    void readGpuTimers(Frame& f);
+    static constexpr u32 kMaxGpuTimers = 256; // per frame
     void immediateSubmit(const std::function<void(VkCommandBuffer)>& record);
     void setDebugName(VkObjectType type, u64 handle, const char* name);
     VkShaderModule createShaderModule(const ShaderDesc& desc);
@@ -263,6 +276,9 @@ private:
     ExtFunctions m_ext;
     u64 m_asScratchAlignment = 256;
     // Ray tracing pipelines: shader group handle size and the SBT's alignments, recursion limit.
+    std::vector<GpuTiming> m_gpuTimings; // the last finished frame's GPU timers
+    f32 m_timestampPeriod = 1.0f;        // nanoseconds per timestamp tick
+    u64 m_timestampMask = ~0ull;         // the valid bits of a timestamp
     u64 m_blasBytesBuilt = 0, m_blasBytesKept = 0; // static BLAS before and after compaction
     u32 m_sbtHandleSize = 32, m_sbtHandleAlignment = 32, m_sbtBaseAlignment = 64, m_maxRayRecursion = 1;
 

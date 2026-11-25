@@ -65,6 +65,11 @@ public:
     /// @brief Launches the bound ray tracing pipeline's ray generation shader once per
     ///        `width × height × depth` (gl_LaunchIDEXT), with its shader binding table.
     virtual void traceRays(u32 width, u32 height, u32 depth = 1) = 0;
+    /// @brief Starts timing the commands that follow on the GPU (nestable); Device::gpuTimings()
+    ///        reports it once the frame has finished. No-op without DeviceCaps::gpuTimers.
+    virtual void beginGpuTimer(const char* name) = 0;
+    /// @brief Ends the innermost open timer.
+    virtual void endGpuTimer() = 0;
 
     /// @brief Moves a texture to a new logical state, emitting the needed barrier (no-op if already there).
     virtual void transition(TextureHandle texture, ResourceState state) = 0;
@@ -209,6 +214,9 @@ public:
     virtual Extent2D backbufferExtent() const = 0;
     /// @brief Index of the current frame slot, in `[0, DeviceCaps::framesInFlight)`.
     virtual u32 frameIndex() const = 0;
+    /// @brief The GPU timers of the last finished frame that recorded any, in recording order
+    ///        (read without waiting, a few frames late).
+    virtual const std::vector<GpuTiming>& gpuTimings() const = 0;
     /// @brief Number of frames submitted so far.
     virtual u64 frameCounter() const = 0;
     /// @brief Enables/disables vsync; the swapchain is recreated at the next beginFrame().

@@ -201,6 +201,7 @@ void RenderGraph::execute(CommandList& cmd, RenderGraphPool& pool) {
     for (Pass& p : m_passes) {
         if (p.culled) continue;
         cmd.beginDebugLabel(p.name.c_str());
+        cmd.beginGpuTimer(p.name.c_str()); // each pass's GPU time (Device::gpuTimings)
         for (const TextureUse& u : p.uses)
             if ((u.access == Access::Sample || u.access == Access::Storage) && u.texture.id < m_textures.size() &&
                 m_textures[u.texture.id].handle)
@@ -218,6 +219,7 @@ void RenderGraph::execute(CommandList& cmd, RenderGraphPool& pool) {
         } else if (p.run) {
             p.run(ctx);
         }
+        cmd.endGpuTimer();
         cmd.endDebugLabel();
     }
     for (const Texture& t : m_textures)

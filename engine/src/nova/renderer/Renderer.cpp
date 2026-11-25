@@ -1987,7 +1987,9 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     }
 
     graph.compile();
+    cmd.beginGpuTimer("Render"); // the view's whole graph; each pass nested in it
     graph.execute(cmd, *m_graphPool);
+    cmd.endGpuTimer();
     m_stats.graphPasses += static_cast<u32>(graph.passes().size()) - graph.culledCount();
     m_stats.graphCulled += graph.culledCount();
     m_stats.transientTextures += graph.transientCount();

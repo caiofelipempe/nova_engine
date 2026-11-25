@@ -144,6 +144,7 @@ VulkanDevice::~VulkanDevice() {
         vkDestroyCommandPool(m_device, f.pool, nullptr);
         vkDestroyFence(m_device, f.fence, nullptr);
         vkDestroySemaphore(m_device, f.imageAvailable, nullptr);
+        if (f.timers) vkDestroyQueryPool(m_device, f.timers, nullptr);
     }
     destroySwapchainResources();
     if (m_swapchain) vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
@@ -571,6 +572,24 @@ void VulkanDevice::createFrames() {
         VK_CHECK(vkCreateSemaphore(m_device, &si, nullptr, &f.imageAvailable));
     }
 
+    // GPU timers: a timestamp pool per frame in flight, when the queue has timestamps.
+    u32 familyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &familyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> families(familyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &familyCount, families.data());
+    const u32 validBits = m_queueFamily < familyCount ? families[m_queueFamily].timestampValidBits : 0u;
+    if (validBits > 0 && m_properties.limits.timestampPeriod > 0.0f) {
+        m_timestampPeriod = m_properties.limits.timestampPeriod;
+        m_timestampMask = validBits >= 64 ? ~0ull : (1ull << validBits) - 1ull;
+        for (Frame& f : m_frames) {
+            VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+            qi.queryCount = kMaxGpuTimers * 2;
+            VK_CHECK(vkCreateQueryPool(m_device, &qi, nullptr, &f.timers));
+        }
+        m_caps.gpuTimers = true;
+    }
+
     VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
     pi.queueFamilyIndex = m_queueFamily;
@@ -713,6 +732,7 @@ bool VulkanDevice::beginFrame() {
     Frame& f = m_frames[m_frameIndex];
     VK_CHECK(vkWaitForFences(m_device, 1, &f.fence, VK_TRUE, UINT64_MAX));
     flushReleases(false);
+    readGpuTimers(f); // that frame has finished: its timestamps are there
 
     VkResult r = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, f.imageAvailable, VK_NULL_HANDLE,
                                        &m_imageIndex);
@@ -728,11 +748,35 @@ bool VulkanDevice::beginFrame() {
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(f.cmd, &bi));
+    if (f.timers) vkCmdResetQueryPool(f.cmd, f.timers, 0, kMaxGpuTimers * 2);
     m_commandList.reset(f.cmd);
 
     m_textures.get(backbuffer())->state = ResourceState::Undefined; // previous contents are discarded
     m_inFrame = true;
     return true;
+}
+
+u32 VulkanDevice::openGpuTimer(const char* name, u32 depth) {
+    Frame& f = m_frames[m_frameIndex];
+    if (!f.timers || !m_inFrame || f.timerInfo.size() >= kMaxGpuTimers) return ~0u;
+    f.timerInfo.push_back({name ? name : "", 0.0f, depth});
+    return static_cast<u32>(f.timerInfo.size() - 1);
+}
+
+// The timers a finished frame recorded become the reported ones (when it recorded any).
+void VulkanDevice::readGpuTimers(Frame& f) {
+    if (!f.timers || f.timerInfo.empty()) return;
+    std::vector<u64> stamps(f.timerInfo.size() * 2);
+    const VkResult r = vkGetQueryPoolResults(m_device, f.timers, 0, static_cast<u32>(stamps.size()), stamps.size() * sizeof(u64),
+                                             stamps.data(), sizeof(u64), VK_QUERY_RESULT_64_BIT);
+    if (r == VK_SUCCESS) {
+        for (size_t i = 0; i < f.timerInfo.size(); ++i) {
+            const u64 begin = stamps[2 * i] & m_timestampMask, end = stamps[2 * i + 1] & m_timestampMask;
+            f.timerInfo[i].ms = end >= begin ? static_cast<f32>(static_cast<f64>(end - begin) * m_timestampPeriod * 1e-6) : 0.0f;
+        }
+        m_gpuTimings = std::move(f.timerInfo);
+    }
+    f.timerInfo.clear();
 }
 
 void VulkanDevice::endFrame() {

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <string>
 #include <unordered_map>
 
@@ -134,6 +135,9 @@ public:
                 m_frameTimes.push_back(dt * 1000.0f);
                 m_renderCpu += renderer().stats().cpuMs; // the previous frame's
                 m_renderCpus.push_back(renderer().stats().cpuMs);
+                // GPU time per pass, summed over the passes of a name (the bloom chain's six "Bloom down").
+                for (const nova::rhi::GpuTiming& t : app().device().gpuTimings()) m_gpuTimes[std::string(t.depth * 2, ' ') + t.name] += t.ms;
+                ++m_gpuFrames;
             }
         }
         if (s_quitAfterFrames >= 0 && s_quitAfterFrames-- == 0) {
@@ -157,6 +161,12 @@ public:
                                   std::to_string(static_cast<int>(cpu * 10.0f) / 10.0f).substr(0, 4) + ") ";
                         ++n;
                     }
+                if (!m_gpuTimes.empty()) {
+                    std::string gpu;
+                    for (const auto& [name, total] : m_gpuTimes)
+                        if (total / m_gpuFrames >= 0.005) gpu += "\n    " + name + ": " + std::to_string(total / m_gpuFrames).substr(0, 5) + " ms";
+                    NOVA_INFO("[frames] GPU time per frame and pass (mean):{}", gpu);
+                }
                 if (!spikes.empty()) NOVA_INFO("[frames] spikes (frame:time(render cpu ms)): {}", spikes);
             }
             const nova::RenderStats& st = renderer().stats();
@@ -556,6 +566,8 @@ private:
     std::vector<float> m_frameTimes;
     double m_renderCpu = 0.0; // sum of RenderStats::cpuMs over the run
     std::vector<float> m_renderCpus; // per frame (the previous frame's render CPU)
+    std::map<std::string, double> m_gpuTimes; // GPU time per pass name, summed over the run
+    int m_gpuFrames = 0;
     float m_orbitYaw = 0.0f, m_orbitPitch = -0.35f; // character camera
     std::vector<nova::Entity> m_spawned;      // scenario actions (bullets, dropped boxes)
     std::vector<nova::Entity> m_projectiles;  // shots

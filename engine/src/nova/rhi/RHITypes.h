@@ -307,6 +307,13 @@ struct DeviceDesc {
     std::string pipelineCacheFile;
 };
 
+/// @brief GPU time of a span of commands (CommandList::beginGpuTimer / endGpuTimer).
+struct GpuTiming {
+    std::string name; ///< As given to beginGpuTimer.
+    f32 ms = 0.0f;    ///< From the commands before it finishing to its own finishing.
+    u32 depth = 0;    ///< Nesting (0 = outermost).
+};
+
 /// @brief What the selected GPU and backend support.
 struct DeviceCaps {
     std::string deviceName;              ///< GPU name.
@@ -321,6 +328,7 @@ struct DeviceCaps {
     /// @brief A ColorAttachment may be left without a texture (writes to it discarded) while the
     ///        pipeline still has a format for that slot.
     bool unusedAttachments = false;
+    bool gpuTimers = false;              ///< CommandList::beginGpuTimer measures (timestamps on the queue).
     u32 framesInFlight = 2;              ///< Frames the CPU may record ahead of the GPU.
     u32 maxBindlessTextures = 0;         ///< Size of the bindless sampled-texture array.
     u32 maxPushConstantSize = 128;       ///< Push constant bytes available to every stage.

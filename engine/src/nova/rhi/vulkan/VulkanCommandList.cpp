@@ -2,7 +2,23 @@
 
 namespace nova::rhi::vk {
 
-void VulkanCommandList::reset(VkCommandBuffer cmd) { m_cmd = cmd; }
+void VulkanCommandList::reset(VkCommandBuffer cmd) {
+    m_cmd = cmd;
+    m_openTimers.clear();
+}
+
+void VulkanCommandList::beginGpuTimer(const char* name) {
+    const u32 timer = m_device.openGpuTimer(name, static_cast<u32>(m_openTimers.size()));
+    m_openTimers.push_back(timer);
+    if (timer != ~0u) vkCmdWriteTimestamp2(m_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, m_device.timerPool(), timer * 2);
+}
+
+void VulkanCommandList::endGpuTimer() {
+    if (m_openTimers.empty()) return;
+    const u32 timer = m_openTimers.back();
+    m_openTimers.pop_back();
+    if (timer != ~0u) vkCmdWriteTimestamp2(m_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, m_device.timerPool(), timer * 2 + 1);
+}
 
 void VulkanCommandList::beginRendering(const RenderingDesc& desc) {
     std::vector<VkRenderingAttachmentInfo> colors;
