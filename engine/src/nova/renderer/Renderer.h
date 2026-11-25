@@ -180,6 +180,9 @@ struct RenderSettings {
     bool shadowMaps = true;
     f32 shadowDistance = 120.0f;                 ///< How far from the camera shadow maps reach (m).
     u32 shadowMapSize = 2048;                    ///< Texels per side of each cascade.
+    /// @brief Part of each cascade (0..0.5 of its length) where it blends into the next one; the
+    ///        last one fades out toward shadowDistance (0: hard edges between cascades).
+    f32 shadowCascadeBlend = 0.15f;
     /// @brief Without ray-traced shadows, the point lights nearest the camera cast shadows from cube
     ///        shadow maps (six faces each, drawing what is within the light's radius).
     bool pointShadowMaps = true;

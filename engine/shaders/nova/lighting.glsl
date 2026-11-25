@@ -77,12 +77,8 @@ float nova_traceShadow(vec3 origin, vec3 dir, float tMax) {
 #endif
 }
 
-// The sun's visibility from the shadow maps (cascades by distance, 3 × 3 filtered): 1 = lit.
-float nova_shadowMaps(vec3 P, vec3 N) {
-    float along = dot(P, pc.frame.data.cameraForward.xyz);
-    int c = 0;
-    while (c < 4 && along > pc.frame.data.shadowSplits[c]) ++c;
-    if (c >= 4) return 1.0; // beyond the shadow distance
+// The sun's visibility from one cascade (3 × 3 filtered): 1 = lit.
+float nova_shadowCascade(int c, vec3 P, vec3 N) {
     vec3 offsetP = P + N * pc.frame.data.shadowTexels[c] * 1.5; // off the surface by a texel or so
     vec4 clip = pc.frame.data.shadowMatrices[c] * vec4(offsetP, 1.0);
     vec3 ndc = clip.xyz / clip.w;
@@ -100,6 +96,25 @@ float nova_shadowMaps(vec3 P, vec3 N) {
             lit += depth <= texelFetch(g_textures[nonuniformEXT(atlas)], q, 0).r ? 1.0 : 0.0;
         }
     return lit / 9.0;
+}
+
+// The sun's visibility from the shadow maps (cascades by distance): 1 = lit. In the last part of
+// each cascade (shadowParams.w of its length) it blends into the next one, and the last cascade
+// fades out toward the shadow distance, so no edge shows where one ends.
+float nova_shadowMaps(vec3 P, vec3 N) {
+    const float along = dot(P, pc.frame.data.cameraForward.xyz);
+    int c = 0;
+    while (c < 4 && along > pc.frame.data.shadowSplits[c]) ++c;
+    if (c >= 4) return 1.0; // beyond the shadow distance
+    float lit = nova_shadowCascade(c, P, N);
+    const float blend = pc.frame.data.shadowParams.w;
+    if (blend > 0.0) {
+        const float start = c == 0 ? 0.0 : pc.frame.data.shadowSplits[c - 1], end = pc.frame.data.shadowSplits[c];
+        const float band = max((end - start) * blend, 1e-3);
+        const float t = (along - (end - band)) / band;
+        if (t > 0.0) lit = mix(lit, c + 1 < 4 ? nova_shadowCascade(c + 1, P, N) : 1.0, smoothstep(0.0, 1.0, t));
+    }
+    return lit;
 }
 
 // Point light shadow maps: six cube faces per light in a row of the atlas, each a 90° view along

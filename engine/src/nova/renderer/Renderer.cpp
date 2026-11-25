@@ -598,7 +598,7 @@ RGTexture Renderer::addShadowMapPass(RenderGraph& graph, const RenderScene& scen
         fd.shadowSplits[c] = d1;
         fd.shadowTexels[c] = static_cast<f32>(texel);
     }
-    fd.shadowParams = glm::vec4(-1.0f, 0.0015f, static_cast<f32>(res), 0.0f); // x: the atlas, set when it exists
+    fd.shadowParams = glm::vec4(-1.0f, 0.0015f, static_cast<f32>(res), std::clamp(s.shadowCascadeBlend, 0.0f, 0.5f)); // x: the atlas, set when it exists
     fd.cameraForward = glm::vec4(forward, 0.0f);
     fd.flags |= gpu::kFrameFlagShadowMaps;
 

@@ -44,7 +44,7 @@ struct FrameData {
     glm::mat4 shadowMatrices[kShadowCascades]; ///< Camera-relative world → each cascade's clip space.
     glm::vec4 shadowSplits;  ///< Where each cascade ends (distance along the view, m).
     glm::vec4 shadowTexels;  ///< Each cascade's texel size in the world (m): the normal offset.
-    glm::vec4 shadowParams;  ///< x = atlas texture (bindless), y = depth bias, z = cascade resolution (texels).
+    glm::vec4 shadowParams;  ///< x = atlas texture (bindless), y = depth bias, z = cascade resolution (texels), w = blend between cascades (part of each).
     glm::vec4 cameraForward; ///< xyz = the camera's view direction.
     u32 pointLightCount;     ///< Number of valid entries in pointLights.
     u32 flags;               ///< kFrameFlag* bits.

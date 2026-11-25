@@ -40,7 +40,7 @@ struct FrameData {
     mat4 shadowMatrices[4]; // camera-relative world -> each cascade's clip space
     vec4 shadowSplits;  // where each cascade ends (distance along the view, m)
     vec4 shadowTexels;  // each cascade's texel size in the world (m)
-    vec4 shadowParams;  // x = atlas texture (bindless), y = depth bias, z = cascade resolution
+    vec4 shadowParams;  // x = atlas texture (bindless), y = depth bias, z = cascade resolution, w = blend between cascades
     vec4 cameraForward; // xyz = the camera's view direction
     uint pointLightCount;
     uint flags;
