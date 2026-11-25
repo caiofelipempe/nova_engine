@@ -446,6 +446,8 @@ void RendererPanel::onImGui(EditorContext& ctx) {
     ImGui::Checkbox("GPU culling", &s.gpuCulling);
     ImGui::SameLine();
     ImGui::Checkbox("Occlusion", &s.occlusionCulling);
+    ImGui::SameLine();
+    ImGui::Checkbox("Depth prepass", &s.depthPrepass);
     ImGui::EndDisabled();
     if (s.shadowMaps) {
         ImGui::SliderFloat("Shadow distance", &s.shadowDistance, 10.0f, 500.0f, "%.0f m");

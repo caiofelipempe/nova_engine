@@ -18,7 +18,7 @@ layout(location = 5) out vec4 vPrevClip;      // the same point last frame (Inst
 #define NOVA_WRAP_CROP 3u
 
 out gl_PerVertex {
-    vec4 gl_Position;
+    invariant vec4 gl_Position; // the depth prepass and the forward pass must agree bit for bit
     float gl_ClipDistance[3];
 };
 
@@ -27,6 +27,8 @@ vec3 lapShift(vec3 d, vec3 size) {
     vec3 laps = floor(d / max(size, vec3(1e-6)) + 0.5);
     return mix(vec3(0.0), -laps * size, greaterThan(size, vec3(0.0)));
 }
+#else
+invariant gl_Position; // the depth prepass and the forward pass must agree bit for bit
 #endif
 
 // Skinned meshes: the vertex in the bind pose, moved by its joints (mesh space).

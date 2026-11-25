@@ -230,6 +230,10 @@ struct RenderSettings {
     /// @brief With gpuCulling, also skip what other geometry hides: tested against a depth pyramid
     ///        (Hi-Z) in two phases, last frame's then this frame's, so nothing pops in.
     bool occlusionCulling = true;
+    /// @brief With gpuCulling: the GPU-culled opaque groups (not cut-outs) draw their depth first, so
+    ///        the forward pass shades each pixel once (hidden fragments are rejected before shading).
+    ///        Worth it when shading is heavy and objects overlap on screen.
+    bool depthPrepass = false;
     bool wireframe = false;                      ///< Draw meshes as lines (needs DeviceCaps::wireframe).
     DebugView debugView = DebugView::Lit;        ///< Debug visualization.
     Tonemapper tonemapper = Tonemapper::ACES;    ///< Tonemapping operator.
@@ -627,6 +631,7 @@ private:
     rhi::PipelineHandle m_skinPipeline; // skin.comp: deformed vertices for ray tracing
     rhi::PipelineHandle m_shadowPipeline;     // depth only, for the shadow maps
     rhi::PipelineHandle m_shadowMaskPipeline; // the same, alpha-tested (cut-out casters)
+    rhi::PipelineHandle m_prepassPipeline[2]; // depth prepass (camera depth): [0] back faces culled, [1] double sided
     rhi::PipelineHandle m_cullPipeline;       // cull.comp: GPU frustum and occlusion culling
     rhi::PipelineHandle m_hizPipeline;        // hiz.comp: the depth pyramid
     rhi::PipelineHandle m_bloomPipeline;      // bloom.frag (HDR targets)

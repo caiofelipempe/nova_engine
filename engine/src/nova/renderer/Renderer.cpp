@@ -217,7 +217,7 @@ Renderer::~Renderer() {
     for (auto& [key, shape] : m_skinnedShapes) releaseSkinnedShape(shape);
     m_skinnedShapes.clear();
     for (PipelineHandle p : {m_skyPipeline, m_forwardPipeline, m_forwardRtPipeline, m_wireframePipeline, m_skinPipeline,
-                             m_shadowPipeline, m_shadowMaskPipeline, m_cullPipeline, m_hizPipeline, m_bloomPipeline, m_exposurePipeline,
+                             m_shadowPipeline, m_shadowMaskPipeline, m_prepassPipeline[0], m_prepassPipeline[1], m_cullPipeline, m_hizPipeline, m_bloomPipeline, m_exposurePipeline,
                              m_ssaoPipeline, m_ssaoApplyPipeline, m_taaPipeline, m_rtPipeline,
                              m_ptPipeline})
         if (p) m_device.destroyPipeline(p);
@@ -262,6 +262,7 @@ void Renderer::createPipelines() {
     fwd.vertex = forwardVS;
     fwd.fragment = loadShader("forward.frag");
     fwd.colorFormats = {kHdrFormat, kHdrFormat, kMotionFormat}; // color, the ambient's share, motion (material.glsl)
+    fwd.depthCompare = CompareOp::LessEqual; // equal passes: the depth prepass wrote the same depth
     fwd.depthFormat = kDepthFormat;
     fwd.debugName = "pipeline.forward";
     m_forwardPipeline = m_device.createGraphicsPipeline(fwd);
@@ -289,6 +290,15 @@ void Renderer::createPipelines() {
         shadow.fragment = loadShader("shadow.frag"); // cut-out casters: discarded where transparent
         shadow.debugName = "pipeline.shadow.mask";
         m_shadowMaskPipeline = m_device.createGraphicsPipeline(shadow);
+
+        GraphicsPipelineDesc prepass; // the camera's depth, before the forward pass (same vertex shader)
+        prepass.vertex = forwardVS;
+        prepass.depthFormat = kDepthFormat;
+        prepass.debugName = "pipeline.prepass";
+        m_prepassPipeline[0] = m_device.createGraphicsPipeline(prepass);
+        prepass.cullMode = CullMode::None;
+        prepass.debugName = "pipeline.prepass.doubleSided";
+        m_prepassPipeline[1] = m_device.createGraphicsPipeline(prepass);
     }
 
     { // bloom: fullscreen passes between HDR images
@@ -1276,6 +1286,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         u64 key;
         u32 mesh, instance;
         PipelineHandle pipeline;
+        u32 prepass; // 0: a cut-out (not in the depth prepass); 1: single sided; 2: double sided
     };
     std::vector<CullEntry> cullEntries;
     for (u32 i = 0; i < drawCount; ++i) {
@@ -1290,12 +1301,15 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
         PipelineHandle p = wireframe ? m_wireframePipeline : PipelineHandle{};
         if (!p && d.material.shader) p = materialPipeline(d.material.shader, useRt, state);
         if (!p) p = defaultPipeline(useRt, state);
-        if (gpuCull && !wi.triangles && d.jointCount == 0) cullEntries.push_back({p.key(), d.mesh.id, i, p});
+        if (gpuCull && !wi.triangles && d.jointCount == 0)
+            cullEntries.push_back({p.key(), d.mesh.id, i, p,
+                                   d.material.alphaMode == AlphaMode::Mask ? 0u : d.material.doubleSided ? 2u : 1u});
         else m_drawOrder.emplace_back(p.key(), i);
     }
     struct CullGroup {
         PipelineHandle pipeline;
         u32 mesh;
+        u32 prepass; // as CullEntry::prepass
     };
     std::vector<CullGroup> cullGroups;
     // Occlusion: two phases around a depth pyramid of the view (see cull.comp).
@@ -1307,11 +1321,14 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     u64 cullBase = 0, commandBytes = 0, offCommandsLate = 0, offVisible = 0, offVisibleLate = 0, offStates = 0, offCounters = 0;
     if (!cullEntries.empty()) {
         std::sort(cullEntries.begin(), cullEntries.end(), [](const CullEntry& a, const CullEntry& b) {
-            return a.key != b.key ? a.key < b.key : a.mesh != b.mesh ? a.mesh < b.mesh : a.instance < b.instance;
+            if (a.key != b.key) return a.key < b.key;
+            if (a.mesh != b.mesh) return a.mesh < b.mesh;
+            return a.prepass != b.prepass ? a.prepass < b.prepass : a.instance < b.instance;
         });
         u32 groups = 0;
         for (size_t k = 0; k < cullEntries.size(); ++k)
-            groups += k == 0 || cullEntries[k].key != cullEntries[k - 1].key || cullEntries[k].mesh != cullEntries[k - 1].mesh;
+            groups += k == 0 || cullEntries[k].key != cullEntries[k - 1].key || cullEntries[k].mesh != cullEntries[k - 1].mesh ||
+                      cullEntries[k].prepass != cullEntries[k - 1].prepass;
         const u64 n = cullEntries.size();
         commandBytes = groups * sizeof(gpu::DrawIndexedCommand);
         cullCommands = allocate(commandBytes, 16); // their starting values, copied to the cull buffer
@@ -1347,10 +1364,11 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
             auto* items = static_cast<gpu::CullItem*>(cullItems.cpu);
             for (u32 k = 0; k < n; ++k) {
                 const CullEntry& e = cullEntries[k];
-                if (cullGroups.empty() || e.key != cullEntries[k - 1].key || e.mesh != cullEntries[k - 1].mesh) {
+                if (cullGroups.empty() || e.key != cullEntries[k - 1].key || e.mesh != cullEntries[k - 1].mesh ||
+                    e.prepass != cullEntries[k - 1].prepass) {
                     // A group's instances take its part of the visible list, from firstInstance on.
                     commands[cullGroups.size()] = {m_meshes[e.mesh].indexCount, 0u, 0u, 0, k};
-                    cullGroups.push_back({e.pipeline, e.mesh});
+                    cullGroups.push_back({e.pipeline, e.mesh, e.prepass});
                 }
                 // The bounding sphere of the instance (camera relative, like viewProj), from the scene's
                 // own copy: the upload buffer is write-combined memory, very slow for the CPU to read.
@@ -1525,11 +1543,46 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     const RGTexture motionTex = taa || !m_device.caps().unusedAttachments
                                     ? graph.create({extent.width, extent.height, kMotionFormat, "motion"})
                                     : RGTexture{};
+    // Depth prepass: the GPU-culled groups (not cut-outs) draw their depth with the same commands as
+    // the forward pass's first phase; the forward pass then loads it and tests LessEqual, so hidden
+    // fragments are rejected before shading.
+    bool prepassed = false;
+    if (s.depthPrepass && !wireframe && m_prepassPipeline[0] &&
+        std::any_of(cullGroups.begin(), cullGroups.end(), [](const CullGroup& g) { return g.prepass != 0; })) {
+        prepassed = true;
+        const u64 prepassFrame = frameAlloc.gpu, prepassInstances = instAlloc.gpu;
+        graph.addPass("Depth prepass").depth(depthTex).execute([&, prepassFrame, prepassInstances](RenderPassContext& ctx) {
+            gpu::DrawPush push{};
+            push.frame = prepassFrame;
+            push.instances = prepassInstances;
+            push.visible = cullBase + offVisible;
+            u32 bound = ~0u;
+            BufferHandle boundIndex{};
+            for (u32 g = 0; g < cullGroups.size(); ++g) {
+                const CullGroup& group = cullGroups[g];
+                if (group.prepass == 0) continue; // cut-outs: the material decides what is cut
+                const u32 variant = group.prepass == 2 ? 1u : 0u;
+                if (variant != bound) {
+                    ctx.cmd.bindPipeline(m_prepassPipeline[variant]);
+                    bound = variant;
+                }
+                const GpuMesh& mesh = m_meshes[group.mesh];
+                if (!(mesh.indexBuffer == boundIndex)) {
+                    ctx.cmd.bindIndexBuffer(mesh.indexBuffer);
+                    boundIndex = mesh.indexBuffer;
+                }
+                push.vertices = m_device.deviceAddress(mesh.vertexBuffer);
+                ctx.cmd.pushConstants(push);
+                ctx.cmd.drawIndexedIndirect(cullBuffer, g * sizeof(gpu::DrawIndexedCommand), 1, sizeof(gpu::DrawIndexedCommand));
+                ++m_stats.drawCalls;
+            }
+        });
+    }
     {
         RenderPassBuilder forward = graph.addPass("Forward");
         forward.color(hdrTex, LoadOp::DontCare).color(ambientTex, LoadOp::Clear, StoreOp::Store, {0.0f, 0.0f, 0.0f, 0.0f});
         forward.color(motionTex, LoadOp::Clear, StoreOp::Store, {0.0f, 0.0f, 0.0f, 0.0f});
-        forward.depth(depthTex); // depth is kept for the debug lines
+        forward.depth(depthTex, prepassed ? LoadOp::Load : LoadOp::Clear); // depth is kept for the debug lines
         if (shadowAtlas) forward.sample(shadowAtlas);
         if (pointShadowAtlas) forward.sample(pointShadowAtlas);
         forward.execute([&record](RenderPassContext& ctx) { record(ctx.cmd, false); });
