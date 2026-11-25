@@ -1,10 +1,11 @@
-// Engine lighting: Cook-Torrance GGX, ray-queried shadows and the hemisphere ambient.
+// Engine lighting: Cook-Torrance GGX, ray-queried shadows, reflections and AO, and the hemisphere ambient.
 // Included by nova/material.glsl; needs `pc` (nova/forward_push.glsl) and, for ray-traced
 // shadows, NOVA_RAY_QUERY + GL_EXT_ray_query (the renderer compiles that variant itself).
 #ifndef NOVA_LIGHTING_GLSL
 #define NOVA_LIGHTING_GLSL
 #include "nova/forward_push.glsl"
 #include "nova/brdf.glsl"
+#include "nova/sky.glsl"
 
 #ifdef NOVA_RAY_QUERY
 // A shadow ray met a triangle of a cut-out material (alpha Mask, non-opaque in the TLAS): does it
@@ -117,6 +118,103 @@ float nova_pointShadowMap(int slot, vec3 P, vec3 N, vec3 lightPos, float radius)
     return lit / 9.0;
 }
 
+#ifdef NOVA_RAY_QUERY
+// A per-pixel value in 0..1 that turns every frame when `frame` does (interleaved gradient noise).
+float nova_noise(vec2 pixel, float frame) {
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))) + frame * 0.61803399);
+}
+
+// The nearest surface along a ray (cut-outs tested by alpha). False on a miss.
+bool nova_traceClosest(vec3 origin, vec3 dir, float tMax, out uint instance, out uint primitive, out vec2 bary, out float t) {
+    instance = primitive = 0u;
+    bary = vec2(0.0);
+    t = tMax;
+    if (pc.tlas == 0ul) return false;
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, accelerationStructureEXT(pc.tlas), gl_RayFlagsNoneEXT, 0xFF, origin, 0.0, dir, tMax);
+    while (rayQueryProceedEXT(rq)) {
+        if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT &&
+            nova_shadowAlphaBlocks(uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)),
+                                   uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)),
+                                   rayQueryGetIntersectionBarycentricsEXT(rq, false)))
+            rayQueryConfirmIntersectionEXT(rq);
+    }
+    if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT) return false;
+    instance = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true));
+    primitive = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true));
+    bary = rayQueryGetIntersectionBarycentricsEXT(rq, true);
+    t = rayQueryGetIntersectionTEXT(rq, true);
+    return true;
+}
+
+// The light coming back along a reflected ray: the sky on a miss; on a hit, the surface there
+// (base color and its texture, checker, emissive) lit simply: the sun (with a shadow ray) and the
+// hemisphere ambient, as diffuse.
+vec3 nova_reflectedRadiance(vec3 origin, vec3 dir) {
+    uint instance, primitive;
+    vec2 bary;
+    float t;
+    if (!nova_traceClosest(origin, dir, 1e4, instance, primitive, bary, t)) return nova_skyColor(pc.frame, dir);
+    const InstanceData inst = pc.instances.items[instance];
+    VertexBuffer vertices = VertexBuffer(packUint2x32(inst.mesh.xy));
+    IndexBuffer indices = IndexBuffer(packUint2x32(inst.mesh.zw));
+    const Vertex a = vertices.items[indices.items[primitive * 3u + 0u]];
+    const Vertex b = vertices.items[indices.items[primitive * 3u + 1u]];
+    const Vertex c = vertices.items[indices.items[primitive * 3u + 2u]];
+    const vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
+    vec3 N = normalize(mat3(inst.normalMatrix) * (a.normal * w.x + b.normal * w.y + c.normal * w.z));
+    if (dot(N, dir) > 0.0) N = -N;
+    const vec2 uv = nova_materialUv(inst, vec2(a.u, a.v) * w.x + vec2(b.u, b.v) * w.y + vec2(c.u, c.v) * w.z);
+    const vec3 P = origin + dir * t;
+    const int tex = int(inst.params.w);
+    vec3 albedo = inst.baseColor.rgb * (tex >= 0 ? textureLod(g_textures[nonuniformEXT(tex)], uv, 0.0).rgb : vec3(1.0));
+    if ((floatBitsToUint(inst.params.z) & MATERIAL_FLAG_CHECKER) != 0u) {
+        const vec2 cell = floor((P + pc.frame.data.originTiled.xyz).xz);
+        albedo *= mod(cell.x + cell.y, 2.0) < 1.0 ? 1.0 : 0.6;
+    }
+    const float metallic = clamp(inst.params.x, 0.0, 1.0);
+    vec3 color = inst.emissive.rgb * inst.emissive.w;
+    const vec3 Ls = -normalize(pc.frame.data.sunDirection.xyz);
+    const float NdotL = dot(N, Ls);
+    if (NdotL > 0.0)
+        color += albedo * (1.0 - metallic) / NOVA_PI * NdotL * pc.frame.data.sunColor.rgb * pc.frame.data.sunDirection.w *
+                 nova_traceShadow(P + N * pc.frame.data.shadowBias, Ls, 1e4);
+    color += nova_ambient(N, albedo, metallic, pc.frame.data.skyZenith.rgb, pc.frame.data.groundColor.rgb,
+                          pc.frame.data.skyZenith.w, 1.0);
+    return color;
+}
+
+// A direction around the mirror reflection of V, spread by the roughness (a GGX half vector).
+vec3 nova_glossyDirection(vec3 N, vec3 V, float roughness, float noise) {
+    const vec3 mirror = reflect(-V, N);
+    if (roughness < 0.03) return mirror;
+    const float a = roughness * roughness, a2 = a * a;
+    const float u1 = noise, u2 = fract(noise * 7.13 + 0.37);
+    const float cosTheta = sqrt((1.0 - u2) / (1.0 + (a2 - 1.0) * u2)), sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+    const float phi = 6.2831853 * u1;
+    const vec3 helper = abs(N.y) < 0.99 ? vec3(0, 1, 0) : vec3(1, 0, 0);
+    const vec3 T = normalize(cross(helper, N)), B = cross(N, T);
+    const vec3 H = normalize(T * (cos(phi) * sinTheta) + B * (sin(phi) * sinTheta) + N * cosTheta);
+    const vec3 L = reflect(-V, H);
+    return dot(L, N) > 0.0 ? L : mirror;
+}
+
+// Ambient occlusion from `rays` short rays (up to `radius`) in the hemisphere: 1 = open.
+float nova_rayTracedAo(vec3 origin, vec3 N, float radius, uint rays, float noise) {
+    rays = clamp(rays, 1u, 16u);
+    const vec3 helper = abs(N.y) < 0.99 ? vec3(0, 1, 0) : vec3(1, 0, 0);
+    const vec3 T = normalize(cross(helper, N)), B = cross(N, T);
+    float open = 0.0;
+    for (uint i = 0u; i < rays; ++i) {
+        const float u1 = fract(noise + float(i) * 0.75487767), u2 = fract(noise * 3.1 + float(i) * 0.56984029);
+        const float r = sqrt(u1), phi = 6.2831853 * u2;
+        const vec3 dir = T * (r * cos(phi)) + B * (r * sin(phi)) + N * sqrt(max(1.0 - u1, 0.0));
+        open += nova_traceShadow(origin, normalize(dir), radius);
+    }
+    return open / float(rays);
+}
+#endif
+
 // Shades a surface with the sun, the point lights and the ambient (darkened by `occlusion`);
 // `sunShadow` receives the sun visibility (for the Shadows debug view) and `ambientPart` the
 // ambient's share of the result (screen-space ambient occlusion darkens that part later).
@@ -160,10 +258,34 @@ vec3 nova_shadeParts(vec3 P, vec3 N, vec3 V, vec3 albedo, float metallic, float 
                  light.colorIntensity.w * atten * shadow;
     }
 
-    // Hemisphere ambient
-    ambientPart = nova_ambient(N, albedo, metallic, pc.frame.data.skyZenith.rgb, pc.frame.data.groundColor.rgb,
-                               pc.frame.data.skyZenith.w, occlusion);
-    return color + ambientPart;
+    // Hemisphere ambient: diffuse, and a rough guess of the specular (what reflections replace).
+    const vec3 ambientLight = mix(pc.frame.data.groundColor.rgb, pc.frame.data.skyZenith.rgb, N.y * 0.5 + 0.5) *
+                              pc.frame.data.skyZenith.w;
+    const vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 diffuseAmbient = ambientLight * albedo * (1.0 - metallic);
+    vec3 specularAmbient = ambientLight * F0 * 0.25;
+    vec3 reflection = vec3(0.0); // traced: not part of the ambient (screen-space AO leaves it)
+#ifdef NOVA_RAY_QUERY
+    const vec4 rt = pc.frame.data.rtParams;
+    const float noise = nova_noise(gl_FragCoord.xy, rt.w);
+    if (rtShadows && (pc.frame.data.flags & FRAME_FLAG_RT_AO) != 0u) {
+        const float ao = nova_rayTracedAo(origin, N, rt.x, uint(rt.y), noise);
+        diffuseAmbient *= ao;
+        specularAmbient *= ao;
+    }
+    if (rtShadows && (pc.frame.data.flags & FRAME_FLAG_RT_REFLECTIONS) != 0u && roughness < rt.z) {
+        // One ray around the mirror direction (spread by the roughness; TAA averages the noise),
+        // its light weighted by Fresnel; fading into the guess toward the roughness limit.
+        const float fade = 1.0 - smoothstep(rt.z * 0.6, rt.z, roughness);
+        const vec3 dir = nova_glossyDirection(N, V, roughness, noise);
+        const float NdotV = max(dot(N, V), 1e-4);
+        const vec3 Fr = F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - NdotV, 5.0);
+        reflection = nova_reflectedRadiance(origin, dir) * Fr * occlusion * fade;
+        specularAmbient *= 1.0 - fade;
+    }
+#endif
+    ambientPart = (diffuseAmbient + specularAmbient) * occlusion;
+    return color + ambientPart + reflection;
 }
 
 // Same, without the ambient's share.

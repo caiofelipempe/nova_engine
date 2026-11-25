@@ -455,9 +455,14 @@ renderer().addRenderPasses(nova::RenderStage::BeforeTonemap, [&](nova::RenderGra
 
   O Sandbox tem um exemplo completo: AO traçado por raios com shaders próprios (`sandbox/shaders/rtao.*`), ligado com a tecla **O**, o checkbox "RT AO" ou `--rtao`.
 
+- **reflexos e AO por ray query no passe forward** (na variante `rq` dos materiais, com as sombras traçadas ligadas):
+  - `RenderSettings::rayTracedReflections` (ligado por padrão) lança um raio por pixel em torno da direção do espelho, espalhado pela rugosidade (um meio-vetor GGX; o TAA média o ruído).
+  - No ponto atingido, a superfície é iluminada de forma simples: cor base e textura, xadrez, sol com raio de sombra, ambiente e emissivo, como difusa. Sem acerto, vem o céu. A luz volta pesada pelo Fresnel e entra no lugar da aproximação especular da luz ambiente, sumindo aos poucos até `reflectionMaxRoughness` (0,5).
+  - `RenderSettings::rayTracedAo` (desligado por padrão) troca o SSAO por `rayTracedAoRays` raios curtos (2, até `rayTracedAoRadius`) no hemisfério. Com TAA, o padrão gira a cada frame.
+  - Ficam no painel Renderer; no Sandbox, `--no-reflections` e `--rq-ao`. O cenário **Surfaces** tem a bola de metal com faixas de rugosidade, do espelho ao áspero.
+
 Próximos passos:
-1. Reflexos e AO por ray query no mesmo pass forward.
-2. Compactação de BLAS e refit da TLAS para cenas grandes.
+1. Compactação de BLAS e refit da TLAS para cenas grandes.
 
 ## Roadmap geral
 

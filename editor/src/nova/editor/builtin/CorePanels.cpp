@@ -429,6 +429,17 @@ void RendererPanel::onImGui(EditorContext& ctx) {
 
     ImGui::BeginDisabled(!caps.rayQuery);
     ImGui::Checkbox("Ray-traced shadows", &s.rayTracedShadows);
+    ImGui::BeginDisabled(!s.rayTracedShadows);
+    ImGui::Checkbox("RT reflections", &s.rayTracedReflections);
+    ImGui::SameLine();
+    ImGui::Checkbox("RT AO", &s.rayTracedAo);
+    if (s.rayTracedReflections) ImGui::SliderFloat("Reflection max roughness", &s.reflectionMaxRoughness, 0.05f, 1.0f, "%.2f");
+    if (s.rayTracedAo) {
+        ImGui::SliderFloat("RT AO radius", &s.rayTracedAoRadius, 0.05f, 5.0f, "%.2f m");
+        int rays = static_cast<int>(s.rayTracedAoRays);
+        if (ImGui::SliderInt("RT AO rays", &rays, 1, 16)) s.rayTracedAoRays = static_cast<u32>(rays);
+    }
+    ImGui::EndDisabled();
     ImGui::EndDisabled();
     ImGui::Checkbox("Shadow maps (without RT)", &s.shadowMaps);
     ImGui::BeginDisabled(!caps.drawIndirectFirstInstance);

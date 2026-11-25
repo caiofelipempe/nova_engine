@@ -199,6 +199,16 @@ enum class WrapCrop : u32 {
 /// @brief Runtime-tweakable rendering options (Renderer::settings()).
 struct RenderSettings {
     bool rayTracedShadows = true;                ///< Ray-query shadows; ignored when the GPU lacks ray queries.
+    /// @brief With ray-traced shadows on: reflections traced by ray query in the forward pass (one
+    ///        ray around the mirror direction, spread by the roughness; the surface it meets lit by
+    ///        the sun and the ambient, or the sky), in place of the ambient's specular guess.
+    bool rayTracedReflections = true;
+    f32 reflectionMaxRoughness = 0.5f; ///< Rougher surfaces keep the guess (reflections fade out toward it).
+    /// @brief With ray-traced shadows on: ambient occlusion from short rays in the forward pass, in
+    ///        place of SSAO (TAA smooths its noise).
+    bool rayTracedAo = false;
+    f32 rayTracedAoRadius = 0.75f; ///< How far the AO rays look (m).
+    u32 rayTracedAoRays = 2;       ///< AO rays per pixel (1..16).
     /// @brief Without ray-traced shadows (off, or no ray queries), the sun casts shadows from
     ///        cascaded shadow maps (4 cascades up to shadowDistance; point lights cast none).
     bool shadowMaps = true;

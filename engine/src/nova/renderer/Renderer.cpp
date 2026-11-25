@@ -961,6 +961,11 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     const u32 pointLightCount = std::min<u32>(static_cast<u32>(scene.pointLights.size()), gpu::kMaxPointLights);
     fd.pointLightCount = pointLightCount;
     u32 frameFlags = useRt ? gpu::kFrameFlagRtShadows : 0u;
+    if (useRt && s.rayTracedReflections) frameFlags |= gpu::kFrameFlagRtReflections;
+    if (useRt && s.rayTracedAo) frameFlags |= gpu::kFrameFlagRtAo;
+    fd.rtParams = glm::vec4(std::max(s.rayTracedAoRadius, 0.01f), static_cast<f32>(std::clamp(s.rayTracedAoRays, 1u, 16u)),
+                            std::clamp(s.reflectionMaxRoughness, 0.0f, 1.0f),
+                            taa ? static_cast<f32>(frameCounter % 1024u) : 0.0f); // noise: turns with TAA
     fd.shadowBias = s.shadowBias;
     // Point shadow maps (without ray tracing): the nearest lights that cast shadows, one atlas row each.
     std::array<glm::ivec4, gpu::kMaxPointLights / 4> slots;
@@ -1460,7 +1465,7 @@ void Renderer::renderInternal(CommandList& cmd, const RenderScene& scene, Render
     };
     // Screen-space ambient occlusion needs the ambient light's share of the image: the forward
     // pass's second output (left unused without it).
-    const bool ssao = s.ssao && s.ssaoRadius > 0.0f && m_ssaoPipeline && m_ssaoApplyPipeline &&
+    const bool ssao = s.ssao && s.ssaoRadius > 0.0f && m_ssaoPipeline && m_ssaoApplyPipeline && !(useRt && s.rayTracedAo) &&
                       (s.debugView == DebugView::Lit || s.debugView == DebugView::AmbientOcclusion);
     // Without SSAO the slot stays empty, or (GPUs that cannot leave it empty) gets a texture nobody reads.
     const RGTexture ambientTex = ssao || !m_device.caps().unusedAttachments

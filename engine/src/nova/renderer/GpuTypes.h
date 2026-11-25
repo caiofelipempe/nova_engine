@@ -16,6 +16,7 @@ namespace nova::gpu {
 constexpr u32 kMaxPointLights = 16;      ///< Point lights per frame (`MAX_POINT_LIGHTS`).
 constexpr u32 kFrameFlagRtShadows = 1u;  ///< FrameData::flags: trace shadow rays (`FRAME_FLAG_RT_SHADOWS`).
 constexpr u32 kFrameFlagShadowMaps = 2u, kFrameFlagPointShadowMaps = 4u; ///< FrameData::flags: the sun's shadow maps (`FRAME_FLAG_SHADOW_MAPS`).
+constexpr u32 kFrameFlagRtReflections = 8u, kFrameFlagRtAo = 16u; ///< FrameData::flags: ray query reflections and AO in the forward pass.
 constexpr u32 kShadowCascades = 4;       ///< Shadow map cascades (a 2 × 2 atlas).
 constexpr u32 kMaterialFlagChecker = 1u; ///< InstanceData::params.z bit: checker pattern (`MATERIAL_FLAG_CHECKER`).
 /// @brief Period (m) of the world position shaders see (`NOVA_WORLD_TILE`): patterns whose period divides it are seamless.
@@ -58,9 +59,12 @@ struct FrameData {
     /// @brief Last frame's view-projection without jitter, from this frame's origin (motion vectors).
     glm::mat4 prevViewProj;
     glm::vec4 jitter; ///< xy = this frame's projection offset in NDC (TAA; 0 without it): viewProj includes it.
+    /// @brief Ray query reflections and AO: x AO radius (m), y AO rays, z roughness above which
+    ///        reflections fade out, w noise frame (turns each frame with TAA, else 0).
+    glm::vec4 rtParams;
 };
 static_assert(sizeof(FrameData) ==
-              256 + 8 * 16 + 4 * 64 + 4 * 16 + 16 + kMaxPointLights * 32 + 16 + kMaxPointLights * 4 + 64 + 16);
+              256 + 8 * 16 + 4 * 64 + 4 * 16 + 16 + kMaxPointLights * 32 + 16 + kMaxPointLights * 4 + 64 + 16 + 16);
 
 /// @brief Per-draw instance data, indexed by DrawPush::instanceIndex.
 struct InstanceData {

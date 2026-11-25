@@ -11,6 +11,8 @@
 #define FRAME_FLAG_RT_SHADOWS 1u
 #define FRAME_FLAG_SHADOW_MAPS 2u
 #define FRAME_FLAG_POINT_SHADOW_MAPS 4u
+#define FRAME_FLAG_RT_REFLECTIONS 8u
+#define FRAME_FLAG_RT_AO 16u
 
 #define MATERIAL_FLAG_CHECKER 1u
 
@@ -51,6 +53,7 @@ struct FrameData {
     ivec4 pointShadowSlots[MAX_POINT_LIGHTS / 4]; // per light: its atlas row, -1 none, -2 casts no shadows
     mat4 prevViewProj;  // last frame's view-projection without jitter, from this frame's origin (motion vectors)
     vec4 jitter;        // xy = this frame's projection offset in NDC (TAA), already in viewProj
+    vec4 rtParams;      // ray query reflections/AO: x AO radius, y AO rays, z reflection max roughness, w noise frame
 };
 
 struct InstanceData {

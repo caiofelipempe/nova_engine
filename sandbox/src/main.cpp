@@ -83,6 +83,8 @@ public:
         if (s_noAa) r.settings().antiAliasing = nova::AntiAliasing::None;
         if (s_taa) r.settings().antiAliasing = nova::AntiAliasing::TAA;
         if (s_paused) m_paused = true;
+        if (s_rqAo) r.settings().rayTracedAo = true;
+        if (s_noReflections) r.settings().rayTracedReflections = false;
         setupRayTracedAo();
         if (s_debugView >= 0) r.settings().debugView = static_cast<nova::DebugView>(s_debugView);
 #if NOVA_WRAP_RENDER_MODES
@@ -112,6 +114,7 @@ public:
     static inline bool s_taa = false;
     static inline bool s_paused = false; // --paused: the simulation starts paused
     static inline bool s_rtao = false;   // --rtao: ray traced AO from the game's shaders
+    static inline bool s_rqAo = false, s_noReflections = false; // --rq-ao, --no-reflections (ray query in the forward pass)
     static inline int s_debugView = -1; // --debug-view N (nova::DebugView)
     static inline int s_quitAfterFrames = -1; // --frames N: quit after N frames (smoke tests)
     static inline std::string s_screenshot;   // --screenshot <file.png>: the last frame before quitting
@@ -555,6 +558,8 @@ int main(int argc, char** argv) {
         else if (arg == "--taa") PhysicsBench::s_taa = true;
         else if (arg == "--paused") PhysicsBench::s_paused = true;
         else if (arg == "--rtao") PhysicsBench::s_rtao = true;
+        else if (arg == "--rq-ao") PhysicsBench::s_rqAo = true;
+        else if (arg == "--no-reflections") PhysicsBench::s_noReflections = true;
         else if (arg == "--debug-view" && hasValue) PhysicsBench::s_debugView = std::atoi(argv[++i]);
         else if (arg == "--frames" && hasValue) PhysicsBench::s_quitAfterFrames = std::atoi(argv[++i]);
         else if (arg == "--screenshot" && hasValue) PhysicsBench::s_screenshot = argv[++i];
