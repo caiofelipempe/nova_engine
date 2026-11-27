@@ -64,6 +64,7 @@ public:
 
 /// @brief The world (the 16 km torus of WorldSpace), the camera's place in it, and the physics.
 class WorldPanel final : public Panel {
+    void streamingSection(Scene& scene);
 public:
     WorldPanel();
     void onImGui(EditorContext& ctx) override;

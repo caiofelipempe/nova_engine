@@ -681,5 +681,7 @@ Cada dimensão tem literais (`nova::literals`, que vem junto com `using namespac
   mantido, num bloco não carregado, é destruída.
 - Testes em `tests/ChunkTests.cpp`: grade e eixos, ordem e orçamento de carga, a emenda, histerese,
   descarga com atraso, dormência de corpos (pose e velocidades exatas), de personagens e de juntas.
-- **Falta:** um painel no editor mostrando os blocos carregados e o anel da física, e carga
-  assíncrona (hoje `load` roda na thread do update, dentro do orçamento por frame).
+- **Editor:** o painel World liga o streaming e mexe nas suas opções (ajuste de execução, não salvo
+  com a cena) e mostra um mapa dos blocos em volta do foco: verde simula, azul está carregado, âmbar
+  está saindo (fora do anel mantido), escuro não está carregado; o bloco do foco tem borda branca.
+- **Falta:** carga assíncrona (hoje `load` roda na thread do update, dentro do orçamento por frame).

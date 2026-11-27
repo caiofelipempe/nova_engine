@@ -667,6 +667,78 @@ void WorldPanel::onImGui(EditorContext& ctx) {
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("What the physics engine's (0, 0, 0) is: it follows the focus on a grid of cells");
     }
+    streamingSection(scene);
+}
+
+// Streaming by chunks: its settings (runtime: the game sets them; not saved with the scene) and a
+// map of the chunks around the focus chunk.
+void WorldPanel::streamingSection(Scene& scene) {
+    ImGui::Separator();
+    ChunkSettings s = scene.chunkStreaming();
+    bool changed = ImGui::Checkbox("Streaming by chunks", &s.enabled);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Loads, unloads and puts to sleep by chunks around the focus (runtime setting, not saved)");
+    if (!s.enabled) {
+        if (changed) scene.setChunkStreaming(s);
+        return;
+    }
+    f64 size = toDouble(s.size);
+    const f64 minSize = 16.0, maxSize = 4096.0;
+    ImGui::SetNextItemWidth(120.0f);
+    if (ImGui::DragScalar("Chunk size", ImGuiDataType_Double, &size, 1.0f, &minSize, &maxSize, "%.0f m", ImGuiSliderFlags_Logarithmic)) {
+        s.size = Length(size);
+        changed = true;
+    }
+    const char* axisNames[3] = {"X", "Y", "Z"};
+    for (int i = 0; i < 3; ++i) {
+        if (i) ImGui::SameLine();
+        changed |= ImGui::Checkbox(axisNames[i], &s.axes[i]);
+    }
+    ImGui::SetNextItemWidth(160.0f);
+    changed |= ImGui::SliderInt("Physics ring", &s.physicsRadius, 0, 8);
+    ImGui::SetNextItemWidth(160.0f);
+    changed |= ImGui::SliderInt("Loaded ring", &s.loadRadius, 0, 8);
+    ImGui::SetNextItemWidth(160.0f);
+    changed |= ImGui::SliderInt("Kept ring", &s.unloadRadius, 0, 10);
+    if (changed) scene.setChunkStreaming(s);
+
+    const ChunkCoord focus = scene.focusChunk();
+    ImGui::Text("Focus chunk %lld, %lld, %lld  |  %zu loaded  |  %zu dormant", static_cast<long long>(focus.x),
+                static_cast<long long>(focus.y), static_cast<long long>(focus.z), scene.loadedChunks().size(),
+                scene.dormantCount());
+
+    // The map: the first two subdivided axes (X and Z by default), the kept ring around the focus.
+    int a = -1, b = -1;
+    for (int i = 0; i < 3; ++i) {
+        if (!s.axes[i]) continue;
+        if (a < 0) a = i;
+        else if (b < 0) b = i;
+    }
+    if (a < 0) return;
+    const int r = std::max(s.unloadRadius, s.loadRadius) + 1;
+    const float cell = std::clamp((ImGui::GetContentRegionAvail().x - 4.0f) / static_cast<float>(2 * r + 1), 4.0f, 18.0f);
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const int rows = b >= 0 ? 2 * r + 1 : 1;
+    for (int row = 0; row < rows; ++row)
+        for (int col = 0; col < 2 * r + 1; ++col) {
+            ChunkCoord c = focus;
+            c[a] += col - r;
+            if (b >= 0) c[b] += row - r; // drawn with the second axis growing downwards
+            const i64 ring = std::max<i64>(std::abs(col - r), b >= 0 ? std::abs(row - r) : 0);
+            ImU32 color = IM_COL32(40, 40, 46, 255); // not loaded
+            if (scene.isChunkLoaded(c)) {
+                color = scene.chunkOutFor(c) > Duration() ? IM_COL32(150, 110, 50, 255) // leaving (out of the kept ring)
+                                                          : IM_COL32(60, 110, 160, 255); // loaded
+                if (ring <= s.physicsRadius) color = IM_COL32(70, 170, 90, 255);        // simulating
+            }
+            const ImVec2 p0{origin.x + col * cell, origin.y + row * cell};
+            draw->AddRectFilled(p0, {p0.x + cell - 1.0f, p0.y + cell - 1.0f}, color);
+            if (ring == 0) draw->AddRect(p0, {p0.x + cell - 1.0f, p0.y + cell - 1.0f}, IM_COL32(255, 255, 255, 255));
+        }
+    ImGui::Dummy({cell * static_cast<float>(2 * r + 1), cell * static_cast<float>(rows)});
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Around the focus chunk (white): green simulates, blue is loaded, amber is leaving, dark is not loaded");
 }
 
 // ----------------------------------------------------------------- console --

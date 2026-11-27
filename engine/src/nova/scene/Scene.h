@@ -279,6 +279,13 @@ public:
     std::vector<ChunkCoord> loadedChunks() const;
     /// @brief Is the entity's body or character dormant (beyond the physics ring)?
     bool isDormant(Entity e) const;
+    /// @brief How many bodies and characters are dormant.
+    size_t dormantCount() const { return m_dormantBodies.size() + m_dormantCharacters.size(); }
+    /// @brief For how long a loaded chunk has been out of the kept ring (zero: inside it).
+    Duration chunkOutFor(const ChunkCoord& c) const {
+        const auto it = m_loadedChunks.find(c);
+        return it == m_loadedChunks.end() ? Duration() : it->second.outFor;
+    }
     /// @}
 
     /// @name World
