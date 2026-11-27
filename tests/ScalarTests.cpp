@@ -13,6 +13,8 @@
 
 using namespace nova;
 
+using Scalar = Q<15, 16>; // a plain format (no dimension), for the tests
+
 namespace {
 
 int g_failures = 0;
@@ -37,7 +39,7 @@ void formats() {
     CHECK(toDouble(fromRaw<Length>(1)) == std::ldexp(1.0, -18));                 // 3.8 µm
     CHECK_NEAR(toDouble(fromRaw<Length>(std::numeric_limits<i32>::max())), 8192.0, 1e-5);
     CHECK_NEAR(toDouble(fromRaw<Distance>(std::numeric_limits<i32>::max())), 16384.0, 1e-4);
-    CHECK(toDouble(fromRaw<Speed>(1)) == std::ldexp(1.0, -16));                  // 15 µm/s
+    CHECK(toDouble(fromRaw<Speed>(1)) == std::ldexp(1.0, -17));                  // 7.6 µm/s
     CHECK(Angle::fromRaw(1).turns() == std::ldexp(1.0, -32));                     // 1.46·10⁻⁹ rad
     CHECK(AngleSpeed::fromRaw(1).turnsPerSecond() == std::ldexp(1.0, -25));       // turns/s
     CHECK_NEAR(AngleSpeed::fromRaw(std::numeric_limits<i32>::max()).turnsPerSecond(), 64.0, 1e-6);
@@ -181,7 +183,7 @@ void determinism() {
     const i64 g = toFixed<Speed>(-9.81).raw_value();
     for (int i = 0; i < 600; ++i) {
         vy += detail::roundShift<16>(g * 1092);
-        py += detail::roundShift<16 + 16 - 18>(vy * 1092);
+        py += detail::roundShift<17 + 16 - 18>(vy * 1092);
     }
     CHECK(a.y.raw_value() == py);
 }
@@ -189,7 +191,7 @@ void determinism() {
 // Every size, 8 to 64 bits, with the binary point anywhere.
 void sizes() {
     static_assert(std::is_same_v<Q<3, 4>, Fixed<i8, 4>> && std::is_same_v<Q<7, 8>, Fixed<i16, 8>>);
-    static_assert(std::is_same_v<Q<13, 18>, Length> && std::is_same_v<Q<45, 18>, Fixed<i64, 18>>);
+    static_assert(std::is_same_v<Q<13, 18>::Base, Length::Base> && std::is_same_v<Q<45, 18>, Fixed<i64, 18>>);
     static_assert(sizeof(Q<3, 4>) == 1 && sizeof(Q<7, 8>) == 2 && sizeof(Q<15, 16>) == 4 && sizeof(Q<45, 18>) == 8);
     // 8 bits: Q3.4, step 1/16, range ±8 (saturating).
     using Q8 = Q<3, 4>;
@@ -211,6 +213,39 @@ void sizes() {
     const GlobalLengthVec v = GlobalLengthVec(1e9, -2e9, 3.0);
     CHECK(v - v == GlobalLengthVec() && v.toDouble() == glm::dvec3(1e9, -2e9, 3.0));
     CHECK(fromRaw<GlobalLength>(std::numeric_limits<i64>::max()) > GlobalLength(3.5e13) && GlobalLength(1e14) == fromRaw<GlobalLength>(std::numeric_limits<i64>::max()));
+}
+
+// Every dimension is its own type, in the format the rule and its range give it.
+void dimensions() {
+    // Sizes: the smallest integer for the precision and the range.
+    static_assert(sizeof(Friction) == 2 && sizeof(GravityFactor) == 2 && sizeof(DampingRatio) == 2);
+    static_assert(sizeof(Speed) == 4 && sizeof(Acceleration) == 4 && sizeof(Mass) == 4 && sizeof(Scale) == 4 &&
+                  sizeof(Restitution) == 4 && sizeof(Damping) == 4 && sizeof(Frequency) == 4);
+    // Same format, different dimensions: never mixed implicitly.
+    static_assert(std::is_same_v<Unit::Base, Restitution::Base> && !std::is_same_v<Unit, Restitution>);
+    static_assert(!std::is_convertible_v<Unit, Restitution> && !std::is_convertible_v<Restitution, Unit>);
+    static_assert(!std::is_convertible_v<Speed, Distance> && !std::is_convertible_v<Friction, GravityFactor>);
+    static_assert(std::is_convertible_v<f32, Friction> && std::is_convertible_v<int, Mass>); // numbers go in
+    CHECK(convert<Unit>(Restitution(0.25)) == Unit(0.25));                                // explicitly
+    // The rule: one 1/60 s step of the smallest step moves at most 3.8 µm (2⁻¹⁸ m).
+    const f64 dt = 1.0 / 60.0, g = 9.81, limit = std::ldexp(1.0, -18) * 1.0001;
+    CHECK(toDouble(fromRaw<Speed>(1)) * dt <= limit);
+    CHECK(toDouble(fromRaw<Acceleration>(1)) * dt * dt <= limit);
+    CHECK(toDouble(fromRaw<Friction>(1)) * g * dt * dt <= limit);
+    CHECK(toDouble(fromRaw<GravityFactor>(1)) * g * dt * dt <= limit);
+    CHECK(toDouble(fromRaw<Restitution>(1)) * 100.0 * dt <= limit);  // a 100 m/s bounce
+    CHECK(toDouble(fromRaw<Damping>(1)) * 100.0 * dt * dt <= limit); // at 100 m/s
+    CHECK(toDouble(fromRaw<Scale>(1)) * 4.0 <= limit);               // a 4 m mesh
+    // Ranges.
+    CHECK(toDouble(fromRaw<Speed>(std::numeric_limits<i32>::max())) > 16000.0);
+    CHECK(toDouble(fromRaw<Acceleration>(std::numeric_limits<i32>::max())) > 2000.0);
+    CHECK(toDouble(fromRaw<Mass>(std::numeric_limits<i32>::max())) > 131000.0);
+    CHECK(toDouble(fromRaw<Scale>(std::numeric_limits<i32>::max())) > 2000.0);
+    CHECK(Friction(40).raw_value() == std::numeric_limits<i16>::max()); // saturates
+    // Common values stay close: 9.81 m/s², a 10 g body, the default coefficients.
+    CHECK(std::abs(toDouble(Acceleration(9.81)) - 9.81) < 1e-6);
+    CHECK(std::abs(toDouble(Mass(0.01)) - 0.01) / 0.01 < 0.007);
+    CHECK(std::abs(toDouble(Friction(0.5)) - 0.5) < 1e-9 && std::abs(toDouble(Restitution(0.1)) - 0.1) < 1e-9);
 }
 
 // Binary angles: a turn is 2^32, they wrap around by themselves; comparisons are signed.
@@ -260,7 +295,7 @@ void numbers() {
     CHECK(Scalar(1e9).raw_value() == INT32_MAX && Scalar(-1e9).raw_value() == INT32_MIN); // saturates
     CHECK(Scalar(std::nan("")).raw_value() == 0);
     // fpm functions still work on it, and their results come back as Fixed.
-    const Scalar r = fpm::sqrt(Scalar(9));
+    const Scalar r(fpm::sqrt(Scalar(9)));
     CHECK(std::abs(toDouble(r) - 3.0) < 1e-4);
     // Formats never mix implicitly; floats only leave explicitly.
     static_assert(!std::is_convertible_v<Scalar, Length>);
@@ -293,6 +328,7 @@ int main() {
         {"determinism: integer-only results", determinism},
         {"the Fixed type: numbers in, floats out, formats apart", numbers},
         {"every size: 8, 16, 32 and 64 bits", sizes},
+        {"dimensions: own types, formats from the rule and the range", dimensions},
         {"binary angles: wraps, signed comparisons, exact integration", angles},
     };
     for (auto& [name, fn] : tests) {

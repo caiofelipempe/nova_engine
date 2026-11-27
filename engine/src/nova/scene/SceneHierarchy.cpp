@@ -10,9 +10,9 @@ namespace nova {
 
 namespace {
 
-// Offsets are world steps (2⁻¹⁸ m) in 64 bits, scales Q15.16: integer math, one rounding per
+// Offsets are world steps (2⁻¹⁸ m) in 64 bits, scales Q11.20: integer math, one rounding per
 // operation. Only the rotation of an offset longer than 8 km goes through doubles.
-constexpr int kScaleBits = static_cast<int>(fractionBits<Scalar>);
+constexpr int kScaleBits = static_cast<int>(fractionBits<Scale>);
 
 u64 magnitude(i64 v) { return v < 0 ? 0 - static_cast<u64>(v) : static_cast<u64>(v); }
 i64 clampToI64(f64 v) {
@@ -37,29 +37,29 @@ glm::i64vec3 turned(const Quat& q, const glm::i64vec3& v) {
 }
 
 // Steps times a scale (rounded; exact integer math below 2³² steps per axis).
-i64 scaledSteps(i64 steps, Scalar s) {
+i64 scaledSteps(i64 steps, Scale s) {
     const i64 f = s.raw_value();
     if (magnitude(steps) < (u64(1) << 32)) return detail::roundShift<kScaleBits>(steps * f);
     return clampToI64(static_cast<f64>(steps) * toDouble(s));
 }
 // Steps divided by a scale (rounded). A zero scale has no inverse: the offset is kept as it is
 // (the child sits on the parent while the scale is zero, and where it was when it grows again).
-i64 unscaledSteps(i64 steps, Scalar s) {
+i64 unscaledSteps(i64 steps, Scale s) {
     const i64 f = s.raw_value();
     if (f == 0) return steps;
     if (magnitude(steps) < (u64(1) << 46)) return detail::roundDiv(steps * (i64(1) << kScaleBits), f);
     return clampToI64(static_cast<f64>(steps) / toDouble(s));
 }
 // A scale divided by another (rounded, saturating; a zero divisor keeps `a`).
-Scalar scaleRatio(Scalar a, Scalar b) {
+Scale scaleRatio(Scale a, Scale b) {
     if (b.raw_value() == 0) return a;
     const i64 q = detail::roundDiv(static_cast<i64>(a.raw_value()) * (i64(1) << kScaleBits), b.raw_value());
-    return fromRaw<Scalar>(std::clamp<i64>(q, std::numeric_limits<i32>::min(), std::numeric_limits<i32>::max()));
+    return fromRaw<Scale>(std::clamp<i64>(q, std::numeric_limits<i32>::min(), std::numeric_limits<i32>::max()));
 }
 // The product of two scales (rounded, saturating).
-Scalar scaleProduct(Scalar a, Scalar b) {
+Scale scaleProduct(Scale a, Scale b) {
     const i64 p = detail::roundShift<kScaleBits>(static_cast<i64>(a.raw_value()) * b.raw_value());
-    return fromRaw<Scalar>(std::clamp<i64>(p, std::numeric_limits<i32>::min(), std::numeric_limits<i32>::max()));
+    return fromRaw<Scale>(std::clamp<i64>(p, std::numeric_limits<i32>::min(), std::numeric_limits<i32>::max()));
 }
 
 // The pose `t` as an offset from the parent pose `p`.

@@ -49,7 +49,7 @@ struct TransformComponent {
     GlobalPosition position;
     /// @brief World rotation, a unit quaternion in Q1.30 (assigning a `glm::quat` normalizes it).
     Quat rotation;
-    ScalarVec scale{1.0, 1.0, 1.0}; ///< Per-axis scale (also scales colliders).
+    ScaleVec scale{1.0, 1.0, 1.0}; ///< Per-axis scale (also scales colliders).
 
     /// @brief The rotation as floats (rendering, glm math).
     glm::quat orientation() const { return rotation.toGlm(); }
@@ -133,7 +133,7 @@ struct TransformComponent {
 struct LocalTransform {
     GlobalLengthVec position;
     Quat rotation;
-    ScalarVec scale{1.0, 1.0, 1.0};
+    ScaleVec scale{1.0, 1.0, 1.0};
 };
 
 /// @brief Makes the entity a child of another: it keeps its offset from the parent (position,
@@ -154,10 +154,10 @@ struct ParentComponent {
     bool synced = false;          ///< `local` and the poses below are valid.
     GlobalPosition placedPosition; ///< Where the scene last put the entity: moved since if it differs.
     Quat placedRotation;
-    ScalarVec placedScale{1, 1, 1};
+    ScaleVec placedScale{1, 1, 1};
     GlobalPosition parentPosition; ///< The parent's pose the offset is for: followed when it differs.
     Quat parentRotation;
-    ScalarVec parentScale{1, 1, 1};
+    ScaleVec parentScale{1, 1, 1};
 };
 
 /// @brief Renders a mesh at the entity's transform.
@@ -187,14 +187,14 @@ struct CameraComponent {
 /// @note Only the first one in the scene is used.
 struct DirectionalLightComponent {
     glm::vec3 color{1.0f, 0.96f, 0.9f}; ///< Linear RGB color (render data: float).
-    Scalar intensity = Scalar(3.0);     ///< Radiance multiplier.
+    f32 intensity = 3.0f;               ///< Radiance multiplier (render data: float).
 };
 
 /// @brief Point light at the entity's position.
 /// @note At most 16 point lights are rendered per frame.
 struct PointLightComponent {
     glm::vec3 color{1.0f};           ///< Linear RGB color (render data: float).
-    Scalar intensity = Scalar(10.0); ///< Radiance multiplier.
+    f32 intensity = 10.0f;           ///< Radiance multiplier (render data: float).
     Length radius = Length(8.0);     ///< Distance at which the light fades to zero (m).
     bool castShadows = true; ///< Things block it (ray traced, or cube shadow maps without ray tracing).
 };
@@ -204,7 +204,7 @@ struct PointLightComponent {
 /// Fixed point like the rest of what moves the simulation (it turns kinematic bodies): each
 /// update turns it by `speed` times the exact frame duration (angleTurned(): exact, wraps around).
 struct RotatorComponent {
-    ScalarVec axis{0, 1, 0};                       ///< Rotation axis (world space, any length; normalized internally).
+    UnitVec axis{0.0, 1.0, 0.0};                   ///< Rotation axis (world space; normalized when used).
     AngleSpeed speed = AngleSpeed::fromRadiansPerSecond(1.0); ///< Angular speed (edited in degrees per second).
 };
 

@@ -56,11 +56,12 @@ inline void sinCos(Angle a, Unit& s, Unit& c) {
     s = toFixed<Unit>(sd);
     c = toFixed<Unit>(cd);
 }
-/// @brief Tangent (saturates near ±90°).
-inline Scalar tan(Angle a) {
+/// @brief Tangent, as a float (unbounded near ±90°: convert it to the format it stands for, e.g.
+///        `Length(h * tan(a))`).
+inline f32 tan(Angle a) {
     f64 s, c;
     detail::sinCosD(a, s, c);
-    return toFixed<Scalar>(s / c);
+    return static_cast<f32>(s / c);
 }
 /// @brief Arc sine of `v` (clamped to [−1, 1]), in [−90°, 90°].
 template <typename T, std::enable_if_t<isFixed<T>, int> = 0>
@@ -74,7 +75,7 @@ inline Angle acos(T v) {
     const f64 d = toDouble(v);
     return Angle::fromRadians(std::acos(d < -1.0 ? -1.0 : d > 1.0 ? 1.0 : d));
 }
-/// @brief Arc tangent.
+/// @brief Arc tangent (any Fixed value; a float works too: `atan(f)` of the standard library).
 template <typename T, std::enable_if_t<isFixed<T>, int> = 0>
 inline Angle atan(T v) {
     return Angle::fromRadians(std::atan(toDouble(v)));

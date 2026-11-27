@@ -270,19 +270,19 @@ void floatsShortAndExact() {
 // decimal that reads back to the same bits, edited state survives bit for bit.
 void fixedPointFields() {
     const reflect::TypeInfo* rb = reflect::types().find("RigidBody");
-    CHECK(rb->field("mass")->kind == reflect::FieldKind::Fixed && rb->field("mass")->fracBits == 16);
+    CHECK(rb->field("mass")->kind == reflect::FieldKind::Fixed && rb->field("mass")->fracBits == 14);
     const reflect::TypeInfo* box = reflect::types().find("BoxCollider");
     CHECK(box->field("halfExtents")->kind == reflect::FieldKind::FixedVec3 && box->field("halfExtents")->fracBits == 18);
     CHECK(box->field("rotation")->kind == reflect::FieldKind::FixedQuat);
     CHECK(reflect::types().find("Transform")->field("scale")->kind == reflect::FieldKind::FixedVec3);
     CHECK(reflect::types().find("Joint")->field("breakForce")->fracBits == 8);
-    CHECK(reflect::types().find("CharacterController")->field("velocity")->fracBits == 16);
+    CHECK(reflect::types().find("CharacterController")->field("velocity")->fracBits == 17);
 
     // Generic access through the reflection: exact values, nearest on write.
     RigidBodyComponent body;
     const reflect::FieldInfo& mass = *rb->field("mass");
     reflect::setFixedValue(mass, mass.in(&body), 12.3);
-    CHECK(body.mass == Scalar(12.3) && reflect::fixedValue(mass, mass.in(&body)) == toDouble(body.mass));
+    CHECK(body.mass == Mass(12.3) && reflect::fixedValue(mass, mass.in(&body)) == toDouble(body.mass));
 
     Scene a;
     Entity e = a.createEntity("Fx");
@@ -314,7 +314,7 @@ void fixedPointFields() {
     u32 seed = 12345;
     for (int i = 0; i < 2000; ++i) {
         seed = seed * 1664525u + 1013904223u;
-        r.mass = Scalar::from_raw_value(static_cast<i32>(seed));
+        r.mass = Mass::from_raw_value(static_cast<i32>(seed));
         b.offset.x = Length::from_raw_value(static_cast<i32>(seed * 2654435761u));
         Scene d;
         CHECK(deserializeScene(d, serializeScene(a)));
@@ -458,8 +458,8 @@ void hierarchy() {
 
     // Offsets: read and set in the parent's frame (before its scale).
     const LocalTransform local = scene.localTransform(wheel);
-    CHECK(glm::length(local.position.toDouble() - glm::dvec3(2, 0, 1)) < 1e-5 && local.scale == ScalarVec(1.0, 1.0, 1.0));
-    scene.setLocalTransform(wheel, {GlobalLengthVec(0.0, 1.0, 0.0), Quat::identity(), ScalarVec(1.0, 1.0, 1.0)});
+    CHECK(glm::length(local.position.toDouble() - glm::dvec3(2, 0, 1)) < 1e-5 && local.scale == ScaleVec(1.0, 1.0, 1.0));
+    scene.setLocalTransform(wheel, {GlobalLengthVec(0.0, 1.0, 0.0), Quat::identity(), ScaleVec(1.0, 1.0, 1.0)});
     CHECK(near(wheel.transform().position, {20, 2, 0}, 1e-3));
 
     // Moved on its own (a script, the gizmo): it keeps the new pose, and its offset from there.
@@ -591,7 +591,7 @@ void hierarchyFixedPoint() {
     Entity far = scene.createEntity("Far");
     far.transform().position = {10, 0, 0};
     far.setParent(small);
-    const f64 unscaled = 10.0 / toDouble(Scalar(0.001)); // the scale as Q15.16 holds it (0.001007)
+    const f64 unscaled = 10.0 / toDouble(Scale(0.001)); // the scale as Q11.20 holds it
     CHECK(std::abs(toDouble(scene.localTransform(far).position.x) - unscaled) < 1e-4);
     small.transform().scale = {1, 1, 1};
     scene.updateTransforms();

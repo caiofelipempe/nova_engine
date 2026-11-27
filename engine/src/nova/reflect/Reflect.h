@@ -54,8 +54,8 @@ enum class FieldKind {
     Position, ///< GlobalPosition (meters when exact, raw integer steps otherwise)
     Quat,   ///< `glm::quat` rotation (serialized as [x, y, z, w]; edited as Euler degrees)
     Entity, ///< EntityRef (serialized as the target's UUID; edited with an entity picker)
-    Fixed,  ///< `Fixed<Int, F>` (Length, Scalar, ...): FieldInfo::fracBits says where the point is
-    FixedVec3, ///< `Vec3<Fixed<Int, F>>` (LengthVec, ScalarVec, ...)
+    Fixed,  ///< `Fixed<Int, F>` (Length, Mass, Friction...): FieldInfo::fracBits says where the point is
+    FixedVec3, ///< `Vec3<Fixed<Int, F>>` (LengthVec, ScaleVec, ...)
     FixedQuat, ///< Quat rotation (serialized as [x, y, z, w]; edited as Euler degrees)
     Angle,  ///< Angle (serialized and edited in degrees, [−180, 180))
     AngleSpeed, ///< AngleSpeed (serialized and edited in degrees per second)

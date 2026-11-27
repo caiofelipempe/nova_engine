@@ -127,7 +127,7 @@ struct AnimationLayer {
 /// and `playing` are saved: a loaded scene plays from the start.
 struct AnimatorComponent {
     std::string clip;  ///< Reference to the clip (resolved through the scene's animation source).
-    Scalar speed = 1;  ///< Playback rate (1 = real time; negative plays backwards).
+    f32 speed = 1.0f;  ///< Playback rate (1 = real time; negative plays backwards).
     bool loop = true;  ///< Wrap around at the end (otherwise hold the last pose).
     bool playing = true;
 

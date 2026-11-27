@@ -1,30 +1,42 @@
 #pragma once
 
 /// @file
-/// @brief Fixed-point scalars of the simulation state: the `Fixed<Int, F>` template (8 to 64 bits,
-///        `F` fraction bits), binary angles (Angle) and the engine's dimensions (Length, Speed...).
+/// @brief Fixed-point numbers of the simulation state: the `Fixed<Int, F, Tag>` template (8 to 64
+///        bits, `F` fraction bits), binary angles (Angle) and the engine's dimensions (Length, Speed...).
 ///
-/// Rule for the binary point: one physics step (1/60 s) of the smallest meaningful value must move
-/// things by at most 3.8 µm (2⁻¹⁸ m), well below Jolt's 0.1 mm collision tolerance. The dimensions
-/// are 32-bit (products use an `int64` intermediate), so arithmetic is exact, needs no 128 bits and
-/// gives the same bits on every platform and compiler.
+/// Every dimension is its own type (a `Tag`): two of the same format (Restitution and Unit are both
+/// Q1.30) still do not mix. Its format follows two rules:
+/// - **Precision:** one physics step (1/60 s) of the smallest step of the value must move things by
+///   at most 3.8 µm (2⁻¹⁸ m), well below Jolt's 0.1 mm collision tolerance.
+/// - **Size:** the smallest integer (8, 16, 32 or 64 bits) that holds that precision over the range
+///   the value needs; the bits left over go to the fraction (more precision, for free).
 ///
-/// | Alias        | Format      | Step             | Range           | Used for                               |
-/// |--------------|-------------|------------------|-----------------|----------------------------------------|
-/// | Length       | Q13.18      | 3.8 µm           | ±8 192 m        | positions near the origin, sizes, offsets |
-/// | Distance     | Q14.17      | 7.6 µm           | ±16 384 m       | lengths of vectors (torus diagonals)   |
-/// | Speed        | Q15.16      | 15 µm/s          | ±32 768 m/s     | velocity                               |
-/// | Acceleration | Q15.16      | 15 µm/s²         | ±32 768 m/s²    | acceleration, gravity                  |
-/// | Scalar       | Q15.16      | 1.5·10⁻⁵         | ±32 768         | scale, coefficients, factors           |
-/// | Mass         | Q15.16      | 15 mg            | ±32 768 kg      | mass                                   |
-/// | Unit         | Q1.30       | 9.3·10⁻¹⁰        | ±2              | quaternion components, unit directions |
-/// | Force        | Q23.8       | 4 mN             | ±8.4 MN         | forces, impulses, torques              |
-/// | Angle        | 32-bit turn | 1.46·10⁻⁹ rad    | one turn (wraps)| angles, limits, slopes                 |
-/// | AngleSpeed   | Q6.25 turn/s| 1.9·10⁻⁷ rad/s   | ±64 turns/s     | angular speed                          |
-/// | GlobalLength | Q45.18      | 3.8 µm           | ±3.5·10¹³ m     | coordinates in the whole world         |
+/// Products use an `int64` intermediate (32-bit operands at most), so arithmetic is exact, needs no
+/// 128 bits and gives the same bits on every platform and compiler.
 ///
-/// Angles are binary (Angle): a whole turn is 2³², so they wrap around by themselves, exactly. One
-/// step of an angle moves a point 1 km from the center by 1.46 µm.
+/// | Dimension     | Format       | Bits | Step           | Range            | Why                                          |
+/// |---------------|--------------|------|----------------|------------------|----------------------------------------------|
+/// | Length        | Q13.18       | 32   | 3.8 µm         | ±8 192 m         | the rule itself; the torus of 16 km           |
+/// | Distance      | Q14.17       | 32   | 7.6 µm         | ±16 384 m        | lengths of vectors, up to torus diagonals     |
+/// | GlobalLength  | Q45.18       | 64   | 3.8 µm         | ±3.5·10¹³ m      | coordinates in the whole world                |
+/// | Speed         | Q14.17       | 32   | 7.6 µm/s       | ±16 384 m/s      | needs 2⁻¹³ m/s (2 µm a step); orbital speeds  |
+/// | Acceleration  | Q11.20       | 32   | 9.5·10⁻⁷ m/s²  | ±2 048 m/s²      | needs 2⁻⁷ m/s²; up to ~200 g                  |
+/// | Mass          | Q17.14       | 32   | 61 mg          | ±131 t           | vehicles and ships; 10 g bodies within 0.6 %  |
+/// | Force         | Q23.8        | 32   | 4 mN           | ±8.4 MN          | 4 mN on 1 kg moves 1.1 µm a step              |
+/// | Unit          | Q1.30        | 32   | 9.3·10⁻¹⁰      | ±2               | quaternions, directions: 1 km lever           |
+/// | Scale         | Q11.20       | 32   | 9.5·10⁻⁷       | ±2 048           | a step moves a 4 m mesh's corner 3.8 µm       |
+/// | Friction      | Q5.10        | 16   | 9.8·10⁻⁴       | ±32              | needs 1.4·10⁻³ (step·g·dt² ≤ 3.8 µm)          |
+/// | Restitution   | Q1.30        | 32   | 9.3·10⁻¹⁰      | ±2               | needs 2.3·10⁻⁶ (a 100 m/s bounce, one step)   |
+/// | Damping       | Q10.21       | 32   | 4.8·10⁻⁷ /s    | ±1 024 /s        | needs 1.4·10⁻⁴ /s at 100 m/s                  |
+/// | GravityFactor | Q5.10        | 16   | 9.8·10⁻⁴       | ±32              | needs 1.4·10⁻³ (step·g·dt² ≤ 3.8 µm)          |
+/// | Frequency     | Q11.20       | 32   | 9.5·10⁻⁷ Hz    | ±2 048 Hz        | springs from 0.01 Hz, within 0.01 %           |
+/// | DampingRatio  | Q1.14        | 16   | 6.1·10⁻⁵       | ±2               | 0 (bouncy) to 1 (critical), and over          |
+/// | Angle         | 32-bit turn  | 32   | 1.46·10⁻⁹ rad  | one turn (wraps) | 1.46 µm at 1 km                               |
+/// | AngleSpeed    | Q6.25 turn/s | 32   | 1.9·10⁻⁷ rad/s | ±64 turns/s      | 3.1 µm a step at 1 km                         |
+///
+/// Angles are binary (Angle): a whole turn is 2³², so they wrap around by themselves, exactly.
+/// What is not simulation state (light intensities, playback rates, ratios worked out on the way)
+/// is a plain `float` or `double`: fixed point converts from and to them in one call.
 ///
 /// The fpm library does the arithmetic of the 8, 16 and 32-bit formats. 64-bit values (`Fixed<i64, F>`,
 /// GlobalLength) only add, subtract, compare and convert: there is no portable 128-bit intermediate
@@ -33,7 +45,7 @@
 /// Overflow of a signed value is undefined behavior in C++: values must stay in range (world
 /// positions that wrap around do their wrapping arithmetic in unsigned integers, see GlobalPosition).
 ///
-/// Conversions: a value is quantized where it enters (`Scalar(0.5)`, `toFixed<T>(v)`,
+/// Conversions: a value is quantized where it enters (`Friction(0.5)`, `toFixed<T>(v)`,
 /// `Angle::fromDegrees(45)`, and vectors and quaternions straight from glm); it leaves as float only
 /// explicitly (`toFloat(v)`, `v.toGlm()`, `a.radians()`), at the GPU, ImGui and the physics engine.
 
@@ -102,22 +114,25 @@ inline f64 fromRawValue(i64 raw, unsigned fraction) { return std::ldexp(static_c
 ///
 /// A number becomes fixed point implicitly (`mass = 2.5f`, `limit = -45`), rounded to the nearest
 /// step; arithmetic and comparisons with numbers convert them the same way, so `mass * 2` and
-/// `friction > 0.5f` work and stay exact integer math. Formats never mix implicitly (Length +
-/// Scalar does not compile: use mul<R>(), convert<R>()); back to float only explicitly (toFloat()).
+/// `friction > 0.5f` work and stay exact integer math. Dimensions never mix implicitly (Length +
+/// Mass does not compile, nor Unit + Restitution of the same format: use mul<R>(), convert<R>());
+/// back to float only explicitly (toFloat()).
 ///
-/// The 8, 16 and 32-bit formats are an `fpm::fixed` (all of fpm works on them: `fpm::sqrt`...).
-/// See `Q<I, F>` to name a format by its integer and fraction bits.
-template <typename Int, unsigned F>
+/// `Tag` makes a dimension its own type (void: a plain format, `Q<I, F>`). The 8, 16 and 32-bit
+/// formats are an `fpm::fixed` (all of fpm works on them: `fpm::sqrt`...; its results come back
+/// explicitly, `Length(fpm::sqrt(x))`).
+template <typename Int, unsigned F, typename Tag = void>
 class Fixed : public fpm::fixed<Int, typename detail::WiderInt<Int>::type, F> {
 public:
     using Base = fpm::fixed<Int, typename detail::WiderInt<Int>::type, F>; ///< The fpm type.
     using Storage = Int;                                                    ///< The raw integer.
+    using Dimension = Tag;                                                  ///< What it measures.
     static constexpr unsigned kFraction = F;                                ///< Fraction bits.
 
     /// @brief Zero.
     constexpr Fixed() noexcept : Base(Base::from_raw_value(0)) {}
-    /// @brief From the fpm type (results of fpm functions and operators).
-    constexpr Fixed(Base v) noexcept : Base(v) {}
+    /// @brief From the fpm type (results of fpm functions; explicit: it carries no dimension).
+    constexpr explicit Fixed(Base v) noexcept : Base(v) {}
     /// @brief The nearest value to a number (saturates outside the range).
     template <typename T, std::enable_if_t<std::is_arithmetic_v<T>, int> = 0>
     Fixed(T v) noexcept : Base(Base::from_raw_value(toRaw<Int>(static_cast<f64>(v), F))) {}
@@ -162,12 +177,13 @@ public:
 ///
 /// No `*` or `/`: their exact product needs 128 bits, which C++ has no portable type for. Convert
 /// to a 32-bit format near the WorldOrigin first (`convert<Length>(a - b)`), or scale by integers.
-template <unsigned F>
-class Fixed<i64, F> {
+template <unsigned F, typename Tag>
+class Fixed<i64, F, Tag> {
     static_assert(F < 63, "Fraction must leave room for the sign");
 
 public:
     using Storage = i64;                     ///< The raw integer.
+    using Dimension = Tag;                   ///< What it measures.
     static constexpr unsigned kFraction = F; ///< Fraction bits.
 
     /// @brief Zero.
@@ -208,12 +224,15 @@ private:
 ///        32-bit Q13.18. `1 + I + F` must be 8, 16, 32 or 64.
 template <int I, int F>
 using Q = Fixed<StorageFor<1 + I + F>, static_cast<unsigned>(F)>;
+/// @brief A dimension: the format Q`I`.`F` as its own type, told apart by `Tag`.
+template <int I, int F, typename Tag>
+using Dimension = Fixed<StorageFor<1 + I + F>, static_cast<unsigned>(F), Tag>;
 
 /// @brief Is `T` a Fixed type?
 template <typename T>
 struct IsFixed : std::false_type {};
-template <typename Int, unsigned F>
-struct IsFixed<Fixed<Int, F>> : std::true_type {};
+template <typename Int, unsigned F, typename Tag>
+struct IsFixed<Fixed<Int, F, Tag>> : std::true_type {};
 /// @brief Is `T` a Fixed type?
 template <typename T>
 constexpr bool isFixed = IsFixed<T>::value;
@@ -221,8 +240,8 @@ constexpr bool isFixed = IsFixed<T>::value;
 /// @brief Fraction bits of a Fixed type (or of its fpm base).
 template <typename T>
 struct FixedTraits;
-template <typename Int, unsigned F>
-struct FixedTraits<Fixed<Int, F>> {
+template <typename Int, unsigned F, typename Tag>
+struct FixedTraits<Fixed<Int, F, Tag>> {
     static constexpr unsigned fraction = F; ///< Fraction bits.
     using Storage = Int;                    ///< Raw integer.
 };
@@ -401,7 +420,7 @@ public:
     friend constexpr bool operator>=(Angle a, Angle b) noexcept { return a.signedRaw() >= b.signedRaw(); }
     /// @}
 
-    /// @brief This angle times `s` (any 32-bit Fixed format; signed reading, rounded, wraps).
+    /// @brief This angle times `s` (any Fixed format up to 32 bits; signed reading, rounded, wraps).
     template <typename S>
     constexpr Angle scaled(S s) const noexcept {
         const i64 p = static_cast<i64>(signedRaw()) * static_cast<i64>(s.raw_value());
@@ -450,15 +469,22 @@ constexpr Angle zero<Angle>() { return Angle(); }
 
 // -------------------------------------------------------------- dimensions --
 
-using Length = Q<13, 18>;       ///< Meters: positions near the origin, sizes, offsets (3.8 µm, ±8 192 m).
-using Distance = Q<14, 17>;     ///< Meters: lengths of vectors, up to a torus diagonal (7.6 µm, ±16 384 m).
-using Speed = Q<15, 16>;        ///< m/s: velocity.
-using Acceleration = Q<15, 16>; ///< m/s²: acceleration, gravity.
-using Scalar = Q<15, 16>;       ///< Dimensionless: scale, coefficients, factors, rates.
-using Mass = Q<15, 16>;         ///< kg (up to 32 t).
-using Unit = Q<1, 30>;          ///< Quaternion components and unit directions, |u| < 2.
-using Force = Q<23, 8>;         ///< N, N·s or N·m.
-using GlobalLength = Q<45, 18>; ///< Meters in the whole world (64 bits, same step as Length).
+// See the table at the top of the file for each format.
+using Length = Dimension<13, 18, struct LengthTag>;              ///< m: positions near the origin, sizes, offsets.
+using Distance = Dimension<14, 17, struct DistanceTag>;          ///< m: lengths of vectors, up to a torus diagonal.
+using GlobalLength = Dimension<45, 18, struct GlobalLengthTag>;  ///< m in the whole world (64 bits, the step of Length).
+using Speed = Dimension<14, 17, struct SpeedTag>;                ///< m/s: velocity.
+using Acceleration = Dimension<11, 20, struct AccelerationTag>;  ///< m/s²: acceleration, gravity.
+using Mass = Dimension<17, 14, struct MassTag>;                  ///< kg.
+using Force = Dimension<23, 8, struct ForceTag>;                 ///< N, N·s or N·m.
+using Unit = Dimension<1, 30, struct UnitTag>;                   ///< Quaternion components, unit directions, |u| < 2.
+using Scale = Dimension<11, 20, struct ScaleTag>;                ///< Size factor of an object (per axis).
+using Friction = Dimension<5, 10, struct FrictionTag>;           ///< Friction coefficient (16 bits).
+using Restitution = Dimension<1, 30, struct RestitutionTag>;     ///< Bounciness, 0..1.
+using Damping = Dimension<10, 21, struct DampingTag>;            ///< 1/s: velocity damping.
+using GravityFactor = Dimension<5, 10, struct GravityFactorTag>; ///< Gravity multiplier (16 bits).
+using Frequency = Dimension<11, 20, struct FrequencyTag>;        ///< Hz.
+using DampingRatio = Dimension<1, 14, struct DampingRatioTag>;   ///< Spring damping ratio (16 bits).
 
 /// @brief An angular speed: turns per second in Q6.25 (±64 turns/s ≈ 400 rad/s, step 1.9·10⁻⁷ rad/s:
 ///        one physics step of it turns a point 1 km away by 3.1 µm, within the rule).
@@ -509,7 +535,7 @@ public:
     friend constexpr bool operator>(AngleSpeed a, AngleSpeed b) noexcept { return a.raw() > b.raw(); }
     friend constexpr bool operator<=(AngleSpeed a, AngleSpeed b) noexcept { return a.raw() <= b.raw(); }
     friend constexpr bool operator>=(AngleSpeed a, AngleSpeed b) noexcept { return a.raw() >= b.raw(); }
-    /// @brief This speed times `s` (any 32-bit Fixed format, rounded).
+    /// @brief This speed times `s` (any Fixed format up to 32 bits, rounded).
     template <typename S>
     constexpr AngleSpeed scaled(S s) const noexcept { return AngleSpeed(mul<Turns>(m_turns, s)); }
 

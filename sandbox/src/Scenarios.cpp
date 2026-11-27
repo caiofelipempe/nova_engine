@@ -78,7 +78,7 @@ struct SliderPinger : Script {
         if ((t += dt) < every) return;
         t = 0.0f;
         auto& j = get<JointComponent>();
-        j.motorTarget = toFloat(j.motorTarget) == a ? b : a;
+        j.motorPosition = toFloat(j.motorPosition) == a ? b : a;
     }
 };
 
@@ -489,7 +489,7 @@ View buildJoints(Scene& s, const BenchMeshes& m) {
     rail.limitMin = 0.0f;
     rail.limitMax = 3.0f;
     rail.motorMode = physics::JointMotorMode::Position;
-    rail.motorTarget = 3.0f;
+    rail.motorPosition = 3.0f;
     slider.addScript<SliderPinger>();
     visual(s, "Rail", m.cube, {2.5, 0.25, -3.0}, {5.0f, 0.1f, 0.2f}, {0.3f, 0.3f, 0.3f, 1.0f});
 
@@ -534,7 +534,7 @@ void statusJoints(Scene& s) {
         return e ? e.tryGet<JointComponent>() : nullptr;
     };
     if (auto* j = jointOf("Door"); j && j->joint) ImGui::Text("Door angle: %.1f deg (limit 80)", glm::degrees(world->jointPosition(j->joint)));
-    if (auto* j = jointOf("Slider"); j && j->joint) ImGui::Text("Slider: %.2f m -> target %.0f m", world->jointPosition(j->joint), toFloat(j->motorTarget));
+    if (auto* j = jointOf("Slider"); j && j->joint) ImGui::Text("Slider: %.2f m -> target %.0f m", world->jointPosition(j->joint), toFloat(j->motorPosition));
     if (auto* j = jointOf("Rope bob"); j && j->joint) ImGui::Text("Rope length: %.2f m", world->jointPosition(j->joint));
     if (auto* j = jointOf("Breakable")) ImGui::Text("Breakable joint: %s", j->broken ? "BROKEN" : "holding (shoot it)");
 }

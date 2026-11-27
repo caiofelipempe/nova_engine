@@ -590,7 +590,7 @@ void determinism() {
 // CROSS_PLATFORM_DETERMINISTIC (overlay port) and the state is fixed point. The reference hash was
 // recorded once; Debug and Release must both reach it (a change here means the simulation changed:
 // update the value only on purpose).
-constexpr u64 kReferenceHash = 0xe583f9e48159e25cull; // Windows x64, MSVC, Debug and Release
+constexpr u64 kReferenceHash = 0x21e58808b8452a0eull; // Windows x64, MSVC, Debug and Release
 
 void crossPlatformDeterminism() {
     Scene s("reference");
@@ -606,7 +606,7 @@ void crossPlatformDeterminism() {
     for (int i = 0; i < 16; ++i) {
         Entity e = add("Body", 100 + static_cast<u64>(i));
         e.transform().position = {static_cast<f64>(i % 4) * 0.9 - 1.3, 0.6 + (i / 4) * 1.05, static_cast<f64>(i % 3) * 0.3};
-        e.transform().rotate(Angle::fromRadians(0.3 * i), ScalarVec(1.0, 2.0, 0.0));
+        e.transform().rotate(Angle::fromRadians(0.3 * i), ScaleVec(1.0, 2.0, 0.0));
         e.add<RigidBodyComponent>().friction = 0.4f + 0.02f * static_cast<f32>(i);
         if (i % 2) e.add<SphereColliderComponent>().radius = 0.45f;
     }
@@ -843,7 +843,7 @@ void nativeIntegerBackend() {
     for (int i = 0; i < 60; ++i) scene.update(Duration::perSecond(60));
     // The scene's gravity (−9.81, not the backend's own −10) applies; fell g/2 · t² · (1 + 1/60)
     // (semi-implicit Euler), written back exactly from the backend.
-    CHECK(raw->g == SpeedVec(0.0, -9.81, 0.0).toGlm()); // the Q15.16 gravity, as the engine's float
+    CHECK(raw->g == AccelerationVec(0.0, -9.81, 0.0).toGlm()); // the Q11.20 gravity, as the engine's float
     const f64 fallen = (ball.transform().position - base).toMeters().y;
     CHECK_NEAR(fallen, -9.81 / 2.0 * (61.0 / 60.0), 1e-3);
     CHECK(ball.transform().position == raw->bodies[0].desc.position);

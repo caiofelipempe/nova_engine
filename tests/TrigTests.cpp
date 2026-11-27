@@ -35,7 +35,7 @@ void quarterTurns() {
     // Known values.
     CHECK(std::abs(toDouble(sin(Angle::fromDegrees(30))) - 0.5) < 1e-9);
     CHECK(std::abs(toDouble(cos(Angle::fromDegrees(60))) - 0.5) < 1e-9);
-    CHECK(std::abs(toDouble(tan(Angle::fromDegrees(45))) - 1.0) < 1e-4);
+    CHECK(std::abs(tan(Angle::fromDegrees(45)) - 1.0f) < 1e-6f); // a float
     Unit s, c;
     sinCos(Angle::fromDegrees(45), s, c);
     CHECK(s == c && std::abs(toDouble(s) - std::sqrt(0.5)) < 1e-9);
@@ -60,7 +60,7 @@ void inverses() {
     CHECK(acos(kOne) == Angle() && acos(kZero) == Angle::quarter() && acos(-kOne) == Angle::half());
     CHECK(asin(Unit(1.5)) == Angle::quarter()); // clamped
     CHECK(atan2(Length(1), Length(0)) == Angle::quarter() && atan2(Length(0), Length(-1)) == Angle::half());
-    CHECK(atan2(Length(-1), Length(-1)) == Angle::fromDegrees(-135) && atan(Scalar(1)) == Angle::fromDegrees(45));
+    CHECK(atan2(Length(-1), Length(-1)) == Angle::fromDegrees(-135) && atan(Unit(1)) == Angle::fromDegrees(45));
     CHECK(atan2(Speed(2), Length(2)) == Angle::fromDegrees(45)); // any formats
     // Round trips: an angle → sine and cosine → atan2 comes back within a few steps of Q1.30.
     std::mt19937 rng(5);
@@ -74,8 +74,8 @@ void inverses() {
 }
 
 void roots() {
-    CHECK(nova::sqrt(Scalar(9)) == Scalar(3) && nova::sqrt(Length(2.25)) == Length(1.5));
-    CHECK(nova::sqrt(Scalar(-4)) == Scalar(0));
+    CHECK(nova::sqrt(Mass(9)) == Mass(3) && nova::sqrt(Length(2.25)) == Length(1.5));
+    CHECK(nova::sqrt(Mass(-4)) == Mass(0));
 }
 
 } // namespace

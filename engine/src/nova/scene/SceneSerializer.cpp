@@ -107,8 +107,9 @@ Json writeFixedQuat(const Quat& q) {
                         writeFixed(q.z.raw_value(), kBits), writeFixed(q.w.raw_value(), kBits)});
 }
 
-Json writeSpeedVec(const SpeedVec& v) {
-    constexpr u32 kBits = fractionBits<Speed>;
+template <typename T>
+Json writeFixedVec3(const Vec3<T>& v) {
+    constexpr u32 kBits = fractionBits<T>;
     return Json::array({writeFixed(v.x.raw_value(), kBits), writeFixed(v.y.raw_value(), kBits),
                         writeFixed(v.z.raw_value(), kBits)});
 }
@@ -129,7 +130,7 @@ Json writeVec(const f32* v, int n) {
 // Physics settings: gravity, named layers and (when not the default) the collision matrix.
 Json writePhysics(const PhysicsSettings& s) {
     Json j = Json::object();
-    j["gravity"] = writeSpeedVec(s.gravity);
+    j["gravity"] = writeFixedVec3(s.gravity);
     Json names = Json::object();
     for (u32 i = 0; i < physics::kCollisionLayerCount; ++i)
         if (!s.layerNames[i].empty()) names[std::to_string(i)] = s.layerNames[i];
@@ -313,10 +314,11 @@ void readFixedVec(const reflect::FieldInfo& f, void* p, const Json& j) {
     for (int i = 0; i < 3 && i < static_cast<int>(j.size()); ++i) readFixedValue(f, p, j[i], i);
 }
 
-void readSpeedVec(SpeedVec& v, const Json& j) {
+template <typename T>
+void readFixedVec3(Vec3<T>& v, const Json& j) {
     if (!j.is_array()) return;
     for (int i = 0; i < 3 && i < static_cast<int>(j.size()); ++i)
-        if (j[i].is_number()) v[i] = toFixed<Speed>(j[i].get<f64>());
+        if (j[i].is_number()) v[i] = toFixed<T>(j[i].get<f64>());
 }
 
 // [x, y, z, w]: kept bit for bit when already unit (what writeFixedQuat wrote), normalized
@@ -361,7 +363,7 @@ WorldSize readWorld(const Json& j) {
 PhysicsSettings readPhysics(const Json& j) {
     PhysicsSettings s;
     if (!j.is_object()) return s;
-    if (j.contains("gravity")) readSpeedVec(s.gravity, j["gravity"]);
+    if (j.contains("gravity")) readFixedVec3(s.gravity, j["gravity"]);
     if (j.contains("layerNames") && j["layerNames"].is_object())
         for (auto it = j["layerNames"].begin(); it != j["layerNames"].end(); ++it) {
             const int i = std::atoi(it.key().c_str());
@@ -499,8 +501,9 @@ struct ReadingVersion {
     ~ReadingVersion() { s_readingVersion = kVersion; }
 };
 
-// Version 1 → 2: angles in radians where they were (camera field of view, rotator speed) and hinge
-// limits and motor targets in the slider fields, in degrees.
+// Version 1 → 2: angles in radians where they were (camera field of view, rotator speed), hinge
+// limits and motor targets in the slider fields, in degrees, and the slider's motor target in one
+// field for both modes.
 void migrateV1(Entity e, const Json& components) {
     auto number = [&](const char* component, const char* field, f64& out) {
         auto c = components.find(component);
@@ -520,6 +523,9 @@ void migrateV1(Entity e, const Json& components) {
             j->motorSpeed = AngleSpeed::fromDegreesPerSecond(v);
             j->motorAngle = Angle::fromDegrees(v);
         }
+    } else if (j && j->type == physics::JointType::Slider && number("Joint", "motorTarget", v)) {
+        j->motorVelocity = Speed(v); // m/s or meters, by the motor's mode
+        j->motorPosition = Length(v);
     }
 }
 

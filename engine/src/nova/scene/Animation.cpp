@@ -269,7 +269,7 @@ void Scene::updateAnimations(Duration frame) {
         // Time and weights move on; the events passed on the way are noted.
         if (anim.playing) {
             if (clip) {
-                const f64 delta = toDouble(anim.speed) * dt;
+                const f64 delta = static_cast<f64>(anim.speed) * dt;
                 if (anim.weight > 0.0f || anim.fade > 0.0f) {
                     passedEvents(*clip, anim.time, delta, anim.loop, anim.started, passed);
                     for (const auto& [at, ev] : passed)
@@ -287,7 +287,7 @@ void Scene::updateAnimations(Duration frame) {
                 f64 delta = layer.speed * dt;
                 if (layer.sync && clip) {
                     layer.time = phase * layer.data->duration;
-                    delta = clip->duration > 0.0f ? toDouble(anim.speed) * dt * layer.data->duration / clip->duration : 0.0;
+                    delta = clip->duration > 0.0f ? static_cast<f64>(anim.speed) * dt * layer.data->duration / clip->duration : 0.0;
                 } else {
                     advance(layer.time, delta, *layer.data, layer.loop);
                 }
@@ -359,7 +359,7 @@ void Scene::updateAnimations(Duration frame) {
                 const glm::dvec4 q = glm::normalize(m.rotation);
                 local.rotation = Quat(glm::dquat(q.w, q.x, q.y, q.z));
             }
-            if (m.scaleWeight > 0.0) local.scale = ScalarVec(m.scale / m.scaleWeight);
+            if (m.scaleWeight > 0.0) local.scale = ScaleVec(m.scale / m.scaleWeight);
         }
         // ... then the overriding layers, in order, each over what is there by its weight.
         for (const AnimationLayer& layer : anim.layers) {
@@ -380,7 +380,7 @@ void Scene::updateAnimations(Duration frame) {
                     case AnimationPath::Rotation:
                         local.rotation = slerp(local.rotation, Quat(glm::dquat(v.w, v.x, v.y, v.z)), toFixed<Unit>(w));
                         break;
-                    case AnimationPath::Scale: local.scale = ScalarVec(glm::mix(local.scale.toDouble(), glm::dvec3(v), w)); break;
+                    case AnimationPath::Scale: local.scale = ScaleVec(glm::mix(local.scale.toDouble(), glm::dvec3(v), w)); break;
                 }
             }
         }
@@ -397,7 +397,7 @@ void Scene::playAnimation(Entity entity, std::shared_ptr<const AnimationClip> cl
         AnimationLayer old;
         old.data = anim.data;
         old.time = anim.time;
-        old.speed = toFloat(anim.speed);
+        old.speed = anim.speed;
         old.loop = anim.loop;
         old.weight = anim.weight;
         old.fade = -anim.weight / fadeSeconds;

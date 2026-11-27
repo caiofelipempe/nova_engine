@@ -172,7 +172,7 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
         auto [t, l] = suns.get<TransformComponent, DirectionalLightComponent>(*it);
         out.sun.direction = t.forward();
         out.sun.color = l.color;
-        out.sun.intensity = toFloat(l.intensity);
+        out.sun.intensity = l.intensity;
     }
 
     // What the physics moves is drawn between its last two steps (interpolatePhysics).
@@ -180,7 +180,7 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
     for (auto [e, t, l] : m_registry.view<TransformComponent, PointLightComponent>().each()) {
         const TransformComponent& at = drawnPose(e, t, drawn) ? drawn : t;
         out.pointLights.push_back(
-            {(at.position - out.camera.origin).toVec3(), toFloat(l.radius), l.color, toFloat(l.intensity), l.castShadows});
+            {(at.position - out.camera.origin).toVec3(), toFloat(l.radius), l.color, l.intensity, l.castShadows});
     }
 
     for (auto [e, t, m] : m_registry.view<TransformComponent, MeshComponent>().each()) {

@@ -20,8 +20,8 @@ u64 toUserData(entt::entity e) { return static_cast<u64>(entt::to_integral(e)); 
 entt::entity fromUserData(u64 v) { return static_cast<entt::entity>(static_cast<entt::id_type>(v)); }
 
 // Fixed point → the physics engine's floats.
-template <typename Int, unsigned F>
-f32 fl(Fixed<Int, F> v) { return toFloat(v); }
+template <typename Int, unsigned F, typename Tag>
+f32 fl(Fixed<Int, F, Tag> v) { return toFloat(v); }
 f32 fl(Angle a) { return a.radiansF(); }
 template <typename T>
 glm::vec3 fl(const Vec3<T>& v) { return v.toGlm(); }
@@ -466,7 +466,7 @@ physics::JointMotor motorOf(const JointComponent& j) {
     if (j.type == physics::JointType::Hinge)
         m.target = j.motorMode == physics::JointMotorMode::Velocity ? j.motorSpeed.radiansPerSecondF() : fl(j.motorAngle);
     else
-        m.target = fl(j.motorTarget);
+        m.target = j.motorMode == physics::JointMotorMode::Velocity ? fl(j.motorVelocity) : fl(j.motorPosition);
     m.maxForce = fl(j.motorMaxForce);
     return m;
 }

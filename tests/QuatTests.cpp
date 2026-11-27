@@ -54,8 +54,8 @@ void axisAngle() {
     CHECK(glm::length(z90.rotate(LengthVec(2.0, 0.0, 0.0)).toDouble() - glm::dvec3(0, 2, 0)) < 1e-5);
     CHECK(Quat::fromAxisAngle(UnitVec(0.0, 0.0, 1.0), Angle()) == Quat::identity());
     // Any axis length and format.
-    CHECK(sameRotation(Quat::fromAxisAngle(ScalarVec(0.0, 3.0, 0.0), Angle::fromDegrees(30)), Quat::aroundY(Angle::fromDegrees(30))));
-    CHECK(Quat::fromAxisAngle(ScalarVec(), Angle::fromDegrees(30)) == Quat::identity());
+    CHECK(sameRotation(Quat::fromAxisAngle(ScaleVec(0.0, 3.0, 0.0), Angle::fromDegrees(30)), Quat::aroundY(Angle::fromDegrees(30))));
+    CHECK(Quat::fromAxisAngle(ScaleVec(), Angle::fromDegrees(30)) == Quat::identity());
     // Half a turn and its wrap: 270° is −90° around the same axis.
     CHECK(sameRotation(Quat::aroundY(Angle::fromDegrees(270)), Quat::aroundY(Angle::fromDegrees(-90))));
     CHECK(glm::length(Quat::aroundY(Angle::half()).rotate(UnitVec(1.0, 0.0, 0.0)).toDouble() - glm::dvec3(-1, 0, 0)) < 1e-8);
@@ -91,7 +91,7 @@ void unitLength() {
     CHECK(std::abs(toDouble(q.rotate(far).length()) - toDouble(big)) < 1e-3);
     // A million small turns of a transform stay unit length.
     TransformComponent t;
-    for (int i = 0; i < 1'000'000; ++i) t.rotateLocal(Angle::fromRadians(1e-3), ScalarVec(0.3, 1.0, 0.2));
+    for (int i = 0; i < 1'000'000; ++i) t.rotateLocal(Angle::fromRadians(1e-3), ScaleVec(0.3, 1.0, 0.2));
     CHECK(std::abs(glm::length(t.rotation.toDouble()) - 1.0) < 1e-6);
 }
 
@@ -178,7 +178,7 @@ void interpolation() {
     const GlobalOffset half = (mid.position - from.position) - GlobalOffset::fromMeters(glm::dvec3(5.0, 0.0, 0.001));
     CHECK(std::abs(half.x) <= 1 && half.y == 0 && std::abs(half.z) <= 1); // within one step (rounding of the half)
     CHECK(std::abs(degreesBetween(mid.rotation, a) - 60.0) < 1e-5);
-    CHECK(mid.scale == ScalarVec(2.0, 2.0, 2.0));
+    CHECK(mid.scale == ScaleVec(2.0, 2.0, 2.0));
 }
 
 void sceneFiles() {

@@ -93,7 +93,7 @@ struct GlobalOffset : glm::i64vec3 {
     bool isShorterThan(f64 meters) const;
     /// @brief This offset times `factor`, rounded to the nearest step (loops around the world).
     GlobalOffset scaled(f64 factor) const;
-    /// @brief This offset times a fixed-point `factor` (Scalar, Unit...): exact integer math (one
+    /// @brief This offset times a fixed-point `factor` (Unit, Scale...): exact integer math (one
     ///        rounding) when the products fit 64 bits, as scaled(f64) otherwise.
     template <typename S, std::enable_if_t<isFixed<S>, int> = 0>
     GlobalOffset scaled(S factor) const {

@@ -115,7 +115,7 @@ using LengthVec = Vec3<Length>;             ///< Offsets and sizes in meters.
 using DistanceVec = Vec3<Distance>;         ///< Longer offsets in meters.
 using SpeedVec = Vec3<Speed>;               ///< Velocities.
 using AccelerationVec = Vec3<Acceleration>; ///< Accelerations, gravity.
-using ScalarVec = Vec3<Scalar>;             ///< Scales, factors.
+using ScaleVec = Vec3<Scale>;               ///< Scales per axis.
 using UnitVec = Vec3<Unit>;                 ///< Directions, axes.
 using ForceVec = Vec3<Force>;               ///< Forces, impulses, torques.
 using EulerAngles = Vec3<Angle>;            ///< Euler angles: x = pitch, y = yaw, z = roll (see EulerOrder).

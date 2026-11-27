@@ -33,7 +33,8 @@ struct RigidBodyLocks {
 /// several are joined into one compound shape (e.g. a box and a sphere); without any, a box
 /// matching the entity's scale is used. Collider sizes are multiplied by the transform scale.
 ///
-/// Simulation attributes are fixed point (math/Fixed.h): assign them as `rb.mass = Scalar(2)`.
+/// Simulation attributes are fixed point, each in its own dimension (math/Scalar.h): numbers go
+/// in directly (`rb.mass = 2`, `rb.friction = 0.8f`).
 ///
 /// Edits apply while simulating: friction, restitution, damping, gravity factor, sensor, layer
 /// and continuous collision change in place; type, mass, locks, colliders and scale rebuild the
@@ -41,12 +42,12 @@ struct RigidBodyLocks {
 /// transform when it is moved.
 struct RigidBodyComponent {
     physics::BodyType type = physics::BodyType::Dynamic; ///< Static, kinematic (follows the transform) or dynamic.
-    Mass mass = Mass(1.0);                               ///< Mass in kg (dynamic only; up to 32 t).
-    Scalar friction = Scalar(0.5);                       ///< Friction coefficient.
-    Scalar restitution = Scalar(0.1);                    ///< Bounciness (0..1).
-    Scalar linearDamping = Scalar(0.05);                 ///< Linear velocity damping.
-    Scalar angularDamping = Scalar(0.05);                ///< Angular velocity damping.
-    Scalar gravityFactor = Scalar(1.0);                  ///< Gravity multiplier.
+    Mass mass = Mass(1.0);                               ///< Mass in kg (dynamic only; up to 131 t).
+    Friction friction = Friction(0.5);                   ///< Friction coefficient.
+    Restitution restitution = Restitution(0.1);          ///< Bounciness (0..1).
+    Damping linearDamping = Damping(0.05);               ///< Linear velocity damping (1/s).
+    Damping angularDamping = Damping(0.05);              ///< Angular velocity damping (1/s).
+    GravityFactor gravityFactor = GravityFactor(1.0);    ///< Gravity multiplier.
     bool isSensor = false;                               ///< Trigger: reports overlaps (Script::onTriggerEnter/Exit), no response.
     u32 layer = 0;                                       ///< Collision layer (Scene::physicsSettings() says which collide).
     bool continuousCollision = false;                    ///< For fast bodies (bullets): never tunnel through thin walls.
@@ -123,12 +124,13 @@ struct JointComponent {
     Length limitMax = Length(45.0);  ///< Slider: highest position from the start (m).
     Length minDistance = Length(-1.0); ///< Distance joints: shortest (m; −1 = at start).
     Length maxDistance = Length(-1.0); ///< Distance joints: longest (m; −1 = at start).
-    Scalar springFrequency = Scalar(0.0); ///< Distance joints: softness (Hz; 0 = rigid).
-    Scalar springDamping = Scalar(0.5);   ///< Damping ratio of that spring.
+    Frequency springFrequency = Frequency(0.0);  ///< Distance joints: softness (Hz; 0 = rigid).
+    DampingRatio springDamping = DampingRatio(0.5); ///< Damping ratio of that spring.
     physics::JointMotorMode motorMode = physics::JointMotorMode::Off; ///< Hinge / slider motor.
     AngleSpeed motorSpeed;                   ///< Hinge velocity motor: the angular speed to reach.
     Angle motorAngle;                        ///< Hinge position motor: the angle to reach (from the start).
-    Scalar motorTarget = Scalar(0.0);  ///< Slider: m/s (velocity motor) or meters (position motor).
+    Speed motorVelocity;                     ///< Slider velocity motor: the speed to reach (m/s).
+    Length motorPosition;                    ///< Slider position motor: the position to reach (m, from the start).
     Force motorMaxForce = Force(0.0);  ///< Hinge: N·m; slider: N; 0 = unlimited.
     Force breakForce = Force(0.0);     ///< Breaks above this force (N); 0 = never.
     Force breakTorque = Force(0.0);    ///< Breaks above this torque (N·m); 0 = never.
@@ -159,7 +161,7 @@ struct CharacterControllerComponent {
     Length stickToFloor = Length(0.5);       ///< Down steps it follows instead of flying off (m).
     Mass mass = Mass(70.0);                  ///< Kg (pushing and being pushed).
     Force maxPushForce = Force(100.0);       ///< Strongest push on dynamic bodies (N).
-    Scalar gravityFactor = Scalar(1.0);      ///< Gravity multiplier.
+    GravityFactor gravityFactor = GravityFactor(1.0); ///< Gravity multiplier.
     u32 layer = 0;                           ///< Collision layer.
     SpeedVec velocity;                       ///< In: what to move with; out: what it moved with (m/s).
 
@@ -174,7 +176,7 @@ struct CharacterControllerComponent {
 
 /// @brief Scene-wide physics settings (saved with the scene).
 struct PhysicsSettings {
-    SpeedVec gravity{0.0, -9.81, 0.0};     ///< Gravity acceleration (m/s²).
+    AccelerationVec gravity{0.0, -9.81, 0.0}; ///< Gravity acceleration (m/s²).
     physics::CollisionLayers layers;       ///< Which layers collide (default: all).
     /// @brief Display names; empty = "Layer N" (layer 0 is "Default").
     std::array<std::string, physics::kCollisionLayerCount> layerNames;
