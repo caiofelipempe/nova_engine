@@ -746,7 +746,7 @@ struct ClipSwitcher : Script {
         if ((t += dt) < every) return;
         t = 0.0f;
         onB = !onB;
-        scene().playAnimation(entity(), onB ? b : a, fade);
+        scene().playAnimation(entity(), onB ? b : a, Duration::fromSeconds(fade));
     }
 };
 

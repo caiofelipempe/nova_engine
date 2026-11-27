@@ -613,7 +613,14 @@ Câmera (`fovY` em `Angle`, distâncias em `Length`/`Distance`), luzes (raio em 
 `maxSlope` do personagem passaram a ponto fixo, assim como o `LocalTransform` das hierarquias (posição em
 `GlobalLengthVec` Q45.18, que cabe qualquer offset, rotação `Quat`, escala `ScaleVec`; só o giro de
 offsets acima de 8 km passa por `double`). As cenas estão na versão 2 (ângulos em graus, velocidades
-angulares em graus/s); as de versão 1 são migradas na leitura. A animação continua em `double`.
+angulares em graus/s); as de versão 1 são migradas na leitura.
+
+A animação também: o tempo de cada clipe é um `Duration` (avançar, dar a volta e parar nas pontas são
+exatos em flicks; clipes sincronizados seguem a fase com um arredondamento ao flick), os pesos são
+`Weight` (Q3.28) e os fades `WeightRate` (Q10.21 por segundo, integrados em flicks com uma divisão
+exata). `playAnimation` recebe o fade como `Duration` e `blendAnimation` um `Weight`. As chaves dos
+clipes continuam `float` (vêm do glTF) e a mistura é feita em `double`, quantizada uma vez no
+`LocalTransform`; a velocidade de reprodução é um `float`.
 
 ### Determinismo do que ficou em `double`
 O que ainda passa por `double` (mistura da animação, pesos do slerp, ângulos de Euler, offsets de mais

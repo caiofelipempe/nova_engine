@@ -31,6 +31,8 @@
 /// | GravityFactor | Q5.10        | 16   | 9.8·10⁻⁴       | ±32              | needs 1.4·10⁻³ (step·g·dt² ≤ 3.8 µm)          |
 /// | Frequency     | Q11.20       | 32   | 9.5·10⁻⁷ Hz    | ±2 048 Hz        | springs from 0.01 Hz, within 0.01 %           |
 /// | DampingRatio  | Q1.14        | 16   | 6.1·10⁻⁵       | ±2               | 0 (bouncy) to 1 (critical), and over          |
+/// | Weight        | Q3.28        | 32   | 3.7·10⁻⁹       | ±8               | a step between poses 1 m apart: 3.7 nm        |
+/// | WeightRate    | Q10.21       | 32   | 4.8·10⁻⁷ /s    | ±1 024 /s        | a step for a frame: 8·10⁻⁹ of weight          |
 /// | Angle         | 32-bit turn  | 32   | 1.46·10⁻⁹ rad  | one turn (wraps) | 1.46 µm at 1 km                               |
 /// | AngleSpeed    | Q6.25 turn/s | 32   | 1.9·10⁻⁷ rad/s | ±64 turns/s      | 3.1 µm a step at 1 km                         |
 ///
@@ -485,6 +487,8 @@ using Damping = Dimension<10, 21, struct DampingTag>;            ///< 1/s: veloc
 using GravityFactor = Dimension<5, 10, struct GravityFactorTag>; ///< Gravity multiplier (16 bits).
 using Frequency = Dimension<11, 20, struct FrequencyTag>;        ///< Hz.
 using DampingRatio = Dimension<1, 14, struct DampingRatioTag>;   ///< Spring damping ratio (16 bits).
+using Weight = Dimension<3, 28, struct WeightTag>;               ///< Share of a mix (animation blending).
+using WeightRate = Dimension<10, 21, struct WeightRateTag>;      ///< Weight change per second (fades).
 
 /// @brief An angular speed: turns per second in Q6.25 (±64 turns/s ≈ 400 rad/s, step 1.9·10⁻⁷ rad/s:
 ///        one physics step of it turns a point 1 km away by 3.1 µm, within the rule).

@@ -128,16 +128,16 @@ public:
     ///        bind pose to the pose; see MeshData::posed). False without a skin, a skeleton or its root.
     bool skinPose(Entity entity, std::vector<glm::mat4>& joints);
     /// @brief Changes `entity`'s AnimatorComponent (added if missing) to `clip`, cross-fading
-    ///        from the clip it was playing over `fadeSeconds` (0: at once). The new clip starts
+    ///        from the clip it was playing over `fade` (zero: at once). The new clip starts
     ///        from its beginning; the old one keeps playing while it fades out.
-    void playAnimation(Entity entity, std::shared_ptr<const AnimationClip> clip, f32 fadeSeconds = 0.0f, bool loop = true);
+    void playAnimation(Entity entity, std::shared_ptr<const AnimationClip> clip, Duration fade = {}, bool loop = true);
     /// @brief Same, with the clip by reference (saved in AnimatorComponent::clip; resolved
     ///        through the animation source).
-    void playAnimation(Entity entity, const std::string& clip, f32 fadeSeconds = 0.0f, bool loop = true);
+    void playAnimation(Entity entity, const std::string& clip, Duration fade = {}, bool loop = true);
     /// @brief Mixes `clip` into `entity`'s animator with `weight` (relative to the main clip's,
     ///        which is 1 once faded in); calling it again changes the weight, 0 removes it. With
     ///        `sync`, it follows the main clip's phase (a walk and a run, feet in step).
-    void blendAnimation(Entity entity, std::shared_ptr<const AnimationClip> clip, f32 weight, bool sync = true);
+    void blendAnimation(Entity entity, std::shared_ptr<const AnimationClip> clip, Weight weight, bool sync = true);
     /// @brief Same, with every option: Average or Override, and a mask of the nodes it moves
     ///        (bone masks: e.g. an Override of weight 1 on "Hips/Spine" waves the upper body while
     ///        the main clip walks the rest).

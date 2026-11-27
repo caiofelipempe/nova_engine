@@ -83,7 +83,7 @@ void CoreComponentsPlugin::onRegister(Registry& r) {
             changed = true;
             if (e.valid() && e.has<AnimatorComponent>()) { // the new clip from its start
                 auto& a = e.get<AnimatorComponent>();
-                a.time = 0.0;
+                a.time = Duration();
                 a.started = true;
                 if (ref.empty()) a.data.reset();
             }

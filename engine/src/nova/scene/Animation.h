@@ -6,6 +6,7 @@
 
 #include "nova/core/Base.h"
 #include "nova/math/Quat.h"
+#include "nova/math/Time.h"
 #include "nova/scene/EntityRef.h"
 
 #include <entt/entt.hpp>
@@ -83,7 +84,7 @@ enum class AnimationBlend : u8 {
 
 /// @brief How Scene::blendAnimation mixes a clip in.
 struct AnimationMix {
-    f32 weight = 1.0f;                  ///< Average: relative to the main clip's 1. Override: 0..1.
+    Weight weight = Weight(1.0);        ///< Average: relative to the main clip's 1. Override: 0..1.
     bool sync = true;                   ///< Follows the main clip's phase.
     AnimationBlend mode = AnimationBlend::Average;
     /// @brief The nodes it moves, as paths from the animated entity ("Hips/Spine"): each covers
@@ -100,11 +101,11 @@ bool inMask(const std::vector<std::string>& mask, const std::string& path);
 ///        with a weight (Scene::playAnimation, Scene::blendAnimation). Not saved.
 struct AnimationLayer {
     std::shared_ptr<const AnimationClip> data; ///< The clip.
-    f64 time = 0.0;                            ///< Position in it (seconds).
+    Duration time;                             ///< Position in it (exact).
     f32 speed = 1.0f;                          ///< Playback rate.
     bool loop = true;                          ///< Wrap around at the end.
-    f32 weight = 1.0f;                         ///< Its share of the mix (relative to the others).
-    f32 fade = 0.0f;                           ///< Weight change per second (negative: fading out, gone at 0).
+    Weight weight = Weight(1.0);               ///< Its share of the mix (relative to the others).
+    WeightRate fade;                           ///< Weight change per second (negative: fading out, gone at 0).
     bool sync = false;                         ///< Follows the main clip's phase (walk and run in step).
     AnimationBlend mode = AnimationBlend::Average; ///< Averaged in, or overriding the others.
     std::vector<std::string> mask;             ///< The nodes it moves (AnimationMix::mask); empty: all.
@@ -132,13 +133,13 @@ struct AnimatorComponent {
     bool playing = true;
 
     // Kept by the scene (not saved):
-    f64 time = 0.0;                             ///< Position in the clip (seconds).
+    Duration time;                              ///< Position in the clip (exact).
     std::shared_ptr<const AnimationClip> data;  ///< The clip being played (set it to play a clip directly).
     std::string resolved;                       ///< The `clip` reference `data` came from.
     const AnimationClip* boundClip = nullptr;   ///< The clip `targets` were found for.
     std::vector<entt::entity> targets;          ///< One per channel (entt::null: not found).
-    f32 weight = 1.0f;                          ///< The main clip's share of the mix.
-    f32 fade = 0.0f;                            ///< Its weight change per second (fading in to 1).
+    Weight weight = Weight(1.0);                ///< The main clip's share of the mix.
+    WeightRate fade;                            ///< Its weight change per second (fading in to 1).
     bool started = true;                        ///< Not played yet: events at its start fire on the first update.
     std::vector<AnimationLayer> layers;         ///< Fading out and mixed-in clips.
 };

@@ -435,7 +435,7 @@ void nodeAnimation() {
     CHECK(glm::length((frameE.transform().position - GlobalPosition(20, 1.5, 0)).toMeters()) < 1e-4);
     // Loops; paused holds; faster.
     scene.update(Duration::fromSeconds(1.0)); // 2.5 s ≡ 0.5 s
-    CHECK(std::abs(root.get<AnimatorComponent>().time - 0.5) < 1e-9 && std::abs(angleOf(hingeE) - 22.5f) < 0.01f);
+    CHECK(std::abs(root.get<AnimatorComponent>().time.seconds() - 0.5) < 1e-9 && std::abs(angleOf(hingeE) - 22.5f) < 0.01f);
     root.get<AnimatorComponent>().playing = false;
     scene.update(Duration::fromSeconds(1.0));
     CHECK(std::abs(angleOf(hingeE) - 22.5f) < 0.01f);
@@ -604,7 +604,7 @@ void animationMixing() {
     scene.playAnimation(root, idle);
     scene.update(Duration::fromSeconds(0.1));
     CHECK(std::abs(x()) < 1e-6);
-    scene.playAnimation(root, walk, 1.0f);
+    scene.playAnimation(root, walk, Duration::seconds(1));
     scene.update(Duration::fromSeconds(0.5));
     CHECK(std::abs(x() - 5.0) < 1e-4 && root.get<AnimatorComponent>().layers.size() == 1);
     scene.update(Duration::fromSeconds(0.6));
@@ -641,13 +641,13 @@ void animationMixing() {
     scene.blendAnimation(root, fast, 1.0f, true);
     scene.update(Duration::fromSeconds(0.5)); // a quarter of the main clip
     const auto& anim = root.get<AnimatorComponent>();
-    CHECK(std::abs(anim.time - 0.5) < 1e-9 && std::abs(anim.layers[0].time - 0.125) < 1e-9);
+    CHECK(anim.time == Duration::milliseconds(500) && anim.layers[0].time == Duration::milliseconds(125));
 
     scene.blendAnimation(root, fast, 0.0f);
 
     // By reference: the clip the animator saves.
     scene.setAnimationSource([&](const std::string& ref) { return ref == "test:walk" ? walk : nullptr; });
-    scene.playAnimation(root, std::string("test:walk"), 0.2f);
+    scene.playAnimation(root, std::string("test:walk"), Duration::milliseconds(200));
     CHECK(root.get<AnimatorComponent>().clip == "test:walk" && root.get<AnimatorComponent>().data == walk);
     scene.update(Duration::fromSeconds(1.0));
     CHECK(std::abs(x() - 10.0) < 1e-4);
@@ -770,7 +770,7 @@ void animationEvents() {
 
     // Without looping: once to the end, then nothing while it holds there.
     e.get<AnimatorComponent>().speed = 1;
-    scene.playAnimation(e, clip, 0.0f, false);
+    scene.playAnimation(e, clip, Duration(), false);
     scene.update(Duration::fromSeconds(2.0));
     CHECK(seen() == "start 0, step 0, step 1");
     scene.update(Duration::fromSeconds(1.0));
@@ -783,7 +783,7 @@ void animationEvents() {
     scene.playAnimation(e, clip);
     scene.update(Duration::fromSeconds(0.1));
     seen();
-    scene.playAnimation(e, other, 1.0f); // walk fades out: its steps are not heard
+    scene.playAnimation(e, other, Duration::seconds(1)); // walk fades out: its steps are not heard
     scene.update(Duration::fromSeconds(0.6));
     CHECK(seen() == "breath 0");
     AnimationMix loud;
