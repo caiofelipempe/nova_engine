@@ -749,6 +749,15 @@ void Scene::addImpulse(Entity e, const ForceVec& impulse) {
 void Scene::setLinearVelocity(Entity e, const SpeedVec& velocity) {
     if (auto b = bodyOf(e)) m_physics->setLinearVelocity(b, velocity.toGlm());
 }
+void Scene::setAngularVelocity(Entity e, const AngleSpeedVec& velocity) {
+    if (physics::BodyId b = bodyOf(e)) m_physics->setAngularVelocity(b, velocity.toGlm());
+}
+
+AngleSpeedVec Scene::angularVelocity(Entity e) {
+    physics::BodyId b = bodyOf(e);
+    return b ? AngleSpeedVec(m_physics->angularVelocity(b)) : AngleSpeedVec();
+}
+
 SpeedVec Scene::linearVelocity(Entity e) {
     auto b = bodyOf(e);
     return b ? SpeedVec(m_physics->linearVelocity(b)) : SpeedVec();
@@ -784,7 +793,9 @@ u64 Scene::stateHash() {
         }
         if (m_registry.all_of<RigidBodyComponent>(e)) {
             const SpeedVec v = linearVelocity({e, this});
+            const AngleSpeedVec w = angularVelocity({e, this});
             mix(&v, sizeof(v));
+            mix(&w, sizeof(w));
         }
     }
     return h;
@@ -806,106 +817,107 @@ SceneHit Scene::toSceneHit(const physics::QueryHit& hit) {
     out.entity = Entity{fromUserData(hit.userData), this};
     if (!out.entity.valid()) out.entity = {};
     out.point = hit.point;
-    out.normal = hit.normal;
-    out.hitSurfaceNormal = hit.hitSurfaceNormal;
+    // The physics engine's floats, quantized where they enter the scene's API.
+    out.normal = UnitVec(hit.normal);
+    out.hitSurfaceNormal = UnitVec(hit.hitSurfaceNormal);
     out.sweptPoint = hit.sweptPoint;
-    out.sweptSurfaceNormal = hit.sweptSurfaceNormal;
-    out.distance = hit.distance;
+    out.sweptSurfaceNormal = UnitVec(hit.sweptSurfaceNormal);
+    out.distance = Distance(hit.distance);
     return out;
 }
 
-std::optional<SceneHit> Scene::raycast(const GlobalPosition& origin, const glm::vec3& direction, f32 maxDistance,
+std::optional<SceneHit> Scene::raycast(const GlobalPosition& origin, const UnitVec& direction, Distance maxDistance,
                                        Entity ignore, u32 layerMask) {
     if (!m_physics) return std::nullopt;
     physics::RaycastHit hit;
-    if (!m_physics->raycast(origin, direction, maxDistance, hit, filterIgnoring(ignore, layerMask))) return std::nullopt;
+    if (!m_physics->raycast(origin, direction.toGlm(), toFloat(maxDistance), hit, filterIgnoring(ignore, layerMask))) return std::nullopt;
     return toSceneHit(hit);
 }
 
 std::optional<SceneHit> Scene::sweep(const physics::ShapeDesc& shape, const GlobalPosition& position,
-                                     const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                     const Quat& rotation, const UnitVec& direction, Distance maxDistance,
                                      Entity ignore, u32 layerMask) {
     if (!m_physics) return std::nullopt;
     physics::SweepHit hit;
-    if (!m_physics->sweep(shape, position, rotation, direction, maxDistance, hit, filterIgnoring(ignore, layerMask)))
+    if (!m_physics->sweep(shape, position, rotation.toGlm(), direction.toGlm(), toFloat(maxDistance), hit, filterIgnoring(ignore, layerMask)))
         return std::nullopt;
     return toSceneHit(hit);
 }
 
 std::vector<SceneHit> Scene::sweepAll(const physics::ShapeDesc& shape, const GlobalPosition& position,
-                                      const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+                                      const Quat& rotation, const UnitVec& direction, Distance maxDistance,
                                       Entity ignore, u32 layerMask) {
     std::vector<SceneHit> out;
     if (!m_physics) return out;
     for (const auto& h :
-         m_physics->sweepAll(shape, position, rotation, direction, maxDistance, filterIgnoring(ignore, layerMask)))
+         m_physics->sweepAll(shape, position, rotation.toGlm(), direction.toGlm(), toFloat(maxDistance), filterIgnoring(ignore, layerMask)))
         out.push_back(toSceneHit(h));
     return out;
 }
 
-std::optional<SceneHit> Scene::sweepSphere(const GlobalPosition& origin, f32 radius, const glm::vec3& direction,
-                                           f32 maxDistance, Entity ignore, u32 layerMask) {
+std::optional<SceneHit> Scene::sweepSphere(const GlobalPosition& origin, Length radius, const UnitVec& direction,
+                                           Distance maxDistance, Entity ignore, u32 layerMask) {
     physics::ShapeDesc s;
     s.type = physics::ShapeType::Sphere;
-    s.radius = radius;
-    return sweep(s, origin, glm::quat(1, 0, 0, 0), direction, maxDistance, ignore, layerMask);
+    s.radius = toFloat(radius);
+    return sweep(s, origin, Quat::identity(), direction, maxDistance, ignore, layerMask);
 }
 
-std::optional<SceneHit> Scene::sweepBox(const GlobalPosition& center, const glm::vec3& halfExtents,
-                                        const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+std::optional<SceneHit> Scene::sweepBox(const GlobalPosition& center, const LengthVec& halfExtents,
+                                        const Quat& rotation, const UnitVec& direction, Distance maxDistance,
                                         Entity ignore, u32 layerMask) {
     physics::ShapeDesc s;
     s.type = physics::ShapeType::Box;
-    s.halfExtents = halfExtents;
+    s.halfExtents = halfExtents.toGlm();
     return sweep(s, center, rotation, direction, maxDistance, ignore, layerMask);
 }
 
-std::optional<SceneHit> Scene::sweepCapsule(const GlobalPosition& center, f32 radius, f32 halfHeight,
-                                            const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance,
+std::optional<SceneHit> Scene::sweepCapsule(const GlobalPosition& center, Length radius, Length halfHeight,
+                                            const Quat& rotation, const UnitVec& direction, Distance maxDistance,
                                             Entity ignore, u32 layerMask) {
     physics::ShapeDesc s;
     s.type = physics::ShapeType::Capsule;
-    s.radius = radius;
-    s.halfHeight = halfHeight;
+    s.radius = toFloat(radius);
+    s.halfHeight = toFloat(halfHeight);
     return sweep(s, center, rotation, direction, maxDistance, ignore, layerMask);
 }
 
-std::optional<SceneHit> Scene::sweepEntity(Entity entity, const glm::vec3& direction, f32 maxDistance, u32 layerMask) {
+std::optional<SceneHit> Scene::sweepEntity(Entity entity, const UnitVec& direction, Distance maxDistance, u32 layerMask) {
     physics::BodyId body = bodyOf(entity);
     if (!body) return std::nullopt;
     physics::SweepHit hit;
     physics::QueryFilter f;
     f.layerMask = layerMask;
-    if (!m_physics->sweepBody(body, direction, maxDistance, hit, f)) return std::nullopt;
+    if (!m_physics->sweepBody(body, direction.toGlm(), toFloat(maxDistance), hit, f)) return std::nullopt;
     return toSceneHit(hit);
 }
 
 std::vector<Entity> Scene::overlap(const physics::ShapeDesc& shape, const GlobalPosition& position,
-                                   const glm::quat& rotation, Entity ignore, u32 layerMask, bool includeSensors) {
+                                   const Quat& rotation, Entity ignore, u32 layerMask, bool includeSensors) {
     std::vector<Entity> out;
     if (!m_physics) return out;
     physics::QueryFilter f = filterIgnoring(ignore, layerMask);
     f.includeSensors = includeSensors;
-    for (const physics::OverlapHit& h : m_physics->overlap(shape, position, rotation, f)) {
+    for (const physics::OverlapHit& h : m_physics->overlap(shape, position, rotation.toGlm(), f)) {
         Entity e{fromUserData(h.userData), this};
         if (e.valid()) out.push_back(e);
     }
     return out;
 }
 
-std::vector<Entity> Scene::overlapSphere(const GlobalPosition& center, f32 radius, Entity ignore, u32 layerMask,
+std::vector<Entity> Scene::overlapSphere(const GlobalPosition& center, Length radius, Entity ignore, u32 layerMask,
                                          bool includeSensors) {
     physics::ShapeDesc s;
     s.type = physics::ShapeType::Sphere;
-    s.radius = radius;
-    return overlap(s, center, glm::quat(1, 0, 0, 0), ignore, layerMask, includeSensors);
+    s.radius = toFloat(radius);
+    return overlap(s, center, Quat::identity(), ignore, layerMask, includeSensors);
 }
 
-std::vector<Entity> Scene::overlapBox(const GlobalPosition& center, const glm::vec3& halfExtents,
-                                      const glm::quat& rotation, Entity ignore, u32 layerMask, bool includeSensors) {
+std::vector<Entity> Scene::overlapBox(const GlobalPosition& center, const LengthVec& halfExtents,
+                                      const Quat& rotation, Entity ignore, u32 layerMask, bool includeSensors) {
     physics::ShapeDesc s;
     s.type = physics::ShapeType::Box;
-    s.halfExtents = halfExtents;
+    s.halfExtents = halfExtents.toGlm();
     return overlap(s, center, rotation, ignore, layerMask, includeSensors);
 }
 

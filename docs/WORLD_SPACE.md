@@ -635,3 +635,13 @@ O teste `physics` confere dois hashes de estado de referência, iguais em Debug 
   empurrando caixas), uma hinge com motor de velocidade e um slider com motor de posição. Antes de
   comparar o hash, o teste confere que a cena faz o que deve (o pai a 270°, o filho no offset, a roda
   na velocidade do motor, o carrinho no alvo).
+
+### API de física da cena em ponto fixo
+Scripts falam com a física só em ponto fixo: `addForce`/`addImpulse` em `ForceVec`, velocidades em
+`SpeedVec` e `AngleSpeedVec` (`setAngularVelocity`/`angularVelocity`), e as consultas (`raycast`,
+`sweep*`, `overlap*`) recebem direções em `UnitVec`, distâncias em `Distance`, raios e meias-alturas em
+`Length`, meias-extensões em `LengthVec` e rotações em `Quat`. O `SceneHit` devolve as normais em
+`UnitVec` e a distância em `Distance`. Números, `glm::vec3` e `glm::quat` continuam entrando direto
+(são quantizados na entrada). O contrato `physics::PhysicsWorld` segue em `float`: é a fronteira com o
+motor. O hash de estado inclui também a velocidade angular de cada corpo. O áudio guarda `minDistance`
+e `maxDistance` em `Distance`; volume e pitch são `float` (dados de áudio).

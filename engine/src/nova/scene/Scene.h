@@ -26,11 +26,11 @@ namespace nova {
 struct SceneHit {
     Entity entity;                      ///< Hit entity.
     GlobalPosition point;               ///< Contact point on the hit entity.
-    glm::vec3 normal{0.0f};             ///< Contact normal (separation direction), pointing towards the query.
-    glm::vec3 hitSurfaceNormal{0.0f};   ///< Hit entity's surface normal at `point`.
+    UnitVec normal;                     ///< Contact normal (separation direction), pointing towards the query.
+    UnitVec hitSurfaceNormal;           ///< Hit entity's surface normal at `point`.
     GlobalPosition sweptPoint;          ///< Sweeps: contact point on the swept shape (the query origin for raycasts).
-    glm::vec3 sweptSurfaceNormal{0.0f}; ///< Sweeps: swept shape's surface normal at `sweptPoint` (zero for raycasts).
-    f32 distance = 0.0f;                ///< Distance travelled until contact (0 = overlapping at the start).
+    UnitVec sweptSurfaceNormal;         ///< Sweeps: swept shape's surface normal at `sweptPoint` (zero for raycasts).
+    Distance distance;                  ///< Distance travelled until contact (0 = overlapping at the start).
 };
 using SceneRaycastHit = SceneHit; ///< Alias kept for readability at raycast call sites.
 
@@ -224,6 +224,10 @@ public:
     void setLinearVelocity(Entity e, const SpeedVec& velocity);
     /// @brief Linear velocity (m/s) of the entity's body; zero without a body.
     SpeedVec linearVelocity(Entity e);
+    /// @brief Sets the angular velocity of the entity's body (around each world axis). No-op without a body.
+    void setAngularVelocity(Entity e, const AngleSpeedVec& velocity);
+    /// @brief Angular velocity of the entity's body (around each world axis); zero without a body.
+    AngleSpeedVec angularVelocity(Entity e);
     /// @brief Teleports the body to the entity's current transform and zeroes its velocity
     ///        (e.g. after moving it with an editor gizmo).
     void syncTransformToPhysics(Entity e);
@@ -269,55 +273,57 @@ public:
     void activateWorld() const { WorldSize::setActive(m_worldSize); }
 
     /// @brief Hash of the simulation state: every entity's exact position, rotation, scale and body
-    ///        velocities, in UUID order. Two runs of the same scene with the same inputs give the same
+    ///        velocities (linear and angular), in UUID order. Two runs of the same scene with the same inputs give the same
     ///        hash step after step (lockstep / replay desync checks).
     u64 stateHash();
     /// @}
 
     /// @name Queries
     /// All queries return `std::nullopt` / nothing when nothing is hit or when the scene is not
-    /// simulating. `direction` need not be normalized. `ignore` skips one entity (typically the
+    /// simulating. Fixed point in and out: `direction` is a UnitVec (it need not be normalized, but
+    /// each axis must be within ±2), distances and sizes Distance / Length, rotations Quat (a
+    /// `glm::vec3`, a number or a `glm::quat` converts implicitly). `ignore` skips one entity (typically the
     /// caller); `layerMask` keeps only bodies of those layers (physics::layerBit(),
     /// PhysicsSettings::maskOf()). Sensors are never reported.
     /// @{
     /// @brief Closest entity hit by a ray.
-    std::optional<SceneHit> raycast(const GlobalPosition& origin, const glm::vec3& direction, f32 maxDistance = 1000.0f,
+    std::optional<SceneHit> raycast(const GlobalPosition& origin, const UnitVec& direction, Distance maxDistance = Distance(1000.0),
                                     Entity ignore = {}, u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps a sphere and returns the first entity it would touch.
-    std::optional<SceneHit> sweepSphere(const GlobalPosition& origin, f32 radius, const glm::vec3& direction,
-                                        f32 maxDistance = 1000.0f, Entity ignore = {}, u32 layerMask = physics::kAllLayers);
+    std::optional<SceneHit> sweepSphere(const GlobalPosition& origin, Length radius, const UnitVec& direction,
+                                        Distance maxDistance = Distance(1000.0), Entity ignore = {}, u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps an oriented box and returns the first entity it would touch.
-    std::optional<SceneHit> sweepBox(const GlobalPosition& center, const glm::vec3& halfExtents, const glm::quat& rotation,
-                                     const glm::vec3& direction, f32 maxDistance = 1000.0f, Entity ignore = {},
+    std::optional<SceneHit> sweepBox(const GlobalPosition& center, const LengthVec& halfExtents, const Quat& rotation,
+                                     const UnitVec& direction, Distance maxDistance = Distance(1000.0), Entity ignore = {},
                                      u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps a capsule (axis = local Y of `rotation`) and returns the first entity it would touch.
-    std::optional<SceneHit> sweepCapsule(const GlobalPosition& center, f32 radius, f32 halfHeight,
-                                         const glm::quat& rotation, const glm::vec3& direction,
-                                         f32 maxDistance = 1000.0f, Entity ignore = {},
+    std::optional<SceneHit> sweepCapsule(const GlobalPosition& center, Length radius, Length halfHeight,
+                                         const Quat& rotation, const UnitVec& direction,
+                                         Distance maxDistance = Distance(1000.0), Entity ignore = {},
                                          u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps any shape and returns the first entity it would touch.
     std::optional<SceneHit> sweep(const physics::ShapeDesc& shape, const GlobalPosition& position,
-                                  const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance = 1000.0f,
+                                  const Quat& rotation, const UnitVec& direction, Distance maxDistance = Distance(1000.0),
                                   Entity ignore = {}, u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps any shape and returns every entity along the way, closest first.
     std::vector<SceneHit> sweepAll(const physics::ShapeDesc& shape, const GlobalPosition& position,
-                                   const glm::quat& rotation, const glm::vec3& direction, f32 maxDistance = 1000.0f,
+                                   const Quat& rotation, const UnitVec& direction, Distance maxDistance = Distance(1000.0),
                                    Entity ignore = {}, u32 layerMask = physics::kAllLayers);
     /// @brief Sweeps the entity's own collider from where it is now, ignoring itself.
     ///
     /// Answers "if I move this way, what do I hit first?". Requires a RigidBodyComponent.
-    std::optional<SceneHit> sweepEntity(Entity entity, const glm::vec3& direction, f32 maxDistance = 1000.0f,
+    std::optional<SceneHit> sweepEntity(Entity entity, const UnitVec& direction, Distance maxDistance = Distance(1000.0),
                                         u32 layerMask = physics::kAllLayers);
     /// @brief Every entity whose collider overlaps `shape` at this pose ("what is inside this area?").
     /// @param includeSensors Report sensor bodies too.
     std::vector<Entity> overlap(const physics::ShapeDesc& shape, const GlobalPosition& position,
-                                const glm::quat& rotation, Entity ignore = {}, u32 layerMask = physics::kAllLayers,
+                                const Quat& rotation, Entity ignore = {}, u32 layerMask = physics::kAllLayers,
                                 bool includeSensors = false);
     /// @brief Every entity whose collider overlaps a sphere.
-    std::vector<Entity> overlapSphere(const GlobalPosition& center, f32 radius, Entity ignore = {},
+    std::vector<Entity> overlapSphere(const GlobalPosition& center, Length radius, Entity ignore = {},
                                       u32 layerMask = physics::kAllLayers, bool includeSensors = false);
     /// @brief Every entity whose collider overlaps an oriented box.
-    std::vector<Entity> overlapBox(const GlobalPosition& center, const glm::vec3& halfExtents, const glm::quat& rotation,
+    std::vector<Entity> overlapBox(const GlobalPosition& center, const LengthVec& halfExtents, const Quat& rotation,
                                    Entity ignore = {}, u32 layerMask = physics::kAllLayers, bool includeSensors = false);
     /// @}
 

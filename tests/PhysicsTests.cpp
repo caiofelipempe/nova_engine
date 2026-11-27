@@ -30,7 +30,11 @@ void checkNear(double a, double b, double eps, const char* expr, const char* fil
     if (std::abs(a - b) > eps) std::printf("    got %.6f, expected %.6f (+-%g)\n", a, b, eps);
 }
 #define CHECK_NEAR(a, b, eps) checkNear(static_cast<double>(a), static_cast<double>(b), static_cast<double>(eps), #a " ~= " #b, __FILE__, __LINE__)
-#define CHECK_VEC(a, b, eps) check(glm::length((a) - (b)) <= (eps), #a " ~= " #b, __FILE__, __LINE__)
+// Vectors as floats to compare: glm ones as they are, fixed-point ones (UnitVec...) converted.
+glm::vec3 asGlm(const glm::vec3& v) { return v; }
+template <typename T>
+glm::vec3 asGlm(const Vec3<T>& v) { return v.toGlm(); }
+#define CHECK_VEC(a, b, eps) check(glm::length(asGlm(a) - asGlm(b)) <= (eps), #a " ~= " #b, __FILE__, __LINE__)
 
 constexpr f32 kEps = 0.02f;
 const glm::quat kIdentity{1, 0, 0, 0};
@@ -590,7 +594,7 @@ void determinism() {
 // CROSS_PLATFORM_DETERMINISTIC (overlay port) and the state is fixed point. The reference hash was
 // recorded once; Debug and Release must both reach it (a change here means the simulation changed:
 // update the value only on purpose).
-constexpr u64 kReferenceHash = 0x21e58808b8452a0eull; // Windows x64, MSVC, Debug and Release
+constexpr u64 kReferenceHash = 0x1fe554f30d37388eull; // Windows x64, MSVC, Debug and Release
 
 void crossPlatformDeterminism() {
     Scene s("reference");
@@ -621,7 +625,7 @@ void crossPlatformDeterminism() {
 // carrying children, one of them a kinematic paddle pushing dynamic boxes; a hinge driven by a
 // velocity motor and a slider by a position motor. Hierarchy offsets, binary angles, angular speeds
 // and joint motors all reach the state hash (every transform, every body velocity).
-constexpr u64 kSystemsReferenceHash = 0x7fc32082719ec386ull; // Windows x64, MSVC, Debug and Release
+constexpr u64 kSystemsReferenceHash = 0x612ce900757c5076ull; // Windows x64, MSVC, Debug and Release
 
 u64 systemsReferenceRun() {
     Scene s("systems");
@@ -687,6 +691,7 @@ u64 systemsReferenceRun() {
     CHECK(hubError < 4096.0); // < 6·10⁻⁶ rad
     CHECK(isWithin(paddle.transform().position, hub.transform().position + glm::vec3(0.0f, 0.0f, 1.5f), 1e-4));
     CHECK_NEAR(s.physics()->angularVelocity(wheel.get<RigidBodyComponent>().body).z, glm::radians(120.0f), 0.05f);
+    CHECK_NEAR(s.angularVelocity(wheel).z.degreesPerSecond(), 120.0, 3.0); // the scene's API, fixed point
     CHECK_NEAR(cart.transform().position.toMeters().x, 1.5, 0.05);
     return s.stateHash();
 }

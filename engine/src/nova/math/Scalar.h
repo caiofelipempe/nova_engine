@@ -547,6 +547,17 @@ private:
     Turns m_turns;
 };
 
+/// @brief An angular speed in radians per second (the generic interface, for vectors of them).
+inline f64 toDouble(AngleSpeed s) { return s.radiansPerSecond(); }
+/// @brief An angular speed in radians per second, as float.
+inline f32 toFloat(AngleSpeed s) { return s.radiansPerSecondF(); }
+/// @brief The nearest angular speed to `radiansPerSecond` (the generic interface, for vectors).
+template <>
+inline AngleSpeed toFixed<AngleSpeed>(f64 radiansPerSecond) { return AngleSpeed::fromRadiansPerSecond(radiansPerSecond); }
+/// @brief Zero angular speed.
+template <>
+constexpr AngleSpeed zero<AngleSpeed>() { return AngleSpeed(); }
+
 /// @brief The turn made at angular speed `s` in `flicks` (1/705 600 000 s, see Time.h): exact up to
 ///        one rounding (to the nearest step, ties away from zero), whole turns drop out.
 constexpr Angle angleTurned(AngleSpeed s, i64 flicks) {

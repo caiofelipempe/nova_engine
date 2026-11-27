@@ -118,6 +118,7 @@ using AccelerationVec = Vec3<Acceleration>; ///< Accelerations, gravity.
 using ScaleVec = Vec3<Scale>;               ///< Scales per axis.
 using UnitVec = Vec3<Unit>;                 ///< Directions, axes.
 using ForceVec = Vec3<Force>;               ///< Forces, impulses, torques.
+using AngleSpeedVec = Vec3<AngleSpeed>;     ///< Angular velocities (from glm and back in rad/s per axis).
 using EulerAngles = Vec3<Angle>;            ///< Euler angles: x = pitch, y = yaw, z = roll (see EulerOrder).
 using GlobalLengthVec = Vec3<GlobalLength>; ///< Coordinates in the whole world.
 

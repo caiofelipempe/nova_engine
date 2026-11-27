@@ -50,8 +50,8 @@ VoiceParams sourceParams(const AudioSourceComponent& src) {
     p.pitch = src.pitch;
     p.loop = src.loop;
     p.spatial = src.spatial;
-    p.minDistance = src.minDistance;
-    p.maxDistance = src.maxDistance;
+    p.minDistance = toFloat(src.minDistance); // the audio engine's floats
+    p.maxDistance = toFloat(src.maxDistance);
     return p;
 }
 } // namespace

@@ -4,6 +4,7 @@
 /// @brief Sound in the scene: sources on entities and the listener.
 
 #include "nova/audio/Audio.h"
+#include "nova/math/Scalar.h"
 
 #include <memory>
 #include <string>
@@ -22,8 +23,8 @@ struct AudioSourceComponent {
     bool loop = false;
     bool playOnStart = true;   ///< Starts by itself on the first update.
     bool spatial = true;       ///< Placed at the entity (attenuated and panned) or heard flat (music).
-    f32 minDistance = 1.0f;    ///< Full volume up to here (m).
-    f32 maxDistance = 50.0f;   ///< Silent from here on (m).
+    Distance minDistance = Distance(1.0);  ///< Full volume up to here (m).
+    Distance maxDistance = Distance(50.0); ///< Silent from here on (m).
 
     // Kept by the scene (not saved):
     std::shared_ptr<const AudioClip> data; ///< The clip (set it to play one directly).

@@ -29,7 +29,11 @@ void checkNear(double a, double b, double eps, const char* expr, const char* fil
     if (std::abs(a - b) > eps) std::printf("    got %.6f, expected %.6f (+-%g)\n", a, b, eps);
 }
 #define CHECK_NEAR(a, b, eps) checkNear(static_cast<double>(a), static_cast<double>(b), static_cast<double>(eps), #a " ~= " #b, __FILE__, __LINE__)
-#define CHECK_VEC(a, b, eps) check(glm::length((a) - (b)) <= (eps), #a " ~= " #b, __FILE__, __LINE__)
+// Vectors as floats to compare: glm ones as they are, fixed-point ones (UnitVec...) converted.
+glm::vec3 asGlm(const glm::vec3& v) { return v; }
+template <typename T>
+glm::vec3 asGlm(const Vec3<T>& v) { return v.toGlm(); }
+#define CHECK_VEC(a, b, eps) check(glm::length(asGlm(a) - asGlm(b)) <= (eps), #a " ~= " #b, __FILE__, __LINE__)
 
 const Duration kFrame = Duration::perSecond(60);
 
@@ -344,11 +348,11 @@ void staticFollowsTransform() {
     scene.startSimulation();
     run(scene, 1);
     auto hit = scene.raycast(GlobalPosition(0.0, 0.0, 0.0), {1, 0, 0}, 20.0f);
-    CHECK(hit && std::abs(hit->distance - 4.5f) < 1e-3f);
+    CHECK(hit && std::abs(toDouble(hit->distance) - 4.5) < 1e-3);
     wall.transform().position = {8.0, 0.0, 0.0}; // moved by code
     run(scene, 1);
     hit = scene.raycast(GlobalPosition(0.0, 0.0, 0.0), {1, 0, 0}, 20.0f);
-    CHECK(hit && std::abs(hit->distance - 7.5f) < 1e-3f);
+    CHECK(hit && std::abs(toDouble(hit->distance) - 7.5) < 1e-3);
 }
 
 void continuousCollision() {
