@@ -460,9 +460,9 @@ As bordas `Wrap`/`Barrier` recortadas do toro saíram: veja
    em `vcpkg-configuration.json`) com `CROSS_PLATFORM_DETERMINISTIC=ON`; o CMake recusa um Jolt sem
    `JPH_CROSS_PLATFORM_DETERMINISTIC`. O teste `physics` confere um hash de estado de referência,
    gravado e igual em Debug e Release (MSVC x64); outra plataforma tem de chegar ao mesmo valor.
-7. Modo grande: as posições já são `int64` Q45.18 e a física já segue um `WorldOrigin` (seção
-   abaixo), sem flag de compilação. Falta o streaming por blocos (janela, dormência, histerese,
-   eventos `onChunkLoad`/`onChunkUnload`).
+7. ✅ Modo grande: as posições são `int64` Q45.18, a física segue um `WorldOrigin` (seção abaixo) e o
+   mundo carrega e simula por blocos em volta do foco (seção "Streaming por blocos"), sem flag de
+   compilação.
 
 ## Posição em 64 bits, mundo sempre circular e WorldOrigin (feito)
 
@@ -654,3 +654,32 @@ superior da hinge, o campo de visão) é mostrado em [0°, 360°): 180° aparece
 Cada dimensão tem literais (`nova::literals`, que vem junto com `using namespace nova`): `2.5_m`,
 `50_cm`, `3_mm`, `2_km` (um `Distance`), `10_mps`, `36_kmh`, `9.81_mps2`, `70_kg`, `100_N`, `5_Hz`,
 `90_deg`, `1.57_rad`, `0.25_turn`, `120_degps`, `3_radps`, `0.5_turnps`, `60_rpm`.
+
+## Streaming por blocos (feito)
+`scene/Chunks.h` e `scene/SceneChunks.cpp`; desligado por padrão (`Scene::setChunkStreaming`).
+
+- **Grade:** blocos de 256 m (`ChunkSettings::size`, o tamanho da célula da `WorldOrigin`), nos eixos
+  escolhidos em `ChunkSettings::axes`: só X, X e Z (o padrão), X e Y, os três... Um eixo não
+  subdividido é um bloco só. `Scene::chunkOf(p)` dá o `ChunkCoord`; as distâncias entre blocos saem de
+  `GlobalOffset`s (o caminho mais curto), então a emenda do mundo circular não precisa de cuidado.
+- **Anéis em volta do bloco do foco** (o foco da física: `setPhysicsFocus`, ou a câmera principal):
+  - **física** (`physicsRadius` = 1, 3×3): corpos, personagens e juntas simulam. Os de fora ficam
+    **dormentes**: saem do Jolt, a pose fica no transform e as velocidades na cena
+    (`linearVelocity`/`setLinearVelocity` leem e escrevem nelas), e voltam como estavam. As juntas
+    esperam os dois corpos e são refeitas;
+  - **carregado** (`loadRadius` = 2, 5×5): todo bloco nele é carregado, o mais perto primeiro, no
+    máximo `loadsPerFrame` por update;
+  - **mantido** (`unloadRadius` = 3, 7×7): um bloco carregado só descarrega depois de `unloadDelay`
+    (2 s) fora dele.
+- **Histerese:** o bloco do foco só muda quando o foco passa 1/8 de bloco da divisa. Andar de um lado
+  para o outro numa divisa não carrega, descarrega nem acorda nada.
+- **Conteúdo é do jogo:** `Scene::setChunkSource({load, unload})`. `load` cria as entidades do bloco e
+  as marca com `StreamedComponent`. Ao descarregar, `unload` é chamado antes, para salvar o que mudou, e
+  as entidades marcadas que estão no bloco nesse momento (onde estão, não onde nasceram) são
+  destruídas. `StreamedComponent::unload = false` segura uma entidade (algo que o jogador carrega);
+  entidades sem o componente nunca descarregam. Uma entidade marcada que vai parar além do anel
+  mantido, num bloco não carregado, é destruída.
+- Testes em `tests/ChunkTests.cpp`: grade e eixos, ordem e orçamento de carga, a emenda, histerese,
+  descarga com atraso, dormência de corpos (pose e velocidades exatas), de personagens e de juntas.
+- **Falta:** um painel no editor mostrando os blocos carregados e o anel da física, e carga
+  assíncrona (hoje `load` roda na thread do update, dentro do orçamento por frame).

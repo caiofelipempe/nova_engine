@@ -69,6 +69,8 @@ void Scene::stopSimulation() {
         jc.broken = false; // a new run starts whole
     }
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) rb.body = {};
+    m_dormantBodies.clear();
+    m_dormantCharacters.clear();
     m_physics.reset();
     m_geometry.clear();
     m_warnedMeshOnDynamic.clear();
@@ -316,6 +318,7 @@ void Scene::syncBodies() {
 }
 
 void Scene::onRigidBodyDestroyed(entt::registry& registry, entt::entity e) {
+    m_dormantBodies.erase(e);
     auto& rb = registry.get<RigidBodyComponent>(e);
     if (m_physics && rb.body) {
         // Its joints go with it (the world destroys them too; forget the ids before they are reused).
@@ -383,6 +386,7 @@ void Scene::createCharacter(entt::entity e) {
 }
 
 void Scene::onCharacterDestroyed(entt::registry& registry, entt::entity e) {
+    m_dormantCharacters.erase(e);
     auto& cc = registry.get<CharacterControllerComponent>(e);
     if (m_physics && cc.character) m_physics->destroyCharacter(cc.character);
     cc.character = {};
@@ -392,7 +396,7 @@ void Scene::onCharacterDestroyed(entt::registry& registry, entt::entity e) {
 void Scene::syncCharacters() {
     for (auto [e, cc, t] : m_registry.view<CharacterControllerComponent, TransformComponent>().each()) {
         if (!cc.character) {
-            createCharacter(e);
+            if (!m_dormantCharacters.contains(e)) createCharacter(e);
             continue;
         }
         if (characterKey(cc) != cc.appliedKey) {
@@ -558,9 +562,10 @@ void Scene::syncJoints() {
 void Scene::stepPhysics(Duration dt) {
     activateWorld();
     pushPhysicsFocus(); // the float window follows the focus (the seam of the torus stays away from it)
+    updateDormancy(); // what is beyond the physics ring leaves the engine; what came near is back
     syncBodies(); // edits since last frame
     for (auto [e, rb] : m_registry.view<RigidBodyComponent>().each()) // gained a rigid body since last frame
-        if (!rb.body) createBody(e);
+        if (!rb.body && !m_dormantBodies.contains(e)) createBody(e);
     syncJoints();
     syncCharacters();
 
@@ -736,7 +741,7 @@ physics::BodyId Scene::bodyOf(Entity e) {
     if (!m_physics || !e.valid()) return {};
     auto* rb = e.tryGet<RigidBodyComponent>();
     if (!rb) return {};
-    if (!rb->body) createBody(e.handle());
+    if (!rb->body && !m_dormantBodies.contains(e.handle())) createBody(e.handle()); // dormant: stays out
     return rb->body;
 }
 
@@ -746,19 +751,30 @@ void Scene::addForce(Entity e, const ForceVec& force) {
 void Scene::addImpulse(Entity e, const ForceVec& impulse) {
     if (auto b = bodyOf(e)) m_physics->addImpulse(b, impulse.toGlm());
 }
+// A dormant body keeps its velocities in the scene: read and set there, applied when it wakes.
 void Scene::setLinearVelocity(Entity e, const SpeedVec& velocity) {
-    if (auto b = bodyOf(e)) m_physics->setLinearVelocity(b, velocity.toGlm());
+    if (auto it = e.valid() ? m_dormantBodies.find(e.handle()) : m_dormantBodies.end(); it != m_dormantBodies.end())
+        it->second.velocity = velocity;
+    else if (auto b = bodyOf(e))
+        m_physics->setLinearVelocity(b, velocity.toGlm());
 }
 void Scene::setAngularVelocity(Entity e, const AngleSpeedVec& velocity) {
-    if (physics::BodyId b = bodyOf(e)) m_physics->setAngularVelocity(b, velocity.toGlm());
+    if (auto it = e.valid() ? m_dormantBodies.find(e.handle()) : m_dormantBodies.end(); it != m_dormantBodies.end())
+        it->second.spin = velocity;
+    else if (physics::BodyId b = bodyOf(e))
+        m_physics->setAngularVelocity(b, velocity.toGlm());
 }
 
 AngleSpeedVec Scene::angularVelocity(Entity e) {
+    if (auto it = e.valid() ? m_dormantBodies.find(e.handle()) : m_dormantBodies.end(); it != m_dormantBodies.end())
+        return it->second.spin;
     physics::BodyId b = bodyOf(e);
     return b ? AngleSpeedVec(m_physics->angularVelocity(b)) : AngleSpeedVec();
 }
 
 SpeedVec Scene::linearVelocity(Entity e) {
+    if (auto it = e.valid() ? m_dormantBodies.find(e.handle()) : m_dormantBodies.end(); it != m_dormantBodies.end())
+        return it->second.velocity;
     auto b = bodyOf(e);
     return b ? SpeedVec(m_physics->linearVelocity(b)) : SpeedVec();
 }

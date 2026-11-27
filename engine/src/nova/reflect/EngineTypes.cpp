@@ -4,6 +4,7 @@
 
 #include "nova/scene/Animation.h"
 #include "nova/scene/AudioComponents.h"
+#include "nova/scene/Chunks.h"
 #include "nova/scene/Components.h"
 
 namespace nova::reflect::detail {
@@ -235,6 +236,9 @@ void registerEngineTypes() {
         .field("speed", &RotatorComponent::speed, {.speed = 1.0f, .tooltip = "Degrees per second"})
         .component();
 
+    type<StreamedComponent>("Streamed")
+        .field("unload", &StreamedComponent::unload, {.tooltip = "Unloaded with the chunk it is in (off: kept loaded)"})
+        .component();
     type<PrefabInstanceComponent>("PrefabInstance")
         .field("asset", &PrefabInstanceComponent::asset, {.readOnly = true, .tooltip = "GUID of the source asset"})
         .component()

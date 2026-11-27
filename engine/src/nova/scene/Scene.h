@@ -8,6 +8,7 @@
 #include "nova/renderer/Renderer.h"
 #include "nova/scene/Animation.h"
 #include "nova/scene/AudioComponents.h"
+#include "nova/scene/Chunks.h"
 #include "nova/scene/Entity.h"
 #include "nova/scene/Script.h"
 
@@ -257,6 +258,29 @@ public:
     void setPhysicsSettings(const PhysicsSettings& settings);
     /// @}
 
+    /// @name Streaming
+    /// A large world loaded and simulated by chunks around the focus (see Chunks.h): the game fills
+    /// chunks (setChunkSource), the scene loads the nearest ones, unloads those left behind and
+    /// keeps what is far from the focus dormant (out of the physics engine, as it was).
+    /// @{
+    /// @brief Turns streaming on or off and sets its grid and rings (off by default).
+    void setChunkStreaming(const ChunkSettings& settings);
+    /// @brief The streaming settings.
+    const ChunkSettings& chunkStreaming() const { return m_chunks; }
+    /// @brief What fills and empties chunks (the game's content).
+    void setChunkSource(ChunkSource source) { m_chunkSource = std::move(source); }
+    /// @brief The chunk a position is in (0 on the axes that are not subdivided).
+    ChunkCoord chunkOf(const GlobalPosition& p) const;
+    /// @brief The chunk the rings are around (it follows the focus with hysteresis).
+    ChunkCoord focusChunk() const;
+    /// @brief Is the chunk loaded?
+    bool isChunkLoaded(const ChunkCoord& c) const;
+    /// @brief Every loaded chunk.
+    std::vector<ChunkCoord> loadedChunks() const;
+    /// @brief Is the entity's body or character dormant (beyond the physics ring)?
+    bool isDormant(Entity e) const;
+    /// @}
+
     /// @name World
     /// The world is circular on every axis: its size per axis (WorldSize, 16 384 m by default) is
     /// where leaving one side enters the other. Positions go around it by themselves (the scene
@@ -355,6 +379,14 @@ public:
 
 private:
     void stepPhysics(Duration dt);
+    // Streaming (SceneChunks.cpp).
+    i64 chunkSteps() const;
+    GlobalPosition chunkCorner(const ChunkCoord& c) const;
+    ChunkCoord chunkDelta(const GlobalPosition& p) const;
+    i64 chunkRing(const GlobalPosition& p) const;
+    void updateFocusChunk(const GlobalPosition& focus);
+    void updateChunks(Duration frame);
+    void updateDormancy();
     GlobalPosition currentFocus();
     void pushPhysicsFocus();
     void createBody(entt::entity e);
@@ -422,6 +454,20 @@ private:
     void recordStepPoses();
     std::optional<GlobalPosition> m_fixedOrigin;
     WorldSize m_worldSize;
+    ChunkSettings m_chunks;
+    ChunkSource m_chunkSource;
+    ChunkCoord m_focusChunk;
+    bool m_hasFocusChunk = false;
+    struct LoadedChunk {
+        Duration outFor; // out of the kept ring for this long
+    };
+    std::map<ChunkCoord, LoadedChunk> m_loadedChunks;
+    struct Dormant {
+        SpeedVec velocity;
+        AngleSpeedVec spin;
+    };
+    std::unordered_map<entt::entity, Dormant> m_dormantBodies;  // out of the physics engine
+    std::set<entt::entity> m_dormantCharacters;
     std::vector<std::pair<entt::entity, WorldWrapHit>> m_wrapHits; // reported after the update
     std::vector<std::pair<Entity, AnimationEventHit>> m_animationHits; // this update's animation events
     void dispatchAnimationEvents();

@@ -50,6 +50,11 @@ target_link_libraries(NovaQuatTests PRIVATE Nova::Engine)
 set_target_properties(NovaQuatTests PROPERTIES FOLDER "Tests")
 add_test(NAME quat COMMAND NovaQuatTests)
 
+add_executable(NovaChunkTests ChunkTests.cpp)
+target_link_libraries(NovaChunkTests PRIVATE Nova::Engine)
+set_target_properties(NovaChunkTests PROPERTIES FOLDER "Tests")
+add_test(NAME chunks COMMAND NovaChunkTests)
+
 add_executable(NovaTimeTests TimeTests.cpp)
 target_link_libraries(NovaTimeTests PRIVATE Nova::Engine)
 set_target_properties(NovaTimeTests PROPERTIES FOLDER "Tests")

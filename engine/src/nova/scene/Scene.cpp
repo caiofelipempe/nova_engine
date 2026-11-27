@@ -98,6 +98,7 @@ void Scene::resetStorage() {
 void Scene::update(Duration frame) {
     activateWorld(); // positions go around this scene's world
     m_time += frame;
+    updateChunks(frame); // the chunks around the focus, loaded before scripts see them
 
     updateTransforms(); // links made since the last update (loaded, set by tools) before scripts move parents
 
