@@ -161,7 +161,7 @@ void registerEngineTypes() {
         .field("type", &JointComponent::type)
         .field("connected", &JointComponent::connected, {.tooltip = "The other body (needs a RigidBody); none = the world"})
         .field("anchor", &JointComponent::anchor, {.speed = 0.01f, .tooltip = "Pivot, in this entity's local space"})
-        .field("axis", &JointComponent::axis, {.speed = 0.01f, .tooltip = "Hinge axis / slider direction (local)"})
+        .field("axis", &JointComponent::axis, {.min = -1.0f, .max = 1.0f, .speed = 0.01f, .tooltip = "Hinge axis / slider direction (local)"})
         .field("connectedAnchor", &JointComponent::connectedAnchor,
                {.speed = 0.01f, .tooltip = "Distance: attachment on the other entity (local), or offset from here to the world point"})
         .field("limitsEnabled", &JointComponent::limitsEnabled, {.label = "Limits"})
@@ -231,7 +231,7 @@ void registerEngineTypes() {
         .field("skin", &SkinComponent::skin, {.tooltip = "The skeleton, by reference (asset:<guid>#<index> for a model's skin)"})
         .component();
     type<RotatorComponent>("Rotator")
-        .field("axis", &RotatorComponent::axis, {.speed = 0.01f})
+        .field("axis", &RotatorComponent::axis, {.min = -1.0f, .max = 1.0f, .speed = 0.01f, .tooltip = "Direction (normalized when used)"})
         .field("speed", &RotatorComponent::speed, {.speed = 1.0f, .tooltip = "Degrees per second"})
         .component();
 

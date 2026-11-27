@@ -47,7 +47,8 @@ i64 scaledSteps(i64 steps, Scale s) {
 i64 unscaledSteps(i64 steps, Scale s) {
     const i64 f = s.raw_value();
     if (f == 0) return steps;
-    if (magnitude(steps) < (u64(1) << 46)) return detail::roundDiv(steps * (i64(1) << kScaleBits), f);
+    // steps · 2^kScaleBits must fit 63 bits (2^43 steps ≈ 33 554 km), with room for the rounding.
+    if (magnitude(steps) < (u64(1) << (62 - kScaleBits))) return detail::roundDiv(steps * (i64(1) << kScaleBits), f);
     return clampToI64(static_cast<f64>(steps) / toDouble(s));
 }
 // A scale divided by another (rounded, saturating; a zero divisor keeps `a`).

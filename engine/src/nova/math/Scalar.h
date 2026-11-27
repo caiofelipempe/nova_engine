@@ -121,12 +121,15 @@ inline f64 fromRawValue(i64 raw, unsigned fraction) { return std::ldexp(static_c
 /// back to float only explicitly (toFloat()).
 ///
 /// `Tag` makes a dimension its own type (void: a plain format, `Q<I, F>`). The 8, 16 and 32-bit
-/// formats are an `fpm::fixed` (all of fpm works on them: `fpm::sqrt`...; its results come back
-/// explicitly, `Length(fpm::sqrt(x))`).
+/// formats are an `fpm::fixed` underneath (fpm works on their `base()`: `fpm::sqrt(x.base())`; its
+/// results come back explicitly, `Length(fpm::sqrt(x.base()))`).
 template <typename Int, unsigned F, typename Tag = void>
-class Fixed : public fpm::fixed<Int, typename detail::WiderInt<Int>::type, F> {
+class Fixed : protected fpm::fixed<Int, typename detail::WiderInt<Int>::type, F> {
+    // Protected: fpm's own operators take any fpm::fixed, so two dimensions of the same format
+    // (Unit and Restitution) would add through them. fpm functions get base() explicitly.
 public:
     using Base = fpm::fixed<Int, typename detail::WiderInt<Int>::type, F>; ///< The fpm type.
+    using Base::raw_value;
     using Storage = Int;                                                    ///< The raw integer.
     using Dimension = Tag;                                                  ///< What it measures.
     static constexpr unsigned kFraction = F;                                ///< Fraction bits.
@@ -141,12 +144,17 @@ public:
 
     /// @brief A value from its raw integer.
     static constexpr Fixed from_raw_value(Int raw) noexcept { return Fixed(Base::from_raw_value(raw)); }
+    /// @brief The fpm value (for fpm's functions: `Length(fpm::sqrt(x.base()))`).
+    constexpr Base base() const noexcept { return static_cast<const Base&>(*this); }
+    /// @brief The value as a number (explicit: `static_cast<double>(x)`).
+    template <typename T, std::enable_if_t<std::is_arithmetic_v<T>, int> = 0>
+    constexpr explicit operator T() const noexcept { return static_cast<T>(base()); }
 
-    friend constexpr Fixed operator-(Fixed a) noexcept { return Fixed(-Base(a)); }
-    friend constexpr Fixed operator+(Fixed a, Fixed b) noexcept { return Fixed(Base(a) + Base(b)); }
-    friend constexpr Fixed operator-(Fixed a, Fixed b) noexcept { return Fixed(Base(a) - Base(b)); }
-    friend constexpr Fixed operator*(Fixed a, Fixed b) noexcept { return Fixed(Base(a) * Base(b)); }
-    friend constexpr Fixed operator/(Fixed a, Fixed b) noexcept { return Fixed(Base(a) / Base(b)); }
+    friend constexpr Fixed operator-(Fixed a) noexcept { return Fixed(-a.base()); }
+    friend constexpr Fixed operator+(Fixed a, Fixed b) noexcept { return Fixed(a.base() + b.base()); }
+    friend constexpr Fixed operator-(Fixed a, Fixed b) noexcept { return Fixed(a.base() - b.base()); }
+    friend constexpr Fixed operator*(Fixed a, Fixed b) noexcept { return Fixed(a.base() * b.base()); }
+    friend constexpr Fixed operator/(Fixed a, Fixed b) noexcept { return Fixed(a.base() / b.base()); }
     friend constexpr bool operator==(Fixed a, Fixed b) noexcept { return a.raw_value() == b.raw_value(); }
     friend constexpr bool operator<(Fixed a, Fixed b) noexcept { return a.raw_value() < b.raw_value(); }
     friend constexpr bool operator>(Fixed a, Fixed b) noexcept { return a.raw_value() > b.raw_value(); }
@@ -209,6 +217,11 @@ public:
     /// @brief Integer multiple (exact).
     friend constexpr Fixed operator*(Fixed a, i64 n) noexcept { return from_raw_value(a.m_raw * n); }
     friend constexpr Fixed operator*(i64 n, Fixed a) noexcept { return from_raw_value(a.m_raw * n); }
+    /// @brief No fractional multiples: the fraction would be dropped (convert to 32 bits first).
+    template <typename T, std::enable_if_t<std::is_floating_point_v<T>, int> = 0>
+    friend Fixed operator*(Fixed, T) = delete;
+    template <typename T, std::enable_if_t<std::is_floating_point_v<T>, int> = 0>
+    friend Fixed operator*(T, Fixed) = delete;
     friend constexpr bool operator==(Fixed a, Fixed b) noexcept { return a.m_raw == b.m_raw; }
     friend constexpr bool operator<(Fixed a, Fixed b) noexcept { return a.m_raw < b.m_raw; }
     friend constexpr bool operator>(Fixed a, Fixed b) noexcept { return a.m_raw > b.m_raw; }
@@ -409,6 +422,11 @@ public:
     /// @brief Integer multiple (wraps).
     friend constexpr Angle operator*(Angle a, i32 n) noexcept { return fromRaw(a.m_raw * static_cast<u32>(n)); }
     friend constexpr Angle operator*(i32 n, Angle a) noexcept { return a * n; }
+    /// @brief No fractional multiples: the fraction would be dropped (use scaled(), e.g. with a Unit).
+    template <typename T, std::enable_if_t<std::is_floating_point_v<T>, int> = 0>
+    friend Angle operator*(Angle, T) = delete;
+    template <typename T, std::enable_if_t<std::is_floating_point_v<T>, int> = 0>
+    friend Angle operator*(T, Angle) = delete;
     Angle& operator+=(Angle o) noexcept { return *this = *this + o; }
     Angle& operator-=(Angle o) noexcept { return *this = *this - o; }
 
@@ -569,9 +587,11 @@ constexpr AngleSpeed zero<AngleSpeed>() { return AngleSpeed(); }
 /// rotator.speed = 0.5_turnps;
 /// @endcode
 inline namespace literals {
+// `operator"" suffix` with a space: `""suffix` would be a single token, and the macro parameter would
+// not be replaced in it.
 #define NOVA_FIXED_LITERAL(suffix, Type, expr)                                                                        \
-    inline Type operator""suffix(long double v) { const f64 x = static_cast<f64>(v); return expr; }                   \
-    inline Type operator""suffix(unsigned long long v) { const f64 x = static_cast<f64>(v); return expr; }
+    inline Type operator"" suffix(long double v) { const f64 x = static_cast<f64>(v); return expr; }                  \
+    inline Type operator"" suffix(unsigned long long v) { const f64 x = static_cast<f64>(v); return expr; }
 NOVA_FIXED_LITERAL(_m, Length, Length(x))                         ///< Meters.
 NOVA_FIXED_LITERAL(_cm, Length, Length(x * 0.01))                 ///< Centimeters.
 NOVA_FIXED_LITERAL(_mm, Length, Length(x * 0.001))                ///< Millimeters.

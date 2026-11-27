@@ -308,9 +308,20 @@ void readFixedValue(const reflect::FieldInfo& f, void* p, const Json& j, int i =
         reflect::setFixedValue(f, p, j.get<f64>(), i);
 }
 
-// Numbers → the nearest fixed-point values (exact for what writeFixed wrote).
+// Numbers → the nearest fixed-point values (exact for what writeFixed wrote). A direction (UnitVec)
+// longer than its format holds (|c| ≥ 2, e.g. an axis of [1, 3, 0] in an older file) is normalized
+// first: it keeps its direction instead of being cut per axis.
 void readFixedVec(const reflect::FieldInfo& f, void* p, const Json& j) {
     if (!j.is_array()) return;
+    if (f.type == std::type_index(typeid(UnitVec)) && j.size() == 3 && j[0].is_number() && j[1].is_number() && j[2].is_number()) {
+        glm::dvec3 v(j[0].get<f64>(), j[1].get<f64>(), j[2].get<f64>());
+        const f64 len = glm::length(v);
+        if (std::abs(v.x) >= 2.0 || std::abs(v.y) >= 2.0 || std::abs(v.z) >= 2.0) {
+            v /= len;
+            for (int i = 0; i < 3; ++i) reflect::setFixedValue(f, p, v[i], i);
+            return;
+        }
+    }
     for (int i = 0; i < 3 && i < static_cast<int>(j.size()); ++i) readFixedValue(f, p, j[i], i);
 }
 

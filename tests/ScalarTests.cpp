@@ -15,6 +15,12 @@ using namespace nova;
 
 using Scalar = Q<15, 16>; // a plain format (no dimension), for the tests
 
+// What compiles and what does not, as concepts (a requires-expression outside a template is an error).
+template <typename A, typename B>
+concept Addable = requires(A a, B b) { a + b; };
+template <typename A, typename B>
+concept Multipliable = requires(A a, B b) { a * b; };
+
 namespace {
 
 int g_failures = 0;
@@ -119,6 +125,9 @@ void vectors() {
     CHECK_NEAR(toDouble(n.x), 3.0 / 13.0, 1e-9);
     CHECK_NEAR(toDouble(n.z), 12.0 / 13.0, 1e-9);
     CHECK(LengthVec{}.normalized() == UnitVec{});
+    // Longer than the format of the length: it saturates, never wraps to a negative length.
+    CHECK(SpeedVec(16000.0, 16000.0, 0.0).length() == fromRaw<Distance>(std::numeric_limits<i32>::max()));
+    CHECK(SpeedVec(16000.0, 16000.0, 0.0).length<Speed>() == fromRaw<Speed>(std::numeric_limits<i32>::max()));
     CHECK(dot<Length>(v, n) == toFixed<Length>(13.0) || std::abs(toDouble(dot<Length>(v, n)) - 13.0) < 1e-5);
     const LengthVec x = LengthVec::fromGlm(glm::dvec3(1, 0, 0)), y = LengthVec::fromGlm(glm::dvec3(0, 1, 0));
     CHECK(cross<Length>(x, y) == LengthVec::fromGlm(glm::dvec3(0, 0, 1)));
@@ -212,6 +221,8 @@ void sizes() {
     CHECK(convert<GlobalLength>(Length(-7.5)) == GlobalLength(-7.5));
     const GlobalLengthVec v = GlobalLengthVec(1e9, -2e9, 3.0);
     CHECK(v - v == GlobalLengthVec() && v.toDouble() == glm::dvec3(1e9, -2e9, 3.0));
+    // Fractional multiples of 64-bit values do not compile (the fraction would be dropped).
+    static_assert(!Multipliable<GlobalLength, f64> && !Multipliable<f64, GlobalLength> && Multipliable<GlobalLength, int>);
     CHECK(fromRaw<GlobalLength>(std::numeric_limits<i64>::max()) > GlobalLength(3.5e13) && GlobalLength(1e14) == fromRaw<GlobalLength>(std::numeric_limits<i64>::max()));
 }
 
@@ -246,6 +257,9 @@ void dimensions() {
     CHECK(std::abs(toDouble(Acceleration(9.81)) - 9.81) < 1e-6);
     CHECK(std::abs(toDouble(Mass(0.01)) - 0.01) / 0.01 < 0.007);
     CHECK(std::abs(toDouble(Friction(0.5)) - 0.5) < 1e-9 && std::abs(toDouble(Restitution(0.1)) - 0.1) < 1e-9);
+    // Not even through fpm's own operators (its base is protected).
+    static_assert(!Addable<Unit, Restitution> && !Addable<Restitution, Unit> && !Multipliable<Length, Distance>);
+    static_assert(Addable<Unit, Unit> && Multipliable<Unit, int> && std::is_constructible_v<double, Unit>);
 }
 
 // Unit literals: the nearest value of each dimension.
@@ -270,6 +284,7 @@ void angles() {
     CHECK(Angle::fromDegrees(-45) < Angle::fromDegrees(10) && Angle::fromDegrees(200) < Angle::fromDegrees(0)); // signed
     CHECK(-Angle::fromDegrees(30) == Angle::fromDegrees(330) && Angle::fromDegrees(100) * 4 == Angle::fromDegrees(40));
     CHECK(Angle::fromDegrees(90).scaled(Scalar(0.5)) == Angle::fromDegrees(45));
+    static_assert(!Multipliable<Angle, f64> && !Multipliable<f32, Angle> && Multipliable<Angle, int>); // use scaled()
     CHECK(Angle::fromTurns(std::nan("")) == Angle());
     // Compact angles: 16 bits, exact back for multiples of their step.
     CHECK(Angle16(Angle::fromDegrees(90)).toAngle() == Angle::quarter());
@@ -304,8 +319,8 @@ void numbers() {
     CHECK(toDouble(l) == -45.0);
     CHECK(Scalar(1e9).raw_value() == INT32_MAX && Scalar(-1e9).raw_value() == INT32_MIN); // saturates
     CHECK(Scalar(std::nan("")).raw_value() == 0);
-    // fpm functions still work on it, and their results come back as Fixed.
-    const Scalar r(fpm::sqrt(Scalar(9)));
+    // fpm functions work on its base(), and their results come back as Fixed explicitly.
+    const Scalar r(fpm::sqrt(Scalar(9).base()));
     CHECK(std::abs(toDouble(r) - 3.0) < 1e-4);
     // Formats never mix implicitly; floats only leave explicitly.
     static_assert(!std::is_convertible_v<Scalar, Length>);

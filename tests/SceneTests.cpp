@@ -596,6 +596,14 @@ void hierarchyFixedPoint() {
     small.transform().scale = {1, 1, 1};
     scene.updateTransforms();
     CHECK(near(far.transform().position, {unscaled, 0, 0}, 1e-4));
+    // A far offset from a minuscule scale (between 2⁴³ and 2⁴⁶ steps): no overflow, the right sign.
+    Entity speck = scene.createEntity("Speck");
+    speck.transform().scale = {1e-6, 1e-6, 1e-6};
+    Entity child100 = scene.createEntity("Child100");
+    child100.transform().position = {100, 0, 0};
+    child100.setParent(speck);
+    const f64 farLocal = 100.0 / toDouble(Scale(1e-6)); // ≈ 1.05·10⁸ m ≈ 2.7·10¹³ steps
+    CHECK(std::abs(toDouble(scene.localTransform(child100).position.x) - farLocal) / farLocal < 1e-9);
     // A zero scale: the child sits on the parent, and returns when the scale does.
     small.transform().scale = {0.001, 0.001, 0.001};
     scene.updateTransforms();

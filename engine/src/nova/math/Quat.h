@@ -99,19 +99,17 @@ struct QuatT {
 
     /// @name Building rotations
     /// @{
-    /// @brief Rotation of `angle` around unit `axis`.
-    static QuatT fromAxisAngle(const UnitVec& axis, Angle angle) {
+    /// @brief Rotation of `angle` around `axis`, of any length and format (normalized here: an axis
+    ///        that is not unit length turns by `angle` all the same; zero axis: identity).
+    template <typename A>
+    static QuatT fromAxisAngle(const Vec3<A>& axis, Angle angle) {
+        const UnitVec n = axis.normalized(); // already unit: the same bits back, to a step
+        if (n == UnitVec()) return identity();
         // Half of the signed reading: q and −q are the same rotation, so the half turn is unambiguous.
         const Angle half = Angle::fromRaw(static_cast<u32>(angle.signedRaw() >> 1));
         Unit s, c;
         sinCos(half, s, c);
-        return fromComponents(convert<T>(c), mul<T>(axis.x, s), mul<T>(axis.y, s), mul<T>(axis.z, s)).normalized();
-    }
-    /// @brief Rotation of `angle` around an axis of any length and format (zero axis: identity).
-    template <typename A>
-    static QuatT fromAxisAngle(const Vec3<A>& axis, Angle angle) {
-        if (axis == Vec3<A>()) return identity();
-        return fromAxisAngle(axis.normalized(), angle);
+        return fromComponents(convert<T>(c), mul<T>(n.x, s), mul<T>(n.y, s), mul<T>(n.z, s)).normalized();
     }
     /// @brief Rotation of `angle` around the X axis.
     static QuatT aroundX(Angle angle) { return fromAxisAngle(UnitVec(1.0, 0.0, 0.0), angle); }
@@ -237,7 +235,6 @@ struct IsQuat<QuatT<T>> : std::true_type {};
 /// @brief 4D dot product of two quaternions (cosine of half the angle between them), in `Unit`.
 template <typename Q, std::enable_if_t<IsQuat<Q>::value, int> = 0>
 constexpr Unit dot(const Q& a, const Q& b) {
-    using T = typename Q::Component;
     const i64 p = static_cast<i64>(a.w.raw_value()) * b.w.raw_value() + static_cast<i64>(a.x.raw_value()) * b.x.raw_value() +
                   static_cast<i64>(a.y.raw_value()) * b.y.raw_value() + static_cast<i64>(a.z.raw_value()) * b.z.raw_value();
     constexpr int shift = 2 * Q::kF - int(fractionBits<Unit>);

@@ -56,6 +56,14 @@ void axisAngle() {
     // Any axis length and format.
     CHECK(sameRotation(Quat::fromAxisAngle(ScaleVec(0.0, 3.0, 0.0), Angle::fromDegrees(30)), Quat::aroundY(Angle::fromDegrees(30))));
     CHECK(Quat::fromAxisAngle(ScaleVec(), Angle::fromDegrees(30)) == Quat::identity());
+    // A UnitVec that is not unit length turns by the angle all the same (it is normalized).
+    const UnitVec tilted(0.4, 1.0, 0.2);
+    CHECK(degreesBetween(Quat::fromAxisAngle(tilted, Angle::fromDegrees(90)), Quat::identity()) - 90.0 < 1e-6 &&
+          90.0 - degreesBetween(Quat::fromAxisAngle(tilted, Angle::fromDegrees(90)), Quat::identity()) < 1e-6);
+    CHECK(sameRotation(Quat::fromAxisAngle(tilted, Angle::fromDegrees(90)), Quat::fromAxisAngle(tilted.normalized(), Angle::fromDegrees(90))));
+    TransformComponent spun;
+    spun.rotate(Angle::fromDegrees(90), tilted);
+    CHECK(std::abs(degreesBetween(spun.rotation, Quat::identity()) - 90.0) < 1e-6);
     // Half a turn and its wrap: 270° is −90° around the same axis.
     CHECK(sameRotation(Quat::aroundY(Angle::fromDegrees(270)), Quat::aroundY(Angle::fromDegrees(-90))));
     CHECK(glm::length(Quat::aroundY(Angle::half()).rotate(UnitVec(1.0, 0.0, 0.0)).toDouble() - glm::dvec3(-1, 0, 0)) < 1e-8);
@@ -200,11 +208,13 @@ void sceneFiles() {
     Scene v1;
     const char* v1File = R"({"format": "nova.scene", "version": 1, "entities": [
         {"components": {"Name": {"name": "Cam"}, "Camera": {"fovY": 1.0471975511965976}}},
-        {"components": {"Name": {"name": "Spin"}, "Rotator": {"axis": [0, 1, 0], "speed": 3.141592653589793}}},
+        {"components": {"Name": {"name": "Spin"}, "Rotator": {"axis": [1, 3, 0], "speed": 3.141592653589793}}},
         {"components": {"Name": {"name": "Door"}, "Joint": {"type": "Hinge", "limitMin": -30, "limitMax": 60, "motorTarget": 90}}}]})";
     CHECK(deserializeScene(v1, v1File));
     CHECK(v1.findEntity("Cam").get<CameraComponent>().fovY == Angle::fromDegrees(60));
     CHECK(v1.findEntity("Spin").get<RotatorComponent>().speed == AngleSpeed::fromTurnsPerSecond(0.5));
+    // An axis longer than a UnitVec holds keeps its direction (normalized), not cut per axis.
+    CHECK(glm::length(v1.findEntity("Spin").get<RotatorComponent>().axis.toDouble() - glm::normalize(glm::dvec3(1, 3, 0))) < 1e-8);
     const JointComponent& door = v1.findEntity("Door").get<JointComponent>();
     CHECK(door.angleMin == Angle::fromDegrees(-30) && door.angleMax == Angle::fromDegrees(60));
     CHECK(door.motorSpeed == AngleSpeed::fromDegreesPerSecond(90) && door.motorAngle == Angle::fromDegrees(90));

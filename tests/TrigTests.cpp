@@ -36,6 +36,8 @@ void quarterTurns() {
     CHECK(std::abs(toDouble(sin(Angle::fromDegrees(30))) - 0.5) < 1e-9);
     CHECK(std::abs(toDouble(cos(Angle::fromDegrees(60))) - 0.5) < 1e-9);
     CHECK(std::abs(tan(Angle::fromDegrees(45)) - 1.0f) < 1e-6f); // a float
+    CHECK(std::isinf(tan(Angle::quarter())) && tan(Angle::quarter()) > 0.0f); // +inf, not −inf
+    CHECK(std::isinf(tan(Angle::fromDegrees(-90))) && tan(Angle::fromDegrees(-90)) < 0.0f);
     Unit s, c;
     sinCos(Angle::fromDegrees(45), s, c);
     CHECK(s == c && std::abs(toDouble(s) - std::sqrt(0.5)) < 1e-9);

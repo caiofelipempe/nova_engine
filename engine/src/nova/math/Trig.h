@@ -30,7 +30,7 @@ inline void sinCosD(Angle a, f64& s, f64& c) {
     const f64 sr = std::sin(r), cr = std::cos(r);
     switch (quadrant) {
         case 0: s = sr, c = cr; break;
-        case 1: s = cr, c = -sr; break;
+        case 1: s = cr, c = 0.0 - sr; break; // 0 − 0 is +0: tan(90°) is +inf, not −inf
         case 2: s = -sr, c = -cr; break;
         default: s = -cr, c = sr; break;
     }
@@ -90,7 +90,7 @@ inline Angle atan2(Y y, X x) {
 template <typename T, std::enable_if_t<isFixed<T> && (storageBits<T> <= 32), int> = 0>
 inline T sqrt(T v) {
     if (v.raw_value() <= 0) return zero<T>();
-    return T(fpm::sqrt(typename T::Base(v)));
+    return T(fpm::sqrt(v.base()));
 }
 
 } // namespace nova

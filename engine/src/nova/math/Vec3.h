@@ -8,6 +8,8 @@
 
 #include <glm/glm.hpp>
 
+#include <limits>
+
 namespace nova {
 
 /// @brief A 3D vector of Fixed values (glm only accepts IEEE types), or of Angles (Euler angles).
@@ -66,12 +68,14 @@ struct Vec3 {
         return sq(x) + sq(y) + sq(z); // each ≤ 2^62: the sum fits in 64 bits
     }
     /// @brief Length in format `R` (default Distance), rounded down to this format's step (exact
-    ///        integer square root).
+    ///        integer square root; saturates at the largest value of `R`).
     template <typename R = Distance>
     constexpr R length() const {
-        const u64 rootRaw = isqrt(lengthSquaredRaw()); // in this format's fraction
+        const u64 rootRaw = isqrt(lengthSquaredRaw()); // in this format's fraction, < 2³²
         constexpr int shift = int(fractionBits<T>) - int(fractionBits<R>);
-        return R::from_raw_value(static_cast<StorageOf<R>>(detail::roundShift<shift>(static_cast<i64>(rootRaw))));
+        constexpr i64 maxRaw = static_cast<i64>(std::numeric_limits<StorageOf<R>>::max());
+        const i64 r = detail::roundShift<shift>(static_cast<i64>(rootRaw));
+        return R::from_raw_value(static_cast<StorageOf<R>>(r > maxRaw ? maxRaw : r));
     }
     /// @brief Exact: is the vector shorter than `r`?
     constexpr bool isShorterThan(T r) const {

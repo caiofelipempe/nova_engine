@@ -58,11 +58,11 @@ const char* fixedFormat(const reflect::FieldInfo& f) {
     return formats[decimals < 0 ? 0 : decimals > 6 ? 6 : decimals];
 }
 
-// An angle shown in [0°, 360°) when its range is not negative (a hinge's upper limit of 180°
-// reads 180, not −180), in [−180°, 180°) otherwise.
+// An angle shown in [0°, 360°) when its range is bounded and not negative (a hinge's upper limit
+// of 180° reads 180, not −180), in [−180°, 180°) otherwise (an unbounded −30° reads −30).
 f64 shownFixedValue(const reflect::FieldInfo& f, const void* p, int i = 0) {
     f64 v = reflect::fixedValue(f, p, i);
-    if (f.kind == reflect::FieldKind::Angle && f.attrs.min >= 0.0f && v < 0.0) v += 360.0;
+    if (f.kind == reflect::FieldKind::Angle && bounded(f.attrs) && f.attrs.min >= 0.0f && v < 0.0) v += 360.0;
     return v;
 }
 
@@ -87,8 +87,9 @@ bool fixedVecField(const reflect::FieldInfo& f, void* p) {
     f64 v[3], before[3];
     for (int i = 0; i < 3; ++i) before[i] = v[i] = shownFixedValue(f, p, i);
     const auto& a = f.attrs;
-    const bool changed = ImGui::DragScalarN(f.label.c_str(), ImGuiDataType_Double, v, 3, dragSpeed(a, 0.05f), nullptr,
-                                            nullptr, fixedFormat(f));
+    const f64 lo = a.min, hi = a.max; // bounds of each component (directions: −1..1)
+    const bool changed = ImGui::DragScalarN(f.label.c_str(), ImGuiDataType_Double, v, 3, dragSpeed(a, 0.05f),
+                                            bounded(a) ? &lo : nullptr, bounded(a) ? &hi : nullptr, fixedFormat(f));
     if (!changed) return false;
     for (int i = 0; i < 3; ++i)
         if (v[i] != before[i]) reflect::setFixedValue(f, p, v[i], i);
