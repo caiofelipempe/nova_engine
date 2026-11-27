@@ -617,6 +617,87 @@ void crossPlatformDeterminism() {
     CHECK(h == kReferenceHash);
 }
 
+// The systems around the bodies, with their own reference: a spinning, scaled parent (Rotator)
+// carrying children, one of them a kinematic paddle pushing dynamic boxes; a hinge driven by a
+// velocity motor and a slider by a position motor. Hierarchy offsets, binary angles, angular speeds
+// and joint motors all reach the state hash (every transform, every body velocity).
+constexpr u64 kSystemsReferenceHash = 0x7fc32082719ec386ull; // Windows x64, MSVC, Debug and Release
+
+u64 systemsReferenceRun() {
+    Scene s("systems");
+    auto add = [&](const char* name, u64 uuid) {
+        Entity e = s.createEntity(name);
+        e.get<IdComponent>().uuid = uuid;
+        return e;
+    };
+    Entity ground = add("Ground", 1);
+    ground.transform().position = {0.0, -0.5, 0.0};
+    ground.transform().scale = {40, 1, 40};
+    ground.add<RigidBodyComponent>(BodyType::Static);
+
+    // A turning, scaled hub with children: the paddle is kinematic (follows the hub, pushes boxes).
+    Entity hub = add("Hub", 10);
+    hub.transform().position = {0.0, 0.5, 0.0};
+    hub.transform().scale = {1.5, 1.0, 1.5};
+    hub.add<RotatorComponent>(UnitVec(0.0, 1.0, 0.0), AngleSpeed::fromDegreesPerSecond(90));
+    Entity paddle = add("Paddle", 11);
+    paddle.transform().position = {1.5, 0.5, 0.0};
+    paddle.transform().scale = {1.0, 0.5, 0.2};
+    paddle.setParent(hub);
+    paddle.add<RigidBodyComponent>(BodyType::Kinematic);
+    Entity tip = add("Tip", 12);
+    tip.transform().position = {2.6, 0.6, 0.1};
+    tip.transform().setEulerDegrees({0, 30, 10});
+    tip.setParent(paddle);
+    for (int i = 0; i < 6; ++i) {
+        Entity box = add("Box", 100 + static_cast<u64>(i));
+        box.transform().position = {1.2 + 0.4 * i, 0.3, -1.0 + 0.35 * i};
+        box.transform().scale = {0.5, 0.5, 0.5};
+        box.add<RigidBodyComponent>().friction = 0.3f + 0.05f * static_cast<f32>(i);
+    }
+
+    // A hinge with a velocity motor and a slider with a position motor (both to the world).
+    Entity wheel = add("Wheel", 20);
+    wheel.transform().position = {-4.0, 2.0, 0.0};
+    wheel.transform().scale = {1.0, 1.0, 0.2};
+    wheel.add<RigidBodyComponent>().gravityFactor = 0;
+    auto& hinge = wheel.add<JointComponent>();
+    hinge.type = JointType::Hinge;
+    hinge.axis = {0, 0, 1};
+    hinge.motorMode = JointMotorMode::Velocity;
+    hinge.motorSpeed = AngleSpeed::fromDegreesPerSecond(120);
+    Entity cart = add("Cart", 21);
+    cart.transform().position = {0.0, 2.0, 4.0};
+    cart.add<RigidBodyComponent>().gravityFactor = 0;
+    auto& slider = cart.add<JointComponent>();
+    slider.type = JointType::Slider;
+    slider.axis = {1, 0, 0};
+    slider.limitsEnabled = true;
+    slider.limitMin = -2.0f;
+    slider.limitMax = 2.0f;
+    slider.motorMode = JointMotorMode::Position;
+    slider.motorPosition = 1.5f;
+
+    s.startSimulation();
+    for (int i = 0; i < 180; ++i) s.update(Duration::perSecond(60));
+    // It does what it says: 3 s at 90°/s is 270° (180 turns of a frame, each rounded once); the
+    // paddle keeps its offset, (1.5, 0, 0) turned to (0, 0, 1.5); the wheel turns at its
+    // motor's speed; the cart reached its target.
+    const f64 hubError = static_cast<f64>(angleBetween(hub.transform().rotation, Quat::aroundY(Angle::fromDegrees(270))).raw());
+    CHECK(hubError < 4096.0); // < 6·10⁻⁶ rad
+    CHECK(isWithin(paddle.transform().position, hub.transform().position + glm::vec3(0.0f, 0.0f, 1.5f), 1e-4));
+    CHECK_NEAR(s.physics()->angularVelocity(wheel.get<RigidBodyComponent>().body).z, glm::radians(120.0f), 0.05f);
+    CHECK_NEAR(cart.transform().position.toMeters().x, 1.5, 0.05);
+    return s.stateHash();
+}
+
+void systemsDeterminism() {
+    const u64 h = systemsReferenceRun();
+    std::printf("  systems reference hash: 0x%016llx\n", static_cast<unsigned long long>(h));
+    CHECK(systemsReferenceRun() == h); // the same run, the same bits
+    CHECK(h == kSystemsReferenceHash);
+}
+
 // ------------------------------------------------------------- more shapes --
 // Meshes the scene's colliders read (as Renderer::meshData would provide).
 struct TestMeshes {
@@ -881,6 +962,7 @@ int main() {
         {"wrap seam: neighbours across it collide", wrapSeam},
         {"determinism: two runs agree bit for bit", determinism},
         {"determinism: the reference hash (every build, every platform)", crossPlatformDeterminism},
+        {"determinism: hierarchy, rotator and joint motors (reference hash)", systemsDeterminism},
         {"global contract: a native integer backend plugs in directly", nativeIntegerBackend},
         {"adapter: invalid shapes refused, sweptPoint on the region origin", adapterRegressions},
         {"shapes: cylinder, convex hull, triangle mesh", moreShapes},

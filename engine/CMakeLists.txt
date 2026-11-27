@@ -71,6 +71,16 @@ else()
     target_compile_options(NovaEngine PUBLIC -Wall -Wextra -Wno-unused-parameter)
 endif()
 
+# Floating point that gives the same bits everywhere: what is left in double (animation mixes,
+# slerp weights, Euler angles, offsets beyond 8 km) must not be fused into FMA instructions or
+# reordered, or another compiler or CPU rounds differently. MSVC: /fp:precise does not contract
+# (contraction needs /fp:contract); GCC and Clang contract by default, so it is turned off.
+if(MSVC)
+    target_compile_options(NovaEngine PUBLIC /fp:precise)
+else()
+    target_compile_options(NovaEngine PUBLIC -ffp-contract=off -fno-fast-math)
+endif()
+
 # ---------------------------------------------------------------- backends --
 if(NOVA_RHI_VULKAN)
     file(GLOB NOVA_VK_SOURCES CONFIGURE_DEPENDS ${SRC}/rhi/vulkan/*.cpp ${SRC}/rhi/vulkan/*.h)

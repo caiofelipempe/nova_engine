@@ -614,3 +614,17 @@ Câmera (`fovY` em `Angle`, distâncias em `Length`/`Distance`), luzes (raio em 
 `GlobalLengthVec` Q45.18, que cabe qualquer offset, rotação `Quat`, escala `ScaleVec`; só o giro de
 offsets acima de 8 km passa por `double`). As cenas estão na versão 2 (ângulos em graus, velocidades
 angulares em graus/s); as de versão 1 são migradas na leitura. A animação continua em `double`.
+
+### Determinismo do que ficou em `double`
+O que ainda passa por `double` (mistura da animação, pesos do slerp, ângulos de Euler, offsets de mais
+de 8 km) é IEEE: soma, multiplicação, divisão e raiz dão os mesmos bits em qualquer lugar, desde que o
+compilador não funda operações (FMA) nem as reordene. A engine exige isso: `/fp:precise` no MSVC (que
+não contrai sem `/fp:contract`) e `-ffp-contract=off -fno-fast-math` no GCC e no Clang, como opções
+públicas de `NovaEngine`. A trigonometria (`Trig.h`) é a exceção que resta: vem da biblioteca padrão.
+
+O teste `physics` confere dois hashes de estado de referência, iguais em Debug e Release:
+- corpos soltos caindo e se empilhando;
+- os sistemas em volta deles: um pai que gira (Rotator) e tem escala, com filhos (um deles kinematic,
+  empurrando caixas), uma hinge com motor de velocidade e um slider com motor de posição. Antes de
+  comparar o hash, o teste confere que a cena faz o que deve (o pai a 270°, o filho no offset, a roda
+  na velocidade do motor, o carrinho no alvo).
