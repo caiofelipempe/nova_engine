@@ -341,9 +341,9 @@ private:
         m_camera.transform().position = keep ? eye : view.eye;
         if (keep) m_camera.transform().setRotation(look);
         else m_camera.transform().lookAt(view.target);
-        const glm::vec3 e = m_camera.transform().euler(nova::EulerOrder::YXZ);
-        m_pitch = e.x;
-        m_yaw = e.y;
+        const nova::EulerAngles e = m_camera.transform().euler(nova::EulerOrder::YXZ);
+        m_pitch = e.x.radiansF();
+        m_yaw = e.y.radiansF();
         if (!keep) m_orbitYaw = 0.0f, m_orbitPitch = -0.35f;
         if (simulating) scene().startSimulation();
     }

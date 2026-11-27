@@ -426,126 +426,6 @@ void cameraRelativeRendering() {
     CHECK(dd.lineCount() == 1 && near(dd.vertices(false)[1].position.x, 0.0005, 1e-6));
 }
 
-bool sameRotation(const glm::quat& a, const glm::quat& b, f32 eps = 1e-5f) {
-    return std::abs(std::abs(glm::dot(a, b)) - 1.0f) <= eps; // q and −q are the same rotation
-}
-
-void rotations() {
-    const EulerOrder orders[] = {EulerOrder::XYZ, EulerOrder::XZY, EulerOrder::YXZ,
-                                 EulerOrder::YZX, EulerOrder::ZXY, EulerOrder::ZYX};
-    std::mt19937 rng(7);
-    std::uniform_real_distribution<f32> any(-3.0f, 3.0f), middle(-1.4f, 1.4f);
-    bool roundTrip = true, anglesBack = true;
-    for (EulerOrder order : orders)
-        for (int i = 0; i < 200; ++i) {
-            // Angles in the canonical range: the middle rotation of the order within ±80°.
-            glm::vec3 e(any(rng), any(rng), any(rng));
-            const char* name = eulerOrderName(order);
-            e[name[1] - 'X'] = middle(rng);
-            const glm::quat q = quatFromEuler(e, order);
-            const glm::vec3 back = eulerFromQuat(q, order);
-            roundTrip &= sameRotation(quatFromEuler(back, order), q);
-            anglesBack &= glm::length(back - e) < 1e-3f;
-        }
-    CHECK(roundTrip && anglesBack);
-
-    // The old convention (glm::quat(vec3), used by older scene files) is ZYX.
-    bool legacy = true;
-    for (int i = 0; i < 100; ++i) {
-        const glm::vec3 e(any(rng), any(rng), any(rng));
-        legacy &= sameRotation(quatFromEuler(e, EulerOrder::ZYX), glm::quat(e));
-    }
-    CHECK(legacy);
-
-    // Known values: 90° yaw turns forward (−Z) to −X; the order matters once two axes are involved.
-    const glm::quat yaw90 = quatFromEulerDegrees({0, 90, 0});
-    CHECK(glm::length(yaw90 * glm::vec3(0, 0, -1) - glm::vec3(-1, 0, 0)) < 1e-5f);
-    CHECK(!sameRotation(quatFromEulerDegrees({30, 60, 0}, EulerOrder::XYZ), quatFromEulerDegrees({30, 60, 0}, EulerOrder::YXZ)));
-    // Yaw then pitch (YXZ): pitch is around the camera's own right axis, so forward keeps its heading.
-    const glm::vec3 f = quatFromEulerDegrees({-30, 90, 0}) * glm::vec3(0, 0, -1);
-    CHECK(f.x < -0.8f && f.y < -0.4f && std::abs(f.z) < 1e-5f);
-
-    // Gimbal lock: pitch ±90° in YXZ; the angles still rebuild the same rotation.
-    const glm::quat locked = quatFromEulerDegrees({90, 40, 25});
-    const glm::vec3 lockedBack = eulerDegreesFromQuat(locked);
-    CHECK(std::abs(lockedBack.x - 90.0f) < 1e-2f && lockedBack.z == 0.0f);
-    CHECK(sameRotation(quatFromEulerDegrees(lockedBack), locked, 1e-4f));
-
-    // TransformComponent: stored as a quaternion, viewed and set as Euler in any order.
-    TransformComponent t;
-    t.setEulerDegrees({10, 20, 30}, EulerOrder::ZXY);
-    const glm::vec3 d = t.eulerDegrees(EulerOrder::ZXY);
-    CHECK(glm::length(d - glm::vec3(10, 20, 30)) < 1e-3f);
-    CHECK(sameRotation(t.orientation(), quatFromEulerDegrees({10, 20, 30}, EulerOrder::ZXY)));
-    t.rotation = glm::quat(1, 0, 0, 0);
-    t.rotate(glm::radians(90.0f), {0, 1, 0});
-    t.rotateLocal(glm::radians(90.0f), {1, 0, 0}); // then pitch up around its own X
-    CHECK(glm::length(t.forward() - glm::vec3(0, 1, 0)) < 1e-5f);
-    t.position = {0.0, 0.0, 0.0};
-    t.lookAt(GlobalPosition(3.0, 0.0, -3.0));
-    CHECK(glm::length(t.forward() - glm::normalize(glm::vec3(1, 0, -1))) < 1e-5f);
-
-    // Files: quaternions as [x, y, z, w]; older files (Euler radians) still load, same orientation.
-    Scene scene;
-    Entity e = scene.createEntity("Rot");
-    e.transform().setEulerDegrees({15, -70, 5});
-    const std::string json = serializeScene(scene);
-    Scene back;
-    CHECK(deserializeScene(back, json));
-    CHECK(sameRotation(back.findEntity("Rot").transform().orientation(), e.transform().orientation(), 1e-6f));
-    Scene old;
-    const char* legacyFile = R"({"format": "nova.scene", "version": 1, "entities": [
-        {"components": {"Name": {"name": "Old"}, "Transform": {"position": [0, 0, 0], "rotation": [0.3, -1.2, 0.1], "scale": [1, 1, 1]}}}]})";
-    CHECK(deserializeScene(old, legacyFile));
-    CHECK(sameRotation(old.findEntity("Old").transform().orientation(), glm::quat(glm::vec3(0.3f, -1.2f, 0.1f))));
-}
-
-void quaternionUnitAndInterpolation() {
-    // renormalize: free for unit quaternions, fixes drift, rescues degenerate input.
-    const glm::quat q = quatFromEulerDegrees({20, 40, 60});
-    const glm::quat same = renormalize(q);
-    CHECK(same.x == q.x && same.y == q.y && same.z == q.z && same.w == q.w);
-    CHECK(std::abs(glm::length(renormalize(q * 1.0004f)) - 1.0f) < 1e-6f); // Newton step
-    CHECK(std::abs(glm::length(renormalize(q * 1.003f)) - 1.0f) < 1e-6f);  // larger drift: full normalization
-    CHECK(std::abs(glm::length(renormalize(q * 3.0f)) - 1.0f) < 1e-6f);   // full normalization
-    CHECK(renormalize(glm::quat(0, 0, 0, 0)) == glm::quat(1, 0, 0, 0));
-
-    // A million small rotations stay unit length.
-    TransformComponent t;
-    for (int i = 0; i < 1'000'000; ++i) t.rotateLocal(1e-3f, {0.3f, 1.0f, 0.2f});
-    CHECK(std::abs(glm::length(t.rotation.toDouble()) - 1.0) < 1e-6);
-    t.setRotation(glm::quat(2, 0, 0, 0));
-    CHECK(std::abs(glm::length(t.rotation.toDouble()) - 1.0) < 1e-6);
-
-    // slerp: endpoints, constant angular speed, shortest arc whatever the sign.
-    const glm::quat a = quatFromEulerDegrees({0, 0, 0});
-    const glm::quat b = quatFromEulerDegrees({0, 120, 0});
-    CHECK(sameRotation(slerp(a, b, 0.0f), a) && sameRotation(slerp(a, b, 1.0f), b));
-    CHECK(std::abs(angleBetween(a, slerp(a, b, 0.25f)) - glm::radians(30.0f)) < 1e-4f);
-    CHECK(std::abs(angleBetween(a, slerp(a, b, 0.5f)) - glm::radians(60.0f)) < 1e-4f);
-    CHECK(sameRotation(slerp(a, -b, 0.5f), slerp(a, b, 0.5f)));
-    CHECK(std::abs(glm::length(slerp(a, b, 0.37f)) - 1.0f) < 1e-6f);
-    // nlerp: same path and endpoints, unit length, not constant speed.
-    CHECK(sameRotation(nlerp(a, b, 1.0f), b) && std::abs(glm::length(nlerp(a, b, 0.5f)) - 1.0f) < 1e-6f);
-    CHECK(sameRotation(nlerp(a, b, 0.5f), slerp(a, b, 0.5f))); // the midpoint coincides
-    // rotateTowards: limited steps, then exactly the target.
-    const glm::quat step = rotateTowards(a, b, glm::radians(10.0f));
-    CHECK(std::abs(angleBetween(a, step) - glm::radians(10.0f)) < 1e-4f);
-    CHECK(rotateTowards(a, b, glm::radians(200.0f)) == b);
-
-    // Interpolating whole transforms: exact position, slerped rotation, mixed scale.
-    TransformComponent from, to;
-    from.position = GlobalPosition::fromUnits({7, 0, 0}, LengthUnit::Kilometer);
-    to.position = from.position + GlobalOffset::fromMeters(glm::dvec3(10.0, 0.0, 0.002));
-    to.rotation = b;
-    to.scale = glm::vec3(3.0f);
-    const TransformComponent mid = TransformComponent::lerp(from, to, 0.5f);
-    const GlobalOffset half = (mid.position - from.position) - GlobalOffset::fromMeters(glm::dvec3(5.0, 0.0, 0.001));
-    CHECK(std::abs(half.x) <= 1 && half.y == 0 && std::abs(half.z) <= 1); // within one step (rounding of the half)
-    CHECK(std::abs(angleBetween(mid.orientation(), a) - glm::radians(60.0f)) < 1e-4f);
-    CHECK(mid.scale == glm::vec3(2.0f));
-}
-
 } // namespace
 
 int main() {
@@ -564,8 +444,6 @@ int main() {
         {"helpers (lerp, moveTowards, rotateAround)", helpers},
         {"scenes: files, older files, prefabs, relative matrices", sceneIntegration},
         {"camera-relative rendering at the far corner", cameraRelativeRendering},
-        {"rotations: quaternions, Euler in six orders", rotations},
-        {"rotations: always unit, slerp / nlerp / rotateTowards", quaternionUnitAndInterpolation},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

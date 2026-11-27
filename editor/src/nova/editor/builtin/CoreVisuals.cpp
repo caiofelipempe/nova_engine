@@ -19,16 +19,16 @@ const glm::vec4 kLight{1.0f, 0.9f, 0.3f, 0.9f};
 const glm::vec4 kCamera{0.7f, 0.8f, 1.0f, 0.9f};
 
 void drawFrustum(DebugDraw& dd, const TransformComponent& t, const CameraComponent& c) {
-    const f32 farDist = std::min(c.farClip, 4.0f), aspect = 16.0f / 9.0f;
+    const f32 farDist = std::min(toFloat(c.farClip), 4.0f), aspect = 16.0f / 9.0f;
     // Perspective: widening with distance; orthographic: a box orthoSize tall.
     const bool ortho = c.projection == CameraProjection::Orthographic;
-    const f32 h = ortho ? c.orthoSize * 0.5f : std::tan(c.fovY * 0.5f), w = h * aspect;
+    const f32 h = ortho ? toFloat(c.orthoSize) * 0.5f : std::tan(c.fovY.radiansF() * 0.5f), w = h * aspect;
     const glm::quat q = t.orientation();
     auto corner = [&](f32 d, f32 sx, f32 sy) {
         const f32 spread = ortho ? 1.0f : d;
         return t.position + q * glm::vec3(sx * w * spread, sy * h * spread, -d);
     };
-    const f32 n = c.nearClip;
+    const f32 n = toFloat(c.nearClip);
     GlobalPosition nc[4] = {corner(n, -1, -1), corner(n, 1, -1), corner(n, 1, 1), corner(n, -1, 1)};
     GlobalPosition fc[4] = {corner(farDist, -1, -1), corner(farDist, 1, -1), corner(farDist, 1, 1), corner(farDist, -1, 1)};
     for (int i = 0; i < 4; ++i) {
@@ -40,7 +40,7 @@ void drawFrustum(DebugDraw& dd, const TransformComponent& t, const CameraCompone
 
 void drawLight(DebugDraw& dd, Entity e) {
     const auto& t = e.transform();
-    if (auto* l = e.tryGet<PointLightComponent>()) dd.sphere(t.position, l->radius, kLight);
+    if (auto* l = e.tryGet<PointLightComponent>()) dd.sphere(t.position, toFloat(l->radius), kLight);
     if (e.has<DirectionalLightComponent>()) {
         const glm::vec3 dir = t.forward();
         for (const glm::vec3 offset : {glm::vec3(0.0f), t.right() * 0.3f, -t.right() * 0.3f})

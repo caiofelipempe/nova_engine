@@ -246,7 +246,7 @@ void prefabs() {
     Scene scene;
     Entity a = scene.createEntity("Base");
     a.transform().position = {10, 0, 5};
-    a.add<RotatorComponent>(glm::vec3(0, 1, 0), 2.5f);
+    a.add<RotatorComponent>(glm::vec3(0, 1, 0), AngleSpeed::fromRadiansPerSecond(2.5));
     Entity b = scene.createEntity("Top");
     b.transform().position = {10, 2, 5};
     b.transform().scale = glm::vec3(0.5f);
@@ -272,7 +272,7 @@ void prefabs() {
         CHECK(first[1].transform().position == glm::vec3(0, 3, 0));  // relative offset kept
         CHECK(second[1].transform().position == glm::vec3(-4, 2, 0));
         CHECK(first[1].transform().scale == glm::vec3(0.5f));
-        CHECK(first[0].has<RotatorComponent>() && first[0].get<RotatorComponent>().speed == 2.5f);
+        CHECK(first[0].has<RotatorComponent>() && first[0].get<RotatorComponent>().speed == AngleSpeed::fromRadiansPerSecond(2.5));
     CHECK(db.animationNames(*guid).empty()); // a prefab has no clips
         CHECK(first[0].uuid() != second[0].uuid() && first[0].uuid() != a.uuid()); // fresh UUIDs
         CHECK(first[0].get<PrefabInstanceComponent>().asset == *guid);

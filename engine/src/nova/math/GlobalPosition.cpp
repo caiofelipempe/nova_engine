@@ -1,6 +1,7 @@
 #include "nova/math/GlobalPosition.h"
 
 #include <cmath>
+#include <limits>
 
 namespace nova {
 
@@ -75,6 +76,25 @@ GlobalOffset GlobalOffset::scaled(f64 factor) const {
             toWrappedSteps(static_cast<f64>(z) * factor, 2)};
 }
 
+Distance GlobalOffset::lengthFixed() const {
+    constexpr int shift = int(WorldSpace::kFractionBits) - int(fractionBits<Distance>);
+    constexpr u64 maxRaw = static_cast<u64>(std::numeric_limits<i32>::max());
+    if (!isShort()) {
+        const f64 raw = std::floor(std::ldexp(lengthSteps(*this), -shift));
+        return fromRaw<Distance>(raw >= static_cast<f64>(maxRaw) ? static_cast<i64>(maxRaw) : static_cast<i64>(raw));
+    }
+    const u64 root = isqrt(lengthSquared()) >> shift;
+    return fromRaw<Distance>(static_cast<i64>(root > maxRaw ? maxRaw : root));
+}
+
+bool GlobalOffset::isShorterThan(Distance d) const {
+    if (d.raw_value() <= 0) return false;
+    constexpr int shift = int(WorldSpace::kFractionBits) - int(fractionBits<Distance>);
+    const u64 steps = static_cast<u64>(d.raw_value()) << shift; // < 2³²
+    if (!isShort()) return lengthSteps(*this) < static_cast<f64>(steps);
+    return lengthSquared() < steps * steps; // steps² < 2⁶⁴
+}
+
 GlobalOffset operator*(const GlobalOffset& a, i64 n) {
     return {mulWrapped(a.x, n, 0), mulWrapped(a.y, n, 1), mulWrapped(a.z, n, 2)};
 }
@@ -102,6 +122,25 @@ f64 distance(const GlobalPosition& a, const GlobalPosition& b, LengthUnit u) { r
 
 bool isWithin(const GlobalPosition& a, const GlobalPosition& b, f64 meters) { return (b - a).isShorterThan(meters); }
 
+bool isWithin(const GlobalPosition& a, const GlobalPosition& b, Distance d) { return (b - a).isShorterThan(d); }
+
+GlobalPosition lerp(const GlobalPosition& a, const GlobalPosition& b, Unit t) {
+    if (t == Unit(1)) return b;
+    return a + (b - a).scaled(t);
+}
+
+GlobalPosition moveTowards(const GlobalPosition& from, const GlobalPosition& to, Distance maxDistance) {
+    const GlobalOffset d = to - from;
+    if (!d.isShort()) return moveTowards(from, to, toDouble(maxDistance));
+    constexpr int shift = int(WorldSpace::kFractionBits) - int(fractionBits<Distance>);
+    const u64 len = isqrt(d.lengthSquared()); // steps, < 2³³
+    const i64 maxSteps = static_cast<i64>(maxDistance.raw_value()) << shift;
+    if (len == 0 || static_cast<i64>(len) <= maxSteps) return to;
+    // maxSteps / len < 1, as Unit (maxSteps < len < 2³³: the product fits).
+    const i64 t = detail::roundDiv(maxSteps * (i64(1) << fractionBits<Unit>), static_cast<i64>(len));
+    return from + d.scaled(fromRaw<Unit>(t));
+}
+
 GlobalPosition lerp(const GlobalPosition& a, const GlobalPosition& b, f64 t) {
     if (t == 1.0) return b;
     return a + (b - a).scaled(t);
@@ -114,9 +153,12 @@ GlobalPosition moveTowards(const GlobalPosition& from, const GlobalPosition& to,
     return from + d.scaled(maxMeters / len);
 }
 
-GlobalPosition rotateAround(const GlobalPosition& point, const GlobalPosition& pivot, const glm::quat& rotation) {
-    const glm::dvec3 local = (point - pivot).toMeters();
-    return pivot + GlobalOffset::fromMeters(glm::dquat(rotation) * local);
+GlobalPosition rotateAround(const GlobalPosition& point, const GlobalPosition& pivot, const Quat& rotation) {
+    const GlobalOffset local = point - pivot;
+    // Within 8 192 m every axis of the rotated offset stays in the range of Length: exact fixed point.
+    if (local.isShort() && local.lengthSquared() < (u64(1) << 62))
+        return pivot + GlobalOffset::fromFixed(rotation.rotate(local.toFixed()));
+    return pivot + GlobalOffset::fromMeters(rotation.toDouble() * local.toMeters());
 }
 
 } // namespace nova

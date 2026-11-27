@@ -88,8 +88,12 @@ bool reflectedField(const reflect::TypeInfo& owner, const reflect::FieldInfo& f,
         case K::Float: changed = floatField(f, *static_cast<float*>(p)); break;
         case K::Position: changed = position(f.label.c_str(), *static_cast<GlobalPosition*>(p)); break;
         case K::Quat: changed = rotation(f.label.c_str(), *static_cast<glm::quat*>(p), dragSpeed(a, 0.5f)); break;
-        case K::FixedQuat: changed = rotation(f.label.c_str(), *static_cast<FixedQuat*>(p), dragSpeed(a, 0.5f)); break;
-        case K::Fixed: changed = fixedField(f, p); break;
+        case K::FixedQuat: changed = rotation(f.label.c_str(), *static_cast<Quat*>(p), dragSpeed(a, 0.5f)); break;
+        case K::Fixed:
+        case K::Angle:      // degrees
+        case K::AngleSpeed: // degrees per second
+            changed = fixedField(f, p);
+            break;
         case K::FixedVec3: changed = fixedVecField(f, p); break;
         case K::Vec2: changed = vecField(f, &static_cast<glm::vec2*>(p)->x, 2); break;
         case K::Vec3: changed = vecField(f, &static_cast<glm::vec3*>(p)->x, 3); break;
@@ -285,7 +289,7 @@ bool rotationAt(const char* label, glm::quat& value, const void* key, float spee
 
 bool rotation(const char* label, glm::quat& value, float speed) { return rotationAt(label, value, &value, speed); }
 
-bool rotation(const char* label, FixedQuat& value, float speed) {
+bool rotation(const char* label, Quat& value, float speed) {
     glm::quat q = value.toGlm();
     if (!rotationAt(label, q, &value, speed)) return false;
     value = q;
@@ -305,7 +309,7 @@ bool rotationAt(const char* label, glm::quat& value, const void* key, float spee
     Shown& shown = shownByField[key];
     if (shown.order != rotationDisplayOrder || !(shown.q == value)) {
         // "+ 0" turns −0 into 0, so an identity rotation does not read "-0.00".
-        shown = {value, eulerDegreesFromQuat(value, rotationDisplayOrder) + glm::vec3(0.0f), rotationDisplayOrder};
+        shown = {value, glm::vec3(Quat(value).toEulerDegrees(rotationDisplayOrder)) + glm::vec3(0.0f), rotationDisplayOrder};
     }
     glm::vec3 degrees = shown.degrees;
     const bool changed = vec3(label, degrees, speed);
@@ -313,7 +317,7 @@ bool rotationAt(const char* label, glm::quat& value, const void* key, float spee
         ImGui::SetTooltip("Euler %s, degrees (View/Rotation Order)\nquaternion x %.4f  y %.4f  z %.4f  w %.4f",
                           eulerOrderName(rotationDisplayOrder), value.x, value.y, value.z, value.w);
     if (!changed) return false;
-    value = quatFromEulerDegrees(degrees, rotationDisplayOrder);
+    value = Quat::fromEulerDegrees(glm::dvec3(degrees), rotationDisplayOrder).toGlm();
     shown = {value, degrees, rotationDisplayOrder};
     return true;
 }

@@ -230,7 +230,7 @@ View buildStacks(Scene& s, const BenchMeshes& m) {
     }
     Entity sweeper = body(s, "Sweeper", m.cube, {-9.0, 0.35, 7.0}, {7.0f, 0.5f, 0.5f}, {0.3f, 0.3f, 0.35f, 1.0f},
                           physics::BodyType::Kinematic);
-    sweeper.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.7f);
+    sweeper.add<RotatorComponent>(glm::vec3(0, 1, 0), AngleSpeed::fromRadiansPerSecond(0.7f));
     for (int i = 0; i < 8; ++i) {
         const float a = i * kPi / 4;
         crate(s, m, "Loose crate", {-9.0 + 2.2 * std::cos(a), 1.6, 7.0 + 2.2 * std::sin(a)}, glm::vec3(0.7f),
@@ -365,8 +365,8 @@ View buildSurfaces(Scene& s, const BenchMeshes& m) {
         mat.normalScale = 1.5f;
         mat.occlusionTexture = tex.groovesAo;
     }
-    plain.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.3f);
-    bumpy.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.3f);
+    plain.add<RotatorComponent>(glm::vec3(0, 1, 0), AngleSpeed::fromRadiansPerSecond(0.3f));
+    bumpy.add<RotatorComponent>(glm::vec3(0, 1, 0), AngleSpeed::fromRadiansPerSecond(0.3f));
     // A metal ball: roughness in bands (metallic-roughness map).
     Entity metal = visual(s, "Metal stripes", m.sphere, {1.0, 1.3, 0.0}, glm::vec3(2.4f), {0.95f, 0.8f, 0.55f, 1});
     {
@@ -466,8 +466,8 @@ View buildJoints(Scene& s, const BenchMeshes& m) {
     hinge.anchor = {-0.5f, 0.0f, 0.0f}; // left edge
     hinge.axis = {0, 1, 0};
     hinge.limitsEnabled = true;
-    hinge.limitMin = -80.0f;
-    hinge.limitMax = 80.0f;
+    hinge.angleMin = Angle::fromDegrees(-80);
+    hinge.angleMax = Angle::fromDegrees(80);
     visual(s, "Door post", m.cube, {-9.05, 1.4, 0.0}, {0.1f, 2.8f, 0.2f}, {0.3f, 0.3f, 0.3f, 1.0f});
 
     Entity wheel = body(s, "Wheel", m.cylinder, {-3.5, 2.6, 0.0}, {2.0f, 0.3f, 2.0f}, {0.35f, 0.35f, 0.4f, 1.0f});
@@ -477,7 +477,7 @@ View buildJoints(Scene& s, const BenchMeshes& m) {
     motor.type = physics::JointType::Hinge;
     motor.axis = {0, 1, 0}; // the cylinder's axis
     motor.motorMode = physics::JointMotorMode::Velocity;
-    motor.motorTarget = 90.0f; // deg/s
+    motor.motorSpeed = AngleSpeed::fromDegreesPerSecond(90);
     crate(s, m, "Rider", {-3.5, 4.2, 0.0}, glm::vec3(0.6f)); // something for it to fling
 
     Entity slider = crate(s, m, "Slider", {1.0, 0.8, -3.0}, glm::vec3(1.0f), {0.3f, 0.6f, 0.95f, 1.0f});
@@ -600,7 +600,7 @@ View buildCharacter(Scene& s, const BenchMeshes& m) {
     Entity disk = body(s, "Turntable", m.cylinder, {-7.0, 0.15, 8.0}, {5.0f, 0.3f, 5.0f}, {0.4f, 0.6f, 0.9f, 1.0f},
                        physics::BodyType::Kinematic);
     disk.add<CylinderColliderComponent>();
-    disk.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.6f);
+    disk.add<RotatorComponent>(glm::vec3(0, 1, 0), AngleSpeed::fromRadiansPerSecond(0.6f));
     for (int i = 0; i < 4; ++i)
         crate(s, m, "Pushable", {1.0 + i * 1.5, 0.5, 2.0}, glm::vec3(1.0f)).get<RigidBodyComponent>().mass = 8.0f;
 
@@ -786,7 +786,7 @@ View buildSkinning(Scene& s, const BenchMeshes& m) {
         const double x = -6.0 + 3.0 * i;
         Entity root = s.createEntity("Column " + std::to_string(i));
         root.transform().position = {x, 0.0, 0.0};
-        root.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.15f * static_cast<float>(i));
+        root.add<RotatorComponent>(glm::vec3(0, 1, 0), AngleSpeed::fromRadiansPerSecond(0.15f * static_cast<float>(i)));
         Entity foot = s.createEntity("Foot");
         foot.transform().position = {x, 0.0, 0.0};
         foot.setParent(root);
@@ -844,7 +844,7 @@ View buildTiny(Scene& s, const BenchMeshes& m) {
     // in). Per object they stay whole; per triangle the cut follows their triangles.
     visual(s, "Sphere on the seam", m.sphere, {kTinySize / 2, 3.0, -14.0}, glm::vec3(6.0f), {0.25f, 0.55f, 0.95f, 1});
     Entity turning = visual(s, "Turning cube", m.cube, {kTinySize / 2, 2.0, -1.5}, glm::vec3(3.0f), {0.35f, 0.8f, 0.4f, 1});
-    turning.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.4f);
+    turning.add<RotatorComponent>(glm::vec3(0, 1, 0), AngleSpeed::fromRadiansPerSecond(0.4f));
     visual(s, "Capsule across the seam", m.capsule, {kTinySize / 2 + 0.5, 1.0, 14.0}, glm::vec3(1.5f), {0.9f, 0.3f, 0.6f, 1})
         .transform()
         .setEulerDegrees({0.0f, 0.0f, 90.0f}); // lying along X
@@ -937,7 +937,7 @@ View buildLights(Scene& s, const BenchMeshes& m) {
     const glm::vec3 colors[3] = {{1.0f, 0.35f, 0.2f}, {0.25f, 0.6f, 1.0f}, {0.4f, 1.0f, 0.4f}};
     for (int i = 0; i < 3; ++i) {
         Entity hub = s.createEntity("Light hub " + std::to_string(i));
-        hub.add<RotatorComponent>(glm::vec3(0, 1, 0), 0.3f + 0.15f * i);
+        hub.add<RotatorComponent>(glm::vec3(0, 1, 0), AngleSpeed::fromRadiansPerSecond(0.3f + 0.15f * i));
         const double angle = i * 2.0 * 3.14159265358979 / 3.0, r = 2.0 + 2.0 * i;
         Entity light = s.createEntity("Light " + std::to_string(i));
         light.transform().position = {std::cos(angle) * r, 1.2 + 0.4 * i, std::sin(angle) * r};

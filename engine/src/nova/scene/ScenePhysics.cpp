@@ -20,11 +20,12 @@ u64 toUserData(entt::entity e) { return static_cast<u64>(entt::to_integral(e)); 
 entt::entity fromUserData(u64 v) { return static_cast<entt::entity>(static_cast<entt::id_type>(v)); }
 
 // Fixed point → the physics engine's floats.
-template <unsigned F>
-f32 fl(Fixed<F> v) { return toFloat(v); }
+template <typename Int, unsigned F>
+f32 fl(Fixed<Int, F> v) { return toFloat(v); }
+f32 fl(Angle a) { return a.radiansF(); }
 template <typename T>
-glm::vec3 fl(const FixedVec3<T>& v) { return v.toGlm(); }
-glm::quat fl(const FixedQuat& q) { return q.toGlm(); }
+glm::vec3 fl(const Vec3<T>& v) { return v.toGlm(); }
+glm::quat fl(const Quat& q) { return q.toGlm(); }
 // An offset in Q13.18 is a whole number of world steps: added to a position exactly.
 GlobalOffset steps(const LengthVec& v) { return GlobalOffset::fromFixed(v); }
 } // namespace
@@ -367,7 +368,7 @@ void Scene::createCharacter(entt::entity e) {
     d.halfHeight = std::max(fl(cc.height) * 0.5f - d.radius, 0.0f);
     d.position = t.position + steps(cc.offset);
     d.rotation = fl(t.rotation);
-    d.maxSlopeAngle = glm::radians(fl(cc.maxSlope));
+    d.maxSlopeAngle = fl(cc.maxSlope);
     d.stepHeight = fl(cc.stepHeight);
     d.stickToFloor = fl(cc.stickToFloor);
     d.mass = fl(cc.mass);
@@ -444,6 +445,8 @@ u64 jointKey(const JointComponent& j, const TransformComponent& t) {
     add(j.axis);
     add(j.connectedAnchor);
     add(j.limitsEnabled);
+    add(j.angleMin);
+    add(j.angleMax);
     add(j.limitMin);
     add(j.limitMax);
     add(j.minDistance);
@@ -459,8 +462,11 @@ u64 jointKey(const JointComponent& j, const TransformComponent& t) {
 physics::JointMotor motorOf(const JointComponent& j) {
     physics::JointMotor m;
     m.mode = j.motorMode;
-    // Hinges are edited in degrees, the physics works in radians.
-    m.target = j.type == physics::JointType::Hinge ? glm::radians(fl(j.motorTarget)) : fl(j.motorTarget);
+    // Hinges: an angular speed or an angle (radians for the physics); sliders: m/s or meters.
+    if (j.type == physics::JointType::Hinge)
+        m.target = j.motorMode == physics::JointMotorMode::Velocity ? j.motorSpeed.radiansPerSecondF() : fl(j.motorAngle);
+    else
+        m.target = fl(j.motorTarget);
     m.maxForce = fl(j.motorMaxForce);
     return m;
 }
@@ -503,8 +509,10 @@ void Scene::createJoint(entt::entity e) {
     }
     const bool hinge = jc.type == physics::JointType::Hinge;
     d.limitsEnabled = jc.limitsEnabled;
-    d.limitMin = hinge ? glm::radians(fl(jc.limitMin)) : fl(jc.limitMin);
-    d.limitMax = hinge ? glm::radians(fl(jc.limitMax)) : fl(jc.limitMax);
+    // Half a turn reads as −180° signed: as an upper limit it is +180°.
+    const f32 angleMax = jc.angleMax == Angle::half() ? glm::pi<f32>() : fl(jc.angleMax);
+    d.limitMin = hinge ? fl(jc.angleMin) : fl(jc.limitMin);
+    d.limitMax = hinge ? angleMax : fl(jc.limitMax);
     d.minDistance = fl(jc.minDistance);
     d.maxDistance = fl(jc.maxDistance);
     d.springFrequency = fl(jc.springFrequency);

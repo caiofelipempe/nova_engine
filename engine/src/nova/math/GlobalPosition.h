@@ -4,7 +4,7 @@
 /// @brief World positions (GlobalPosition) and the offsets between them (GlobalOffset): Q45.18
 ///        fixed point on the circular world (see WorldSpace, WorldSize).
 
-#include "nova/math/Fixed.h"
+#include "nova/math/Quat.h"
 #include "nova/math/WorldSpace.h"
 
 #include <glm/glm.hpp>
@@ -63,6 +63,14 @@ struct GlobalOffset : glm::i64vec3 {
     static constexpr GlobalOffset fromFixed(const LengthVec& v) {
         return {v.x.raw_value(), v.y.raw_value(), v.z.raw_value()};
     }
+    /// @brief The same offset as a 64-bit GlobalLength vector (same bits, any length).
+    constexpr GlobalLengthVec toGlobalLength() const {
+        return {fromRaw<GlobalLength>(x), fromRaw<GlobalLength>(y), fromRaw<GlobalLength>(z)};
+    }
+    /// @brief From a 64-bit GlobalLength vector (same bits, brought into the active world).
+    static GlobalOffset fromGlobalLength(const GlobalLengthVec& v) {
+        return GlobalOffset(detail::wrapped({v.x.raw_value(), v.y.raw_value(), v.z.raw_value()}));
+    }
 
     /// @brief Largest axis (in steps) for which lengthSquared() is exact: 2³¹ (8 192 m).
     static constexpr i64 kExactAxis = i64(1) << 31;
@@ -85,6 +93,23 @@ struct GlobalOffset : glm::i64vec3 {
     bool isShorterThan(f64 meters) const;
     /// @brief This offset times `factor`, rounded to the nearest step (loops around the world).
     GlobalOffset scaled(f64 factor) const;
+    /// @brief This offset times a fixed-point `factor` (Scalar, Unit...): exact integer math (one
+    ///        rounding) when the products fit 64 bits, as scaled(f64) otherwise.
+    template <typename S, std::enable_if_t<isFixed<S>, int> = 0>
+    GlobalOffset scaled(S factor) const {
+        const i64 f = static_cast<i64>(factor.raw_value());
+        auto mag = [](i64 v) { return v < 0 ? 0 - static_cast<u64>(v) : static_cast<u64>(v); };
+        const u64 af = mag(f);
+        const u64 limit = af == 0 ? ~u64(0) : (u64(1) << 62) / af;
+        if (mag(x) >= limit || mag(y) >= limit || mag(z) >= limit) return scaled(toDouble(factor));
+        constexpr int F = int(fractionBits<S>);
+        return GlobalOffset(detail::wrapped({detail::roundShift<F>(x * f), detail::roundShift<F>(y * f), detail::roundShift<F>(z * f)}));
+    }
+    /// @brief Length as a fixed-point Distance (exact integer square root, rounded down; saturates
+    ///        past the range of Distance).
+    Distance lengthFixed() const;
+    /// @brief Is the length below `d`? Exact for short offsets (isShort()).
+    bool isShorterThan(Distance d) const;
 
     friend constexpr bool operator==(const GlobalOffset&, const GlobalOffset&) = default;
     friend GlobalOffset operator+(const GlobalOffset& a, const GlobalOffset& b) {
@@ -154,6 +179,12 @@ public:
     glm::dvec3 toUnits(LengthUnit u) const;
     /// @brief The coordinates as fixed-point Lengths from the origin (same bits; only within ±8 192 m).
     constexpr LengthVec toFixed() const { return GlobalOffset(m_steps).toFixed(); }
+    /// @brief The coordinates as 64-bit GlobalLengths (same bits).
+    constexpr GlobalLengthVec coords() const { return GlobalOffset(m_steps).toGlobalLength(); }
+    /// @brief From 64-bit GlobalLength coordinates (brought into the active world).
+    static GlobalPosition fromCoords(const GlobalLengthVec& c) {
+        return fromRaw(c.x.raw_value(), c.y.raw_value(), c.z.raw_value());
+    }
 
     /// @brief Raw steps on axis `i` (0 = x).
     constexpr i64 raw(int i) const { return m_steps[i]; }
@@ -220,11 +251,17 @@ f64 distance(const GlobalPosition& a, const GlobalPosition& b, LengthUnit u);
 inline u64 distanceSquared(const GlobalPosition& a, const GlobalPosition& b) { return (b - a).lengthSquared(); }
 /// @brief Are `a` and `b` closer than `meters`? (exact within 8 192 m per axis)
 bool isWithin(const GlobalPosition& a, const GlobalPosition& b, f64 meters);
+/// @brief Are `a` and `b` closer than `d`? (exact within 8 192 m per axis)
+bool isWithin(const GlobalPosition& a, const GlobalPosition& b, Distance d);
 /// @brief Point at `t` from `a` (0) to `b` (1), along the shortest way (across the seam too).
 GlobalPosition lerp(const GlobalPosition& a, const GlobalPosition& b, f64 t);
+/// @brief Same, with a fixed-point `t` (exact integer math for offsets within ±8 192 m).
+GlobalPosition lerp(const GlobalPosition& a, const GlobalPosition& b, Unit t);
 /// @brief Moves `from` towards `to` by at most `maxMeters` (reaches `to` exactly when close enough).
 GlobalPosition moveTowards(const GlobalPosition& from, const GlobalPosition& to, f64 maxMeters);
-/// @brief Rotates `point` around `pivot`.
-GlobalPosition rotateAround(const GlobalPosition& point, const GlobalPosition& pivot, const glm::quat& rotation);
+/// @brief Same, with a fixed-point distance (exact integer math for offsets within ±8 192 m).
+GlobalPosition moveTowards(const GlobalPosition& from, const GlobalPosition& to, Distance maxDistance);
+/// @brief Rotates `point` around `pivot` (fixed point for points within 8 192 m of the pivot).
+GlobalPosition rotateAround(const GlobalPosition& point, const GlobalPosition& pivot, const Quat& rotation);
 
 } // namespace nova

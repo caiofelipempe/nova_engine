@@ -5,7 +5,7 @@
 ///        them on an entity's descendants (glTF animations, or your own).
 
 #include "nova/core/Base.h"
-#include "nova/math/Fixed.h"
+#include "nova/math/Quat.h"
 #include "nova/scene/EntityRef.h"
 
 #include <entt/entt.hpp>

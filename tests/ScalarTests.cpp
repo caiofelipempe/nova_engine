@@ -1,5 +1,7 @@
-// Fixed-point numbers of the simulation (nova/math/Fixed.h, lib fpm). Run: ctest --preset ... or NovaFixedTests.exe
-#include <nova/math/Fixed.h>
+// Fixed-point scalars, binary angles and vectors of the simulation (nova/math/Scalar.h, Vec3.h, lib fpm).
+// Run: ctest --preset ... or NovaScalarTests.exe
+#include <nova/math/Quat.h>
+#include <nova/math/Time.h>
 
 #include <cmath>
 #include <cstdio>
@@ -36,14 +38,18 @@ void formats() {
     CHECK_NEAR(toDouble(fromRaw<Length>(std::numeric_limits<i32>::max())), 8192.0, 1e-5);
     CHECK_NEAR(toDouble(fromRaw<Distance>(std::numeric_limits<i32>::max())), 16384.0, 1e-4);
     CHECK(toDouble(fromRaw<Speed>(1)) == std::ldexp(1.0, -16));                  // 15 µm/s
-    CHECK_NEAR(toDouble(fromRaw<Angle>(std::numeric_limits<i32>::max())), 8.0, 1e-7);
+    CHECK(Angle::fromRaw(1).turns() == std::ldexp(1.0, -32));                     // 1.46·10⁻⁹ rad
+    CHECK(AngleSpeed::fromRaw(1).turnsPerSecond() == std::ldexp(1.0, -25));       // turns/s
+    CHECK_NEAR(AngleSpeed::fromRaw(std::numeric_limits<i32>::max()).turnsPerSecond(), 64.0, 1e-6);
+    CHECK(toDouble(fromRaw<GlobalLength>(1)) == std::ldexp(1.0, -18));           // the world step
     CHECK_NEAR(toDouble(fromRaw<Unit>(std::numeric_limits<i32>::max())), 2.0, 1e-8);
     CHECK(toDouble(fromRaw<Force>(1)) == 1.0 / 256.0);                           // 4 mN
     // The rule: one 1/60 s step of the smallest value of each kind moves ≤ 3.8 µm.
     const f64 step = 1.0 / 60.0, limit = std::ldexp(1.0, -18) * 1.0001;
     CHECK(toDouble(fromRaw<Speed>(1)) * step <= limit);                          // a speed for a step
     CHECK(toDouble(fromRaw<Force>(1)) / 1.0 * step * step <= limit);             // a force on 1 kg
-    CHECK(toDouble(fromRaw<Angle>(1)) * 1000.0 <= limit);                        // an angle, 1 km from the center
+    CHECK(Angle::fromRaw(1).radiansPositive() * 1000.0 <= limit);                // an angle, 1 km from the center
+    CHECK(AngleSpeed::fromRaw(1).radiansPerSecond() * step * 1000.0 <= limit);    // an angular speed for a step
     CHECK(toDouble(fromRaw<Unit>(1)) * 2.0 * 1000.0 <= limit);                   // a quaternion step, same lever
 }
 
@@ -58,7 +64,7 @@ void conversions() {
     CHECK(convert<Length>(fromRaw<Distance>(1)).raw_value() == 2);   // finer: exact
     CHECK(convert<Distance>(fromRaw<Length>(3)).raw_value() == 2);   // coarser: 1.5 rounds away from zero
     CHECK(convert<Distance>(fromRaw<Length>(-3)).raw_value() == -2);
-    CHECK(zero<Speed>().raw_value() == 0 && LengthVec{}.x.raw_value() == 0 && FixedQuat{}.w.raw_value() == 1 << 30);
+    CHECK(zero<Speed>().raw_value() == 0 && LengthVec{}.x.raw_value() == 0 && Quat{}.w.raw_value() == 1 << 30);
 }
 
 void products() {
@@ -121,25 +127,25 @@ void vectors() {
 void quaternions() {
     // Matches glm within the format's precision.
     const glm::quat g = glm::angleAxis(0.7f, glm::normalize(glm::vec3(1, 2, 3)));
-    const FixedQuat q = FixedQuat::fromGlm(g);
+    const Quat q = Quat::fromGlm(g);
     const glm::vec3 p(1.25f, -2.0f, 3.5f);
     const glm::vec3 expected = g * p;
     const glm::dvec3 got = q.rotate(LengthVec::fromGlm(p)).toDouble();
     CHECK(glm::length(glm::dvec3(expected) - got) < 1e-5);
     // From axis and angle (fpm's deterministic sin / cos).
-    const FixedQuat a = FixedQuat::fromAxisAngle(LengthVec::fromGlm(glm::vec3(0, 0, 1)).normalized(), toFixed<Angle>(glm::half_pi<f64>()));
+    const Quat a = Quat::fromAxisAngle(LengthVec::fromGlm(glm::vec3(0, 0, 1)).normalized(), toFixed<Angle>(glm::half_pi<f64>()));
     const glm::dvec3 turned = a.rotate(LengthVec::fromGlm(glm::vec3(2, 0, 0))).toDouble();
     CHECK(glm::length(turned - glm::dvec3(0, 2, 0)) < 1e-5);
     // Composition order as glm, inverse, renormalization.
-    const FixedQuat b = FixedQuat::fromGlm(glm::angleAxis(-1.1f, glm::vec3(0, 1, 0)));
+    const Quat b = Quat::fromGlm(glm::angleAxis(-1.1f, glm::vec3(0, 1, 0)));
     const glm::dvec3 ab = (a * b).rotate(LengthVec::fromGlm(p)).toDouble();
     CHECK(glm::length(ab - glm::dvec3((a.toGlm() * b.toGlm()) * p)) < 1e-5);
     const glm::dvec3 back = q.conjugate().rotate(q.rotate(LengthVec::fromGlm(p))).toDouble();
     CHECK(glm::length(back - glm::dvec3(p)) < 1e-5);
     // A long chain of small turns stays unit and close to the float reference.
-    FixedQuat acc;
+    Quat acc;
     glm::dquat ref(1, 0, 0, 0);
-    const FixedQuat stepq = FixedQuat::fromGlm(glm::angleAxis(0.01f, glm::normalize(glm::vec3(0.3f, 1, -0.2f))));
+    const Quat stepq = Quat::fromGlm(glm::angleAxis(0.01f, glm::normalize(glm::vec3(0.3f, 1, -0.2f))));
     for (int i = 0; i < 10000; ++i) {
         acc = (stepq * acc).normalized();
         ref = glm::dquat(stepq.toGlm()) * ref;
@@ -164,7 +170,7 @@ void determinism() {
         const Scalar dt = fromRaw<Scalar>(1092); // ≈ 1/60 s in Q15.16
         for (int i = 0; i < 600; ++i) {
             v.y = v.y + mul<Speed>(g, dt);
-            p += FixedVec3<Length>{mul<Length>(v.x, dt), mul<Length>(v.y, dt), mul<Length>(v.z, dt)};
+            p += Vec3<Length>{mul<Length>(v.x, dt), mul<Length>(v.y, dt), mul<Length>(v.z, dt)};
         }
         return p;
     };
@@ -178,6 +184,64 @@ void determinism() {
         py += detail::roundShift<16 + 16 - 18>(vy * 1092);
     }
     CHECK(a.y.raw_value() == py);
+}
+
+// Every size, 8 to 64 bits, with the binary point anywhere.
+void sizes() {
+    static_assert(std::is_same_v<Q<3, 4>, Fixed<i8, 4>> && std::is_same_v<Q<7, 8>, Fixed<i16, 8>>);
+    static_assert(std::is_same_v<Q<13, 18>, Length> && std::is_same_v<Q<45, 18>, Fixed<i64, 18>>);
+    static_assert(sizeof(Q<3, 4>) == 1 && sizeof(Q<7, 8>) == 2 && sizeof(Q<15, 16>) == 4 && sizeof(Q<45, 18>) == 8);
+    // 8 bits: Q3.4, step 1/16, range ±8 (saturating).
+    using Q8 = Q<3, 4>;
+    CHECK(Q8(1.5).raw_value() == 24 && toDouble(Q8(2.25) * Q8(2)) == 4.5);
+    CHECK(Q8(100).raw_value() == 127 && Q8(-100).raw_value() == -128);
+    // 16 bits: Q7.8.
+    using Q16 = Q<7, 8>;
+    CHECK(toDouble(Q16(3.5) / Q16(2)) == 1.75 && Q16(-0.5) < Q16(0));
+    CHECK(Vec3<Q16>(1.0, 2.0, 2.0).length<Q16>() == Q16(3));
+    // Across sizes: products, quotients and conversions keep the exact value.
+    CHECK(mul<Length>(Q8(1.5), Length(10)) == Length(15));
+    CHECK(convert<Q16>(Length(2.5)) == Q16(2.5) && convert<Length>(Q8(-3.25)) == Length(-3.25));
+    // 64 bits: add, subtract, compare, convert (no products: they need 128 bits).
+    const GlobalLength far = GlobalLength(1.0e9); // 1 million km, exact to the step
+    CHECK(far.raw_value() == i64(1'000'000'000) << 18);
+    CHECK(far + GlobalLength(0.5) - far == GlobalLength(0.5) && -far < far && far * 3 == GlobalLength(3.0e9));
+    CHECK(convert<Length>(GlobalLength(12.25)) == Length(12.25));
+    CHECK(convert<GlobalLength>(Length(-7.5)) == GlobalLength(-7.5));
+    const GlobalLengthVec v = GlobalLengthVec(1e9, -2e9, 3.0);
+    CHECK(v - v == GlobalLengthVec() && v.toDouble() == glm::dvec3(1e9, -2e9, 3.0));
+    CHECK(fromRaw<GlobalLength>(std::numeric_limits<i64>::max()) > GlobalLength(3.5e13) && GlobalLength(1e14) == fromRaw<GlobalLength>(std::numeric_limits<i64>::max()));
+}
+
+// Binary angles: a turn is 2^32, they wrap around by themselves; comparisons are signed.
+void angles() {
+    CHECK(Angle::fromDegrees(90) == Angle::quarter() && Angle::fromDegrees(180) == Angle::half());
+    CHECK(Angle::fromDegrees(360) == Angle() && Angle::fromDegrees(-90).raw() == 3u << 30);
+    CHECK(Angle::fromDegrees(350) + Angle::fromDegrees(20) == Angle::fromDegrees(10)); // wraps, exactly
+    CHECK(Angle::fromTurns(1e6 + 0.25) == Angle::quarter());                         // whole turns drop out
+    CHECK(Angle::fromRadians(glm::pi<f64>() / 2) == Angle::quarter());
+    CHECK(Angle::fromDegrees(270).degrees() == -90.0 && Angle::fromDegrees(270).degreesPositive() == 270.0);
+    CHECK(Angle::half().degrees() == -180.0 && Angle::half().abs() == Angle::half());
+    CHECK(Angle::fromDegrees(-45) < Angle::fromDegrees(10) && Angle::fromDegrees(200) < Angle::fromDegrees(0)); // signed
+    CHECK(-Angle::fromDegrees(30) == Angle::fromDegrees(330) && Angle::fromDegrees(100) * 4 == Angle::fromDegrees(40));
+    CHECK(Angle::fromDegrees(90).scaled(Scalar(0.5)) == Angle::fromDegrees(45));
+    CHECK(Angle::fromTurns(std::nan("")) == Angle());
+    // Compact angles: 16 bits, exact back for multiples of their step.
+    CHECK(Angle16(Angle::fromDegrees(90)).toAngle() == Angle::quarter());
+    CHECK(std::abs((Angle16(Angle::fromDegrees(33.3)).toAngle() - Angle::fromDegrees(33.3)).signedRaw()) <= 1 << 15);
+    // Angular speeds integrate exactly over integer time (flicks).
+    const AngleSpeed s = AngleSpeed::fromDegreesPerSecond(90); // a quarter turn per second
+    CHECK(angleTurned(s, kFlicksPerSecond) == Angle::quarter());
+    CHECK(angleTurned(s, kFlicksPerSecond * 5) == Angle::quarter()); // 450° = 90°
+    CHECK(angleTurned(-s, kFlicksPerSecond) == Angle::fromDegrees(-90));
+    Angle sum;
+    const Duration step = Duration::perSecond(60);
+    for (int i = 0; i < 60; ++i) sum += angleTurned(s, step.flicks());
+    CHECK(std::abs((sum - Angle::quarter()).signedRaw()) <= 60); // one rounding per step, at most
+    CHECK(angleTurned(AngleSpeed::fromRaw(std::numeric_limits<i32>::max()), kFlicksPerSecond * 1000).raw() ==
+          static_cast<u32>(static_cast<u64>(std::numeric_limits<i32>::max()) * 1000 << 7)); // huge: no overflow
+    CHECK(std::abs(AngleSpeed::fromRadiansPerSecond(3.0).radiansPerSecond() - 3.0) < 1e-6);
+    static_assert(!std::is_convertible_v<f32, AngleSpeed> && !std::is_convertible_v<AngleSpeed, f32>); // units are explicit
 }
 
 // The Fixed type itself: zero by default, numbers in, floats only out, formats kept apart.
@@ -203,17 +267,17 @@ void numbers() {
     static_assert(!std::is_convertible_v<Length, Scalar>);
     static_assert(!std::is_convertible_v<Scalar, f32>);
     static_assert(std::is_convertible_v<f32, Scalar>);
-    static_assert(sizeof(Length) == 4 && sizeof(LengthVec) == 12 && sizeof(FixedQuat) == 16);
+    static_assert(sizeof(Length) == 4 && sizeof(LengthVec) == 12 && sizeof(Quat) == 16);
     CHECK(static_cast<f32>(Scalar(0.5)) == 0.5f && toFloat(Scalar(0.5)) == 0.5f);
     // Vectors and quaternions are quantized from glm where they are assigned.
     LengthVec v = glm::vec3(1.0f, 2.0f, 3.0f);
     CHECK(v == LengthVec(1.0, 2.0, 3.0) && v.toGlm() == glm::vec3(1, 2, 3));
     v = {0, 0.5, -1};
     CHECK(v.y.raw_value() == 1 << 17 && toDouble(v.z) == -1.0);
-    const FixedQuat q = glm::angleAxis(1.0f, glm::vec3(0, 1, 0));
+    const Quat q = glm::angleAxis(1.0f, glm::vec3(0, 1, 0));
     CHECK(std::abs(glm::length(q.toDouble()) - 1.0) < 1e-8);
-    const FixedQuat unnormalized = glm::quat(2, 0, 0, 0);
-    CHECK(unnormalized == FixedQuat::identity());
+    const Quat unnormalized = glm::quat(2, 0, 0, 0);
+    CHECK(unnormalized == Quat::identity());
 }
 
 } // namespace
@@ -228,6 +292,8 @@ int main() {
         {"quaternions: rotation, composition, renormalization", quaternions},
         {"determinism: integer-only results", determinism},
         {"the Fixed type: numbers in, floats out, formats apart", numbers},
+        {"every size: 8, 16, 32 and 64 bits", sizes},
+        {"binary angles: wraps, signed comparisons, exact integration", angles},
     };
     for (auto& [name, fn] : tests) {
         const int before = g_failures;

@@ -1,4 +1,4 @@
-#include "nova/math/Rotation.h"
+#include "nova/math/Quat.h"
 
 #include <glm/gtx/quaternion.hpp>
 
@@ -19,32 +19,20 @@ const char* eulerOrderName(EulerOrder order) {
     return "?";
 }
 
-glm::quat quatFromEuler(const glm::vec3& r, EulerOrder order) {
-    const glm::quat qx = glm::angleAxis(r.x, glm::vec3(1, 0, 0));
-    const glm::quat qy = glm::angleAxis(r.y, glm::vec3(0, 1, 0));
-    const glm::quat qz = glm::angleAxis(r.z, glm::vec3(0, 0, 1));
-    switch (order) { // intrinsic: the product in application order
-        case EulerOrder::XYZ: return qx * qy * qz;
-        case EulerOrder::XZY: return qx * qz * qy;
-        case EulerOrder::YXZ: return qy * qx * qz;
-        case EulerOrder::YZX: return qy * qz * qx;
-        case EulerOrder::ZXY: return qz * qx * qy;
-        case EulerOrder::ZYX: return qz * qy * qx;
-    }
-    return glm::quat(1, 0, 0, 0);
-}
+namespace detail {
 
-glm::vec3 eulerFromQuat(const glm::quat& q, EulerOrder order) {
+glm::dvec3 eulerFromQuat(const glm::dquat& q, EulerOrder order) {
     // Rotation matrix elements m[row][col] of R = R_first * R_second * R_third.
-    const glm::mat3 m = glm::toMat3(glm::normalize(q));
+    const glm::dmat3 m = glm::toMat3(glm::normalize(q));
     auto at = [&m](int row, int col) { return m[col][row]; }; // glm is column-major
-    const f32 m11 = at(0, 0), m12 = at(0, 1), m13 = at(0, 2);
-    const f32 m21 = at(1, 0), m22 = at(1, 1), m23 = at(1, 2);
-    const f32 m31 = at(2, 0), m32 = at(2, 1), m33 = at(2, 2);
-    constexpr f32 kLock = 0.9999999f;
-    auto clamp1 = [](f32 v) { return std::clamp(v, -1.0f, 1.0f); };
+    const f64 m11 = at(0, 0), m12 = at(0, 1), m13 = at(0, 2);
+    const f64 m21 = at(1, 0), m22 = at(1, 1), m23 = at(1, 2);
+    const f64 m31 = at(2, 0), m32 = at(2, 1), m33 = at(2, 2);
+    // Q1.30 components carry ~1e-9 of error: closer to ±1 than that, the middle angle is ±90°.
+    constexpr f64 kLock = 1.0 - 1e-9;
+    auto clamp1 = [](f64 v) { return std::clamp(v, -1.0, 1.0); };
 
-    glm::vec3 e(0.0f);
+    glm::dvec3 e(0.0);
     switch (order) {
         case EulerOrder::XYZ:
             e.y = std::asin(clamp1(m13));
@@ -103,5 +91,7 @@ glm::vec3 eulerFromQuat(const glm::quat& q, EulerOrder order) {
     }
     return e;
 }
+
+} // namespace detail
 
 } // namespace nova

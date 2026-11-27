@@ -81,7 +81,7 @@ void registerEngineTypes() {
 
     type<CameraComponent>("Camera")
         .field("projection", &CameraComponent::projection, {.tooltip = "Orthographic: no perspective (sizes do not change with distance)"})
-        .field("fovY", &CameraComponent::fovY, {.min = 10.0f, .max = 120.0f, .degrees = true, .label = "Field of View"})
+        .field("fovY", &CameraComponent::fovY, {.min = 10.0f, .max = 120.0f, .label = "Field of View"})
         .field("orthoSize", &CameraComponent::orthoSize, {.speed = 0.1f, .tooltip = "Orthographic: height of the view (m)", .label = "Ortho Size"})
         .field("nearClip", &CameraComponent::nearClip, {.min = 0.001f, .max = 10.0f})
         .field("farClip", &CameraComponent::farClip, {.speed = 1.0f})
@@ -165,14 +165,18 @@ void registerEngineTypes() {
         .field("connectedAnchor", &JointComponent::connectedAnchor,
                {.speed = 0.01f, .tooltip = "Distance: attachment on the other entity (local), or offset from here to the world point"})
         .field("limitsEnabled", &JointComponent::limitsEnabled, {.label = "Limits"})
-        .field("limitMin", &JointComponent::limitMin, {.speed = 0.1f, .tooltip = "Hinge: degrees; slider: meters"})
-        .field("limitMax", &JointComponent::limitMax, {.speed = 0.1f, .tooltip = "Hinge: degrees; slider: meters"})
+        .field("angleMin", &JointComponent::angleMin, {.min = -180.0f, .max = 0.0f, .tooltip = "Hinge: lowest angle (degrees)"})
+        .field("angleMax", &JointComponent::angleMax, {.min = 0.0f, .max = 180.0f, .tooltip = "Hinge: highest angle (degrees)"})
+        .field("limitMin", &JointComponent::limitMin, {.speed = 0.1f, .tooltip = "Slider: lowest position (m)"})
+        .field("limitMax", &JointComponent::limitMax, {.speed = 0.1f, .tooltip = "Slider: highest position (m)"})
         .field("minDistance", &JointComponent::minDistance, {.speed = 0.01f, .tooltip = "Distance joints (m); -1 = at start"})
         .field("maxDistance", &JointComponent::maxDistance, {.speed = 0.01f, .tooltip = "Distance joints (m); -1 = at start"})
         .field("springFrequency", &JointComponent::springFrequency, {.speed = 0.05f, .tooltip = "Distance joints: softness (Hz; 0 = rigid)"})
         .field("springDamping", &JointComponent::springDamping, {.min = 0.0f, .max = 1.0f})
         .field("motorMode", &JointComponent::motorMode)
-        .field("motorTarget", &JointComponent::motorTarget, {.speed = 0.1f, .tooltip = "Hinge: deg/s or degrees; slider: m/s or meters"})
+        .field("motorSpeed", &JointComponent::motorSpeed, {.speed = 1.0f, .tooltip = "Hinge velocity motor (deg/s)"})
+        .field("motorAngle", &JointComponent::motorAngle, {.speed = 0.5f, .tooltip = "Hinge position motor (degrees)"})
+        .field("motorTarget", &JointComponent::motorTarget, {.speed = 0.1f, .tooltip = "Slider: m/s or meters"})
         .field("motorMaxForce", &JointComponent::motorMaxForce, {.speed = 1.0f, .tooltip = "Hinge: N·m; slider: N; 0 = unlimited"})
         .field("breakForce", &JointComponent::breakForce, {.speed = 1.0f, .tooltip = "N; 0 = unbreakable"})
         .field("breakTorque", &JointComponent::breakTorque, {.speed = 1.0f, .tooltip = "N·m; 0 = unbreakable"})
@@ -227,7 +231,7 @@ void registerEngineTypes() {
         .component();
     type<RotatorComponent>("Rotator")
         .field("axis", &RotatorComponent::axis, {.speed = 0.01f})
-        .field("speed", &RotatorComponent::speed, {.speed = 0.01f, .tooltip = "Radians per second"})
+        .field("speed", &RotatorComponent::speed, {.speed = 1.0f, .tooltip = "Degrees per second"})
         .component();
 
     type<PrefabInstanceComponent>("PrefabInstance")

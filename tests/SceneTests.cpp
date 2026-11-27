@@ -131,7 +131,7 @@ void roundTrip() {
     patrol.radius = 9.0f;
     patrol.route = "B-C";
     Entity cam = a.createEntity("Cam");
-    cam.add<CameraComponent>().fovY = glm::radians(75.0f);
+    cam.add<CameraComponent>().fovY = Angle::fromDegrees(75);
 
     const std::string json = serializeScene(a);
     CHECK(json.find("\"format\": \"nova.scene\"") != std::string::npos);
@@ -165,7 +165,7 @@ void roundTrip() {
         CHECK(s.radius == 9.0f && s.route == "B-C" && s.entity() == h); // attached to the right entity
     }
     Entity c = b.findEntity("Cam");
-    CHECK(c.valid() && std::abs(c.get<CameraComponent>().fovY - glm::radians(75.0f)) < 1e-5f);
+    CHECK(c.valid() && c.get<CameraComponent>().fovY == Angle::fromDegrees(75)); // exact: degrees in the file
 
     // Deterministic: serializing the loaded scene gives the same text.
     CHECK(serializeScene(b) == json);
@@ -293,7 +293,7 @@ void fixedPointFields() {
     b.halfExtents = {0.1, 2.75, 1e-5};
     b.rotation = glm::angleAxis(0.7f, glm::normalize(glm::vec3(1, 2, 3)));
     e.transform().scale = {1.5, 0.2, 3};
-    e.transform().rotate(0.4f, {0, 1, 0});
+    e.transform().rotate(Angle::fromRadians(0.4), UnitVec(0.0, 1.0, 0.0));
     PhysicsSettings ps;
     ps.gravity = {0.0, -1.62, 0.0};
     a.setPhysicsSettings(ps);
@@ -480,7 +480,7 @@ void hierarchy() {
 
     // update() keeps them in step after scripts and built-in systems: a turning parent swings them.
     Entity hub = scene.createEntity("Hub");
-    hub.add<RotatorComponent>(glm::vec3(0, 1, 0), glm::half_pi<f32>()); // 90°/s
+    hub.add<RotatorComponent>(glm::vec3(0, 1, 0), AngleSpeed::fromDegreesPerSecond(90));
     Entity arm = scene.createEntity("Arm");
     arm.transform().position = {1, 0, 0};
     arm.setParent(hub);

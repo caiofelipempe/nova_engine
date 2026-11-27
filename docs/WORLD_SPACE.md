@@ -576,3 +576,32 @@ Substitui o toro fixo de 16 km (a volta pelo estouro do `int32`) e as bordas `Ba
   comando: `Sandbox --scenario "Tiny circular world" --wrap split|object|triangle|crop|crop-camera --laps N`. O painel também tem o `Crop`, com a escolha entre a volta do mundo e a da câmera.
 - Editor (*Game/Scenarios*): Small World (Wrap-around), Torus Seam e Tiny World (48 m). Os três
   rodam sem tela nos `ScenarioTests` (o minúsculo duas vezes, comparando o hash).
+
+## Scalar, Vec3, Quat e ângulos binários (feito)
+
+O `math/Fixed.h` e o `math/Rotation.h` saíram; no lugar:
+
+- **`math/Scalar.h`**: `Fixed<Int, F>` para `i8`, `i16`, `i32` (sobre o `fpm`) e `i64` (próprio: soma,
+  subtração, comparação e conversão; sem produto, que pediria 128 bits). `Q<I, F>` dá o formato pelos
+  bits inteiros e fracionários (`Q<13, 18>` é o `Length`). `mul`/`div`/`convert` misturam tamanhos.
+  As dimensões ficam aqui: `Length`, `Distance`, `Speed`, `Acceleration`, `Scalar`, `Mass`, `Unit`,
+  `Force`, `GlobalLength` (Q45.18).
+- **`Angle`**: `u32` em frações de volta (2³² = 2π, passo 1,46×10⁻⁹ rad). Dá a volta sozinho, sem
+  resto nem estouro; lido com sinal fica em [−π, π), e as comparações usam essa leitura. `Angle16`
+  guarda 16 bits para rede e arquivos compactos.
+- **`AngleSpeed`**: tipo próprio, em voltas/s Q6.25 (±64 voltas/s ≈ 400 rad/s, passo 1,9×10⁻⁷ rad/s,
+  dentro da regra dos 3,8 µm a 1 km). Só se constrói com a unidade (`fromDegreesPerSecond(90)`), e
+  `angleTurned(speed, flicks)` integra exatamente.
+- **`math/Trig.h`**: seno, cosseno, tangente e inversas de `Angle` pela biblioteca padrão em `double`,
+  quantizadas de volta para `Unit`/`Angle`. Múltiplos de 90° são exatos (o quadrante vem dos bits). A
+  biblioteca padrão não garante os mesmos bits em todo compilador: a quantização esconde quase tudo, e
+  trocar por uma versão inteira é mudar só este arquivo.
+- **`math/Vec3.h`**: `Vec3<T>` para qualquer `Fixed` (e `EulerAngles = Vec3<Angle>`).
+- **`math/Quat.h`**: `QuatT<T>` (`Quat` = Q1.30, `Quat16` = Q1.14) com tudo do antigo `Rotation.h`:
+  `EulerOrder`, `fromEuler`/`toEuler` nas seis ordens, `slerp`, `nlerp`, `angleBetween`,
+  `rotateTowards`, `renormalized`, além de eixo-ângulo, composição e rotação de vetores.
+
+Câmera (`fovY` em `Angle`, distâncias em `Length`/`Distance`), luzes (`Scalar`, `Length`), `RotatorComponent`
+(`AngleSpeed`), limites e motor da hinge (`angleMin`/`angleMax`, `motorSpeed`/`motorAngle`) e o
+`maxSlope` do personagem passaram a ponto fixo. As cenas estão na versão 2 (ângulos em graus, velocidades
+angulares em graus/s); as de versão 1 são migradas na leitura. A animação continua em `double`.

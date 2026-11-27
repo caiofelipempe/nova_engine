@@ -27,7 +27,9 @@ namespace {
 
 constexpr const char* kFormat = "nova.scene";
 constexpr const char* kPrefabFormat = "nova.prefab";
-constexpr int kVersion = 1;
+// 2: angles are binary (Angle, in degrees in files; angular speeds in degrees per second), hinge
+//    limits and motors have their own fields. Version 1 files are migrated when read.
+constexpr int kVersion = 2;
 
 // ---------------------------------------------------------------- writing --
 Json writeObject(const reflect::TypeInfo& type, void* object, const SerializeOptions& opt);
@@ -57,24 +59,49 @@ Json writeOffset(const GlobalOffset& o) { return writeSteps(o.raw(), o.toMeters(
 
 // A fixed-point value as the shortest decimal that reads back to the same raw integer ("0.05",
 // not "0.0500030517578125"): files stay readable and round trips are exact.
-Json writeFixed(i32 raw, u32 fraction) {
+Json writeFixed(i64 raw, u32 fraction, u32 bits = 32) {
     const f64 exact = fromRawValue(raw, fraction);
     char buf[40];
     for (int digits = 1; digits <= 17; ++digits) {
         std::snprintf(buf, sizeof(buf), "%.*g", digits, exact);
         const f64 v = std::strtod(buf, nullptr);
-        if (toRaw(v, fraction) == raw) return v;
+        if (toRawBits(v, fraction, bits) == raw) return v;
     }
+    if (bits > 53) return raw; // beyond the precision of a double: the raw integer (read back as is)
     return exact;
+}
+
+// An angle in degrees, [−180, 180): the shortest decimal that reads back to the same bits.
+Json writeAngle(Angle a) {
+    char buf[40];
+    for (int digits = 1; digits <= 17; ++digits) {
+        std::snprintf(buf, sizeof(buf), "%.*g", digits, a.degrees());
+        const f64 v = std::strtod(buf, nullptr);
+        if (Angle::fromDegrees(v) == a) return v;
+    }
+    return a.degrees();
+}
+
+// A fixed-point field in the units of reflect::fixedValue() (degrees per second for AngleSpeed).
+Json writeFixedField(const reflect::FieldInfo& f, const void* p, int i = 0) {
+    if (f.kind != reflect::FieldKind::AngleSpeed) return writeFixed(reflect::fixedRaw(f, p, i), f.fracBits, f.storageBits);
+    const i64 raw = reflect::fixedRaw(f, p, i);
+    char buf[40];
+    for (int digits = 1; digits <= 17; ++digits) {
+        std::snprintf(buf, sizeof(buf), "%.*g", digits, reflect::fixedValue(f, p, i));
+        const f64 v = std::strtod(buf, nullptr);
+        if (toRawBits(v / 360.0, f.fracBits, f.storageBits) == raw) return v;
+    }
+    return reflect::fixedValue(f, p, i);
 }
 
 Json writeFixedVec(const reflect::FieldInfo& f, const void* p) {
     Json a = Json::array();
-    for (int i = 0; i < 3; ++i) a.push_back(writeFixed(reflect::fixedRaw(f, p, i), f.fracBits));
+    for (int i = 0; i < 3; ++i) a.push_back(writeFixedField(f, p, i));
     return a;
 }
 
-Json writeFixedQuat(const FixedQuat& q) {
+Json writeFixedQuat(const Quat& q) {
     constexpr u32 kBits = fractionBits<Unit>;
     return Json::array({writeFixed(q.x.raw_value(), kBits), writeFixed(q.y.raw_value(), kBits),
                         writeFixed(q.z.raw_value(), kBits), writeFixed(q.w.raw_value(), kBits)});
@@ -167,9 +194,11 @@ Json writeField(const reflect::FieldInfo& f, void* p, const SerializeOptions& op
             return sh.id;
         }
         case K::Entity: return static_cast<EntityRef*>(p)->uuid;
-        case K::Fixed: return writeFixed(reflect::fixedRaw(f, p), f.fracBits);
+        case K::Fixed:
+        case K::AngleSpeed: return writeFixedField(f, p);
+        case K::Angle: return writeAngle(*static_cast<Angle*>(p));
         case K::FixedVec3: return writeFixedVec(f, p);
-        case K::FixedQuat: return writeFixedQuat(*static_cast<FixedQuat*>(p));
+        case K::FixedQuat: return writeFixedQuat(*static_cast<Quat*>(p));
         case K::Struct: {
             const reflect::TypeInfo* t = f.nestedType();
             if (!t) return nullptr; // unregistered struct
@@ -268,11 +297,20 @@ void readVec(f32* out, const Json& j) {
         if (j[i].is_number()) out[i] = j[i].get<f32>();
 }
 
+// A number → the nearest fixed-point value (exact for what writeFixed wrote); 64-bit formats past
+// the precision of a double are written as their raw integer.
+void readFixedValue(const reflect::FieldInfo& f, void* p, const Json& j, int i = 0) {
+    if (!j.is_number()) return;
+    if (f.kind == reflect::FieldKind::Fixed && f.storageBits > 53 && j.is_number_integer())
+        reflect::setFixedRaw(f, p, j.get<i64>(), i);
+    else
+        reflect::setFixedValue(f, p, j.get<f64>(), i);
+}
+
 // Numbers → the nearest fixed-point values (exact for what writeFixed wrote).
 void readFixedVec(const reflect::FieldInfo& f, void* p, const Json& j) {
     if (!j.is_array()) return;
-    for (int i = 0; i < 3 && i < static_cast<int>(j.size()); ++i)
-        if (j[i].is_number()) reflect::setFixedValue(f, p, j[i].get<f64>(), i);
+    for (int i = 0; i < 3 && i < static_cast<int>(j.size()); ++i) readFixedValue(f, p, j[i], i);
 }
 
 void readSpeedVec(SpeedVec& v, const Json& j) {
@@ -283,23 +321,23 @@ void readSpeedVec(SpeedVec& v, const Json& j) {
 
 // [x, y, z, w]: kept bit for bit when already unit (what writeFixedQuat wrote), normalized
 // otherwise; older files with 3 numbers hold Euler radians (glm::quat(vec3) convention, ZYX).
-void readFixedQuat(FixedQuat& q, const Json& j) {
+void readFixedQuat(Quat& q, const Json& j) {
     if (!j.is_array()) return;
     if (j.size() == 4) {
         f64 v[4] = {0, 0, 0, 1};
         for (int i = 0; i < 4; ++i)
             if (j[i].is_number()) v[i] = j[i].get<f64>();
-        FixedQuat r;
+        Quat r;
         r.x = toFixed<Unit>(v[0]);
         r.y = toFixed<Unit>(v[1]);
         r.z = toFixed<Unit>(v[2]);
         r.w = toFixed<Unit>(v[3]);
         const f64 len2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + v[3] * v[3];
-        q = std::abs(len2 - 1.0) < 1e-6 ? r : FixedQuat(glm::dquat(v[3], v[0], v[1], v[2]));
+        q = std::abs(len2 - 1.0) < 1e-6 ? r : Quat(glm::dquat(v[3], v[0], v[1], v[2]));
     } else if (j.size() == 3) {
         glm::vec3 e(0.0f);
         readVec<3>(&e.x, j);
-        q = quatFromEuler(e, EulerOrder::ZYX);
+        q = Quat::fromEulerRadians(glm::dvec3(e), EulerOrder::ZYX);
     }
 }
 
@@ -392,7 +430,7 @@ void readField(const reflect::FieldInfo& f, void* p, const Json& j, const Serial
             } else if (j.size() == 3) { // older files: Euler radians in glm::quat(vec3) convention (ZYX)
                 glm::vec3 e(0.0f);
                 readVec<3>(&e.x, j);
-                q = quatFromEuler(e, EulerOrder::ZYX);
+                q = Quat::fromEulerRadians(glm::dvec3(e), EulerOrder::ZYX).toGlm();
             }
             break;
         }
@@ -411,9 +449,11 @@ void readField(const reflect::FieldInfo& f, void* p, const Json& j, const Serial
             if (j.is_number_unsigned() || j.is_number_integer()) static_cast<EntityRef*>(p)->uuid = j.get<u64>();
             else if (j.is_null()) *static_cast<EntityRef*>(p) = {};
             break;
-        case K::Fixed: if (j.is_number()) reflect::setFixedValue(f, p, j.get<f64>()); break;
+        case K::Fixed:
+        case K::AngleSpeed: readFixedValue(f, p, j); break;
+        case K::Angle: if (j.is_number()) *static_cast<Angle*>(p) = Angle::fromDegrees(j.get<f64>()); break;
         case K::FixedVec3: readFixedVec(f, p, j); break;
-        case K::FixedQuat: readFixedQuat(*static_cast<FixedQuat*>(p), j); break;
+        case K::FixedQuat: readFixedQuat(*static_cast<Quat*>(p), j); break;
         case K::Struct:
             if (const reflect::TypeInfo* t = f.nestedType(); t && j.is_object()) readObject(*t, p, j, opt);
             break;
@@ -452,6 +492,37 @@ void readObject(const reflect::TypeInfo& type, void* object, const Json& j, cons
 
 void readEntityInto(Entity e, const Json& je, const SerializeOptions& opt, std::set<std::string>& warned);
 
+// Version of the file being read (readEntity of copies and undo states: the current one).
+int s_readingVersion = kVersion;
+struct ReadingVersion {
+    explicit ReadingVersion(int v) { s_readingVersion = v; }
+    ~ReadingVersion() { s_readingVersion = kVersion; }
+};
+
+// Version 1 → 2: angles in radians where they were (camera field of view, rotator speed) and hinge
+// limits and motor targets in the slider fields, in degrees.
+void migrateV1(Entity e, const Json& components) {
+    auto number = [&](const char* component, const char* field, f64& out) {
+        auto c = components.find(component);
+        if (c == components.end() || !c->is_object()) return false;
+        auto f = c->find(field);
+        if (f == c->end() || !f->is_number()) return false;
+        out = f->get<f64>();
+        return true;
+    };
+    f64 v = 0.0;
+    if (auto* c = e.tryGet<CameraComponent>(); c && number("Camera", "fovY", v)) c->fovY = Angle::fromRadians(v);
+    if (auto* r = e.tryGet<RotatorComponent>(); r && number("Rotator", "speed", v)) r->speed = AngleSpeed::fromRadiansPerSecond(v);
+    if (auto* j = e.tryGet<JointComponent>(); j && j->type == physics::JointType::Hinge) {
+        if (number("Joint", "limitMin", v)) j->angleMin = Angle::fromDegrees(v);
+        if (number("Joint", "limitMax", v)) j->angleMax = Angle::fromDegrees(v);
+        if (number("Joint", "motorTarget", v)) {
+            j->motorSpeed = AngleSpeed::fromDegreesPerSecond(v);
+            j->motorAngle = Angle::fromDegrees(v);
+        }
+    }
+}
+
 Entity readEntity(Scene& scene, const Json& je, const SerializeOptions& opt, std::set<std::string>& warned) {
     Entity e = scene.createEntity();
     readEntityInto(e, je, opt, warned);
@@ -469,6 +540,7 @@ void readEntityInto(Entity e, const Json& je, const SerializeOptions& opt, std::
         if (!t->has(e)) t->add(e);
         readObject(*t, t->get(e), it.value(), opt);
     }
+    if (s_readingVersion < 2) migrateV1(e, components);
     if (je.contains("scripts") && je["scripts"].is_array()) {
         for (const Json& js : je["scripts"]) {
             const std::string typeName = js.value("type", "");
@@ -524,6 +596,7 @@ bool deserializeScene(Scene& scene, std::string_view text, const SerializeOption
     if (root.is_discarded()) return fail("invalid JSON");
     if (!root.is_object() || root.value("format", "") != kFormat) return fail("not a nova.scene file");
     if (root.value("version", 0) > kVersion) return fail("scene file is from a newer engine version");
+    ReadingVersion reading(root.value("version", 1));
 
     scene.clear();
     if (root.contains("name") && root["name"].is_string()) scene.setName(root["name"].get<std::string>());
@@ -643,6 +716,7 @@ std::vector<Entity> instantiatePrefab(Scene& scene, std::string_view json, const
         return out;
     }
     std::set<std::string> warned;
+    ReadingVersion reading(root.value("version", 1));
     std::unordered_map<u64, u64> ids; // prefab id -> new UUID
     try {
         if (root.contains("entities") && root["entities"].is_array())

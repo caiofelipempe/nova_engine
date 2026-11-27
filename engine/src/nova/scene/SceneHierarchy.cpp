@@ -32,7 +32,7 @@ void placeAt(const TransformComponent& p, const LocalTransform& l, TransformComp
     const glm::dquat turn = p.rotation.toDouble();
     const glm::dvec3 scale = p.scale.toDouble();
     t.position = p.position + GlobalOffset::fromMeters(turn * (scale * l.position));
-    t.rotation = FixedQuat(turn * l.rotation);
+    t.rotation = Quat(turn * l.rotation);
     t.scale = ScalarVec(scale * l.scale);
 }
 
@@ -181,7 +181,7 @@ void Scene::setLocalTransform(Entity entity, const LocalTransform& local) {
         return;
     }
     t.position = GlobalPosition(local.position);
-    t.rotation = FixedQuat(local.rotation);
+    t.rotation = Quat(local.rotation);
     t.scale = ScalarVec(local.scale);
 }
 

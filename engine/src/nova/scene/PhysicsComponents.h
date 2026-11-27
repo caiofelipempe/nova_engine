@@ -4,7 +4,7 @@
 /// @brief Physics components (frontend): what games put on entities. Scene turns them into bodies
 ///        of a physics::PhysicsWorld; no backend type appears here.
 
-#include "nova/math/Fixed.h"
+#include "nova/math/Quat.h"
 #include "nova/physics/PhysicsWorld.h"
 #include "nova/renderer/Mesh.h"
 #include "nova/scene/EntityRef.h"
@@ -41,7 +41,7 @@ struct RigidBodyLocks {
 /// transform when it is moved.
 struct RigidBodyComponent {
     physics::BodyType type = physics::BodyType::Dynamic; ///< Static, kinematic (follows the transform) or dynamic.
-    Scalar mass = Scalar(1.0);                           ///< Mass in kg (dynamic only; up to 32 t).
+    Mass mass = Mass(1.0);                               ///< Mass in kg (dynamic only; up to 32 t).
     Scalar friction = Scalar(0.5);                       ///< Friction coefficient.
     Scalar restitution = Scalar(0.1);                    ///< Bounciness (0..1).
     Scalar linearDamping = Scalar(0.05);                 ///< Linear velocity damping.
@@ -62,7 +62,7 @@ struct RigidBodyComponent {
 struct BoxColliderComponent {
     LengthVec halfExtents{0.5, 0.5, 0.5}; ///< Half size per axis, before scaling (0.5 = matches the unit cube mesh).
     LengthVec offset;                     ///< Center relative to the entity origin, before scaling.
-    FixedQuat rotation;                   ///< Orientation relative to the entity.
+    Quat rotation;                   ///< Orientation relative to the entity.
 };
 
 /// @brief Sphere collision shape for a RigidBodyComponent.
@@ -76,7 +76,7 @@ struct CapsuleColliderComponent {
     Length radius = Length(0.5);     ///< Radius before scaling (multiplied by max(scale.x, scale.z)).
     Length halfHeight = Length(0.5); ///< Half length of the cylindrical part, before scaling (multiplied by scale.y).
     LengthVec offset;                ///< Center relative to the entity origin, before scaling.
-    FixedQuat rotation;              ///< Orientation relative to the entity (axis = local Y).
+    Quat rotation;              ///< Orientation relative to the entity (axis = local Y).
 };
 
 /// @brief Cylinder collision shape (axis = local Y) for a RigidBodyComponent.
@@ -84,7 +84,7 @@ struct CylinderColliderComponent {
     Length radius = Length(0.5);     ///< Radius before scaling (multiplied by max(scale.x, scale.z)).
     Length halfHeight = Length(0.5); ///< Half height before scaling (multiplied by scale.y).
     LengthVec offset;                ///< Center relative to the entity origin, before scaling.
-    FixedQuat rotation;              ///< Orientation relative to the entity (axis = local Y).
+    Quat rotation;              ///< Orientation relative to the entity (axis = local Y).
 };
 
 /// @brief Convex polyhedron collision shape: the convex hull of a mesh's vertices (scaled by the
@@ -92,7 +92,7 @@ struct CylinderColliderComponent {
 struct ConvexHullColliderComponent {
     MeshHandle mesh;    ///< Source mesh; invalid = the entity's MeshComponent mesh.
     LengthVec offset;   ///< Shift relative to the entity origin, before scaling.
-    FixedQuat rotation; ///< Orientation relative to the entity.
+    Quat rotation; ///< Orientation relative to the entity.
 };
 
 /// @brief Exact triangle-mesh collision shape (level geometry, glTF scenery). Static and kinematic
@@ -117,14 +117,18 @@ struct JointComponent {
     ///        world, an offset from this entity's position at start (world axes).
     LengthVec connectedAnchor{0.0, 2.0, 0.0};
     bool limitsEnabled = false;      ///< Hinge / slider: limit the motion.
-    Length limitMin = Length(-45.0); ///< Hinge: degrees; slider: meters (from the start).
-    Length limitMax = Length(45.0);  ///< See limitMin.
+    Angle angleMin = Angle::fromDegrees(-45); ///< Hinge: lowest angle from the start ([−180°, 0°]).
+    Angle angleMax = Angle::fromDegrees(45);  ///< Hinge: highest angle from the start ([0°, 180°]).
+    Length limitMin = Length(-45.0); ///< Slider: lowest position from the start (m).
+    Length limitMax = Length(45.0);  ///< Slider: highest position from the start (m).
     Length minDistance = Length(-1.0); ///< Distance joints: shortest (m; −1 = at start).
     Length maxDistance = Length(-1.0); ///< Distance joints: longest (m; −1 = at start).
     Scalar springFrequency = Scalar(0.0); ///< Distance joints: softness (Hz; 0 = rigid).
     Scalar springDamping = Scalar(0.5);   ///< Damping ratio of that spring.
     physics::JointMotorMode motorMode = physics::JointMotorMode::Off; ///< Hinge / slider motor.
-    Scalar motorTarget = Scalar(0.0);  ///< Hinge: deg/s or degrees; slider: m/s or meters.
+    AngleSpeed motorSpeed;                   ///< Hinge velocity motor: the angular speed to reach.
+    Angle motorAngle;                        ///< Hinge position motor: the angle to reach (from the start).
+    Scalar motorTarget = Scalar(0.0);  ///< Slider: m/s (velocity motor) or meters (position motor).
     Force motorMaxForce = Force(0.0);  ///< Hinge: N·m; slider: N; 0 = unlimited.
     Force breakForce = Force(0.0);     ///< Breaks above this force (N); 0 = never.
     Force breakTorque = Force(0.0);    ///< Breaks above this torque (N·m); 0 = never.
@@ -150,10 +154,10 @@ struct CharacterControllerComponent {
     Length radius = Length(0.3);             ///< Capsule radius (m).
     Length height = Length(1.8);             ///< Total height (m), radius included.
     LengthVec offset{0.0, 0.9, 0.0};         ///< Capsule center relative to the entity origin (world axes).
-    Scalar maxSlope = Scalar(50.0);          ///< Steepest walkable slope (degrees).
+    Angle maxSlope = Angle::fromDegrees(50); ///< Steepest walkable slope.
     Length stepHeight = Length(0.3);         ///< Highest step it walks up (m).
     Length stickToFloor = Length(0.5);       ///< Down steps it follows instead of flying off (m).
-    Scalar mass = Scalar(70.0);              ///< Kg (pushing and being pushed).
+    Mass mass = Mass(70.0);                  ///< Kg (pushing and being pushed).
     Force maxPushForce = Force(100.0);       ///< Strongest push on dynamic bodies (N).
     Scalar gravityFactor = Scalar(1.0);      ///< Gravity multiplier.
     u32 layer = 0;                           ///< Collision layer.

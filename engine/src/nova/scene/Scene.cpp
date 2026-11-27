@@ -121,8 +121,8 @@ void Scene::update(Duration frame) {
 
     // Built-in systems.
     for (auto [e, t, r] : m_registry.view<TransformComponent, RotatorComponent>().each()) {
-        const f64 angle = toDouble(r.speed) * frame.seconds(); // exact frame time, no float in between
-        t.rotation = (TransformComponent::turn(angle, r.axis.toDouble()) * t.rotation).normalized();
+        // The exact turn of this frame (fixed point: integer flicks, binary angles that wrap by themselves).
+        t.rotate(angleTurned(r.speed, frame.flicks()), r.axis);
     }
 
     updateAnimations(frame); // clips set their nodes' offsets from their parents
@@ -158,8 +158,10 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
         auto& c = cam.get<CameraComponent>();
         // Camera-relative: the camera is the frame's origin, everything else is measured from it.
         out.camera = c.projection == CameraProjection::Orthographic
-                         ? CameraData::relativeOrthographic(t.position, t.orientation(), c.orthoSize, aspect, c.nearClip, c.farClip)
-                         : CameraData::relative(t.position, t.orientation(), c.fovY, aspect, c.nearClip, c.farClip);
+                         ? CameraData::relativeOrthographic(t.position, t.orientation(), toFloat(c.orthoSize), aspect,
+                                                            toFloat(c.nearClip), toFloat(c.farClip))
+                         : CameraData::relative(t.position, t.orientation(), c.fovY.radiansF(), aspect, toFloat(c.nearClip),
+                                                toFloat(c.farClip));
         hasCamera = true;
     }
 
@@ -170,14 +172,15 @@ bool Scene::buildRenderScene(RenderScene& out, f32 aspect, const CameraData* cam
         auto [t, l] = suns.get<TransformComponent, DirectionalLightComponent>(*it);
         out.sun.direction = t.forward();
         out.sun.color = l.color;
-        out.sun.intensity = l.intensity;
+        out.sun.intensity = toFloat(l.intensity);
     }
 
     // What the physics moves is drawn between its last two steps (interpolatePhysics).
     TransformComponent drawn;
     for (auto [e, t, l] : m_registry.view<TransformComponent, PointLightComponent>().each()) {
         const TransformComponent& at = drawnPose(e, t, drawn) ? drawn : t;
-        out.pointLights.push_back({(at.position - out.camera.origin).toVec3(), l.radius, l.color, l.intensity, l.castShadows});
+        out.pointLights.push_back(
+            {(at.position - out.camera.origin).toVec3(), toFloat(l.radius), l.color, toFloat(l.intensity), l.castShadows});
     }
 
     for (auto [e, t, m] : m_registry.view<TransformComponent, MeshComponent>().each()) {

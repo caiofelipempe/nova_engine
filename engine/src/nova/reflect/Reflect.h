@@ -17,7 +17,7 @@
 /// Register before the first use (e.g. at the start of `main` or in EditorApp::onSetup).
 
 #include "nova/core/Module.h"
-#include "nova/math/Fixed.h"
+#include "nova/math/Quat.h"
 #include "nova/math/GlobalPosition.h"
 #include "nova/renderer/Mesh.h"
 #include "nova/scene/Script.h"
@@ -54,9 +54,11 @@ enum class FieldKind {
     Position, ///< GlobalPosition (meters when exact, raw integer steps otherwise)
     Quat,   ///< `glm::quat` rotation (serialized as [x, y, z, w]; edited as Euler degrees)
     Entity, ///< EntityRef (serialized as the target's UUID; edited with an entity picker)
-    Fixed,  ///< `Fixed<F>` (Length, Scalar, ...): FieldInfo::fracBits says where the point is
-    FixedVec3, ///< `FixedVec3<Fixed<F>>` (LengthVec, ScalarVec, ...)
-    FixedQuat, ///< FixedQuat rotation (serialized as [x, y, z, w]; edited as Euler degrees)
+    Fixed,  ///< `Fixed<Int, F>` (Length, Scalar, ...): FieldInfo::fracBits says where the point is
+    FixedVec3, ///< `Vec3<Fixed<Int, F>>` (LengthVec, ScalarVec, ...)
+    FixedQuat, ///< Quat rotation (serialized as [x, y, z, w]; edited as Euler degrees)
+    Angle,  ///< Angle (serialized and edited in degrees, [−180, 180))
+    AngleSpeed, ///< AngleSpeed (serialized and edited in degrees per second)
     Struct, ///< any struct registered with type() (nested object)
 };
 
@@ -88,9 +90,10 @@ struct FieldInfo {
     std::function<void*(void*)> access;   ///< Object pointer → member pointer.
     std::function<i64(const void*)> getEnum;    ///< Enum fields: read the value as an integer.
     std::function<void(void*, i64)> setEnum;    ///< Enum fields: write an integer value.
-    u32 fracBits = 0; ///< Fixed / FixedVec3 fields: fraction bits of each component.
-    std::function<i32(const void*, int)> getRaw;  ///< Fixed / FixedVec3 fields: raw integer of component i.
-    std::function<void(void*, int, i32)> setRaw;  ///< Fixed / FixedVec3 fields: writes the raw integer of component i.
+    u32 fracBits = 0;    ///< Fixed / FixedVec3 / AngleSpeed fields: fraction bits of each component.
+    u32 storageBits = 0; ///< Fixed / FixedVec3 / AngleSpeed fields: bits of the raw integer (8 to 64).
+    std::function<i64(const void*, int)> getRaw;  ///< Fixed / FixedVec3 / Angle(Speed) fields: raw integer of component i.
+    std::function<void(void*, int, i64)> setRaw;  ///< Fixed / FixedVec3 / Angle(Speed) fields: writes the raw integer of component i.
 
     /// @brief The member inside `object` (pointer to the owning type).
     void* in(void* object) const { return access(object); }
@@ -174,23 +177,28 @@ std::string prettifyName(std::string_view identifier);
 
 namespace detail {
 template <typename T>
-struct IsFixed : std::false_type {};
-template <unsigned F>
-struct IsFixed<Fixed<F>> : std::true_type {};
-template <typename T>
 struct IsFixedVec : std::false_type {};
 template <typename T>
-struct IsFixedVec<FixedVec3<T>> : IsFixed<T> {};
+struct IsFixedVec<Vec3<T>> : nova::IsFixed<T> {};
 } // namespace detail
 
-/// @brief Raw integer of component `i` (0 for Fixed) of a Fixed or FixedVec3 field at `p`.
-inline i32 fixedRaw(const FieldInfo& f, const void* p, int i = 0) { return f.getRaw(p, i); }
-/// @brief Writes the raw integer of component `i` of a Fixed or FixedVec3 field at `p`.
-inline void setFixedRaw(const FieldInfo& f, void* p, i32 raw, int i = 0) { f.setRaw(p, i, raw); }
-/// @brief Value of component `i` of a Fixed or FixedVec3 field (exact).
-inline f64 fixedValue(const FieldInfo& f, const void* p, int i = 0) { return fromRawValue(fixedRaw(f, p, i), f.fracBits); }
-/// @brief Sets component `i` of a Fixed or FixedVec3 field to the nearest value.
-inline void setFixedValue(const FieldInfo& f, void* p, f64 v, int i = 0) { setFixedRaw(f, p, toRaw(v, f.fracBits), i); }
+/// @brief Raw integer of component `i` (0 for Fixed) of a Fixed or Vec3 field at `p`.
+inline i64 fixedRaw(const FieldInfo& f, const void* p, int i = 0) { return f.getRaw(p, i); }
+/// @brief Writes the raw integer of component `i` of a Fixed or Vec3 field at `p`.
+inline void setFixedRaw(const FieldInfo& f, void* p, i64 raw, int i = 0) { f.setRaw(p, i, raw); }
+/// @brief Value of component `i` of a Fixed or Vec3 field (exact); degrees for Angle, degrees per
+///        second for AngleSpeed.
+inline f64 fixedValue(const FieldInfo& f, const void* p, int i = 0) {
+    if (f.kind == FieldKind::Angle) return Angle::fromRaw(static_cast<u32>(fixedRaw(f, p, i))).degrees();
+    const f64 v = fromRawValue(fixedRaw(f, p, i), f.fracBits);
+    return f.kind == FieldKind::AngleSpeed ? v * 360.0 : v;
+}
+/// @brief Sets component `i` of a Fixed or Vec3 field to the nearest value (same units as fixedValue()).
+inline void setFixedValue(const FieldInfo& f, void* p, f64 v, int i = 0) {
+    if (f.kind == FieldKind::Angle) return setFixedRaw(f, p, Angle::fromDegrees(v).raw(), i);
+    if (f.kind == FieldKind::AngleSpeed) v /= 360.0;
+    setFixedRaw(f, p, toRawBits(v, f.fracBits, f.storageBits), i);
+}
 
 /// @brief Storage kind for a C++ member type.
 template <typename F>
@@ -211,9 +219,11 @@ constexpr FieldKind kindOf() {
     else if constexpr (std::is_same_v<F, GlobalPosition>) return FieldKind::Position;
     else if constexpr (std::is_same_v<F, glm::quat>) return FieldKind::Quat;
     else if constexpr (std::is_same_v<F, EntityRef>) return FieldKind::Entity;
-    else if constexpr (detail::IsFixed<F>::value) return FieldKind::Fixed;
+    else if constexpr (std::is_same_v<F, Angle>) return FieldKind::Angle;
+    else if constexpr (std::is_same_v<F, AngleSpeed>) return FieldKind::AngleSpeed;
+    else if constexpr (nova::isFixed<F>) return FieldKind::Fixed;
     else if constexpr (detail::IsFixedVec<F>::value) return FieldKind::FixedVec3;
-    else if constexpr (std::is_same_v<F, FixedQuat>) return FieldKind::FixedQuat;
+    else if constexpr (std::is_same_v<F, Quat>) return FieldKind::FixedQuat;
     else return FieldKind::Struct;
 }
 
@@ -240,16 +250,30 @@ public:
             f.getEnum = [](const void* p) { return static_cast<i64>(*static_cast<const F*>(p)); };
             f.setEnum = [](void* p, i64 v) { *static_cast<F*>(p) = static_cast<F>(v); };
         }
-        if constexpr (detail::IsFixed<F>::value) {
+        if constexpr (nova::isFixed<F>) {
             f.fracBits = fractionBits<F>;
-            f.getRaw = [](const void* p, int) { return static_cast<const F*>(p)->raw_value(); };
-            f.setRaw = [](void* p, int, i32 raw) { *static_cast<F*>(p) = F::from_raw_value(raw); };
+            f.storageBits = storageBits<F>;
+            f.getRaw = [](const void* p, int) { return static_cast<i64>(static_cast<const F*>(p)->raw_value()); };
+            f.setRaw = [](void* p, int, i64 raw) { *static_cast<F*>(p) = fromRaw<F>(raw); };
+        }
+        if constexpr (std::is_same_v<F, AngleSpeed>) {
+            f.fracBits = fractionBits<AngleSpeed::Turns>;
+            f.storageBits = 32;
+            f.getRaw = [](const void* p, int) { return static_cast<i64>(static_cast<const AngleSpeed*>(p)->raw()); };
+            f.setRaw = [](void* p, int, i64 raw) { *static_cast<AngleSpeed*>(p) = AngleSpeed::fromRaw(static_cast<i32>(raw)); };
+        }
+        if constexpr (std::is_same_v<F, Angle>) {
+            f.fracBits = 32;
+            f.storageBits = 32;
+            f.getRaw = [](const void* p, int) { return static_cast<i64>(static_cast<const Angle*>(p)->raw()); };
+            f.setRaw = [](void* p, int, i64 raw) { *static_cast<Angle*>(p) = Angle::fromRaw(static_cast<u32>(raw)); };
         }
         if constexpr (detail::IsFixedVec<F>::value) {
             using C = decltype(F::x);
             f.fracBits = fractionBits<C>;
-            f.getRaw = [](const void* p, int i) { return (*static_cast<const F*>(p))[i].raw_value(); };
-            f.setRaw = [](void* p, int i, i32 raw) { (*static_cast<F*>(p))[i] = C::from_raw_value(raw); };
+            f.storageBits = storageBits<C>;
+            f.getRaw = [](const void* p, int i) { return static_cast<i64>((*static_cast<const F*>(p))[i].raw_value()); };
+            f.setRaw = [](void* p, int i, i64 raw) { (*static_cast<F*>(p))[i] = fromRaw<C>(raw); };
         }
         m_info.fields.push_back(std::move(f));
         return *this;

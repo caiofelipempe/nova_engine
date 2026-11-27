@@ -590,7 +590,7 @@ void determinism() {
 // CROSS_PLATFORM_DETERMINISTIC (overlay port) and the state is fixed point. The reference hash was
 // recorded once; Debug and Release must both reach it (a change here means the simulation changed:
 // update the value only on purpose).
-constexpr u64 kReferenceHash = 0xcd6c41137809c457ull; // Windows x64, MSVC, Debug and Release
+constexpr u64 kReferenceHash = 0xe583f9e48159e25cull; // Windows x64, MSVC, Debug and Release
 
 void crossPlatformDeterminism() {
     Scene s("reference");
@@ -606,7 +606,7 @@ void crossPlatformDeterminism() {
     for (int i = 0; i < 16; ++i) {
         Entity e = add("Body", 100 + static_cast<u64>(i));
         e.transform().position = {static_cast<f64>(i % 4) * 0.9 - 1.3, 0.6 + (i / 4) * 1.05, static_cast<f64>(i % 3) * 0.3};
-        e.transform().rotate(0.3f * static_cast<f32>(i), {1, 2, 0});
+        e.transform().rotate(Angle::fromRadians(0.3 * i), ScalarVec(1.0, 2.0, 0.0));
         e.add<RigidBodyComponent>().friction = 0.4f + 0.02f * static_cast<f32>(i);
         if (i % 2) e.add<SphereColliderComponent>().radius = 0.45f;
     }

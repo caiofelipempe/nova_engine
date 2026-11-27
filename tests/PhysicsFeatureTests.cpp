@@ -448,8 +448,8 @@ void hingeDoor() {
     j.anchor = {-0.5f, 0.0f, 0.0f}; // local, scaled: x = −1 m, the left edge
     j.axis = {0, 1, 0};
     j.limitsEnabled = true;
-    j.limitMin = -45.0f;
-    j.limitMax = 45.0f;
+    j.angleMin = Angle::fromDegrees(-45);
+    j.angleMax = Angle::fromDegrees(45);
     scene.startSimulation();
     run(scene, 1);
     CHECK(j.joint.valid());
@@ -473,12 +473,12 @@ void hingeMotor() {
     j.type = JointType::Hinge;
     j.axis = {0, 0, 1};
     j.motorMode = JointMotorMode::Velocity;
-    j.motorTarget = 90.0f; // deg/s
+    j.motorSpeed = AngleSpeed::fromDegreesPerSecond(90);
     scene.startSimulation();
     run(scene, 60);
     CHECK_NEAR(scene.physics()->angularVelocity(wheel.get<RigidBodyComponent>().body).z, glm::radians(90.0f), 0.02f);
     // Motor changes apply in place: now the other way.
-    j.motorTarget = -180.0f;
+    j.motorSpeed = AngleSpeed::fromDegreesPerSecond(-180);
     run(scene, 30);
     CHECK_NEAR(scene.physics()->angularVelocity(wheel.get<RigidBodyComponent>().body).z, glm::radians(-180.0f), 0.03f);
     CHECK(isWithin(wheel.transform().position, GlobalPosition(0.0, 2.0, 0.0), 1e-3));

@@ -7,7 +7,7 @@
 /// initialization, e.g. `e.add<nova::PointLightComponent>(glm::vec3(1, 0.5f, 0.2f), 25.0f, 9.0f)`.
 
 #include "nova/math/GlobalPosition.h"
-#include "nova/math/Rotation.h"
+#include "nova/math/Quat.h"
 #include "nova/renderer/Mesh.h"
 #include "nova/scene/EntityRef.h"
 #include "nova/scene/PhysicsComponents.h"
@@ -48,7 +48,7 @@ struct TransformComponent {
     ///        (`position = {0, 3, 10}`), move with offsets (`position += velocity * dt`).
     GlobalPosition position;
     /// @brief World rotation, a unit quaternion in Q1.30 (assigning a `glm::quat` normalizes it).
-    FixedQuat rotation;
+    Quat rotation;
     ScalarVec scale{1.0, 1.0, 1.0}; ///< Per-axis scale (also scales colliders).
 
     /// @brief The rotation as floats (rendering, glm math).
@@ -62,45 +62,39 @@ struct TransformComponent {
     /// `x` = pitch (around X), `y` = yaw (around Y), `z` = roll (around Z), applied in `order`
     /// around the local axes (default YXZ: yaw → pitch → roll).
     /// @{
-    /// @brief Euler angles in radians.
-    glm::vec3 euler(EulerOrder order = kDefaultEulerOrder) const { return eulerFromQuat(orientation(), order); }
-    /// @brief Euler angles in degrees.
-    glm::vec3 eulerDegrees(EulerOrder order = kDefaultEulerOrder) const { return eulerDegreesFromQuat(orientation(), order); }
-    /// @brief Sets the rotation from Euler angles in radians.
-    void setEuler(const glm::vec3& radians, EulerOrder order = kDefaultEulerOrder) { rotation = quatFromEuler(radians, order); }
+    /// @brief Euler angles.
+    EulerAngles euler(EulerOrder order = kDefaultEulerOrder) const { return rotation.toEuler(order); }
+    /// @brief Euler angles in degrees (editor, display).
+    glm::dvec3 eulerDegrees(EulerOrder order = kDefaultEulerOrder) const { return rotation.toEulerDegrees(order); }
+    /// @brief Sets the rotation from Euler angles.
+    void setEuler(const EulerAngles& angles, EulerOrder order = kDefaultEulerOrder) { rotation = Quat::fromEuler(angles, order); }
     /// @brief Sets the rotation from Euler angles in degrees.
-    void setEulerDegrees(const glm::vec3& degrees, EulerOrder order = kDefaultEulerOrder) {
-        rotation = quatFromEulerDegrees(degrees, order);
+    void setEulerDegrees(const glm::dvec3& degrees, EulerOrder order = kDefaultEulerOrder) {
+        rotation = Quat::fromEulerDegrees(degrees, order);
     }
     /// @}
 
-    /// @brief Rotates around a world axis (radians). Fixed-point math: the same bits everywhere.
-    void rotate(f32 angle, const glm::vec3& worldAxis) { rotation = (turn(angle, worldAxis) * rotation).normalized(); }
-    /// @brief Rotates around one of the entity's own axes (radians), e.g. `rotateLocal(dt, {0, 1, 0})`.
-    void rotateLocal(f32 angle, const glm::vec3& localAxis) {
-        rotation = (rotation * turn(angle, localAxis)).normalized();
+    /// @brief Rotates around a world axis (any length and format; zero = none). Fixed-point math:
+    ///        the same bits everywhere.
+    template <typename A>
+    void rotate(Angle angle, const Vec3<A>& worldAxis) {
+        rotation = (Quat::fromAxisAngle(worldAxis, angle) * rotation).normalized();
     }
-    /// @brief Turns towards `target` by at most `maxAngle` radians.
-    void rotateTowards(const glm::quat& target, f32 maxAngle) {
-        rotation = nova::rotateTowards(orientation(), target, maxAngle);
+    /// @brief Rotates around one of the entity's own axes, e.g. `rotateLocal(Angle::fromDegrees(90), UnitVec(0, 1, 0))`.
+    template <typename A>
+    void rotateLocal(Angle angle, const Vec3<A>& localAxis) {
+        rotation = (rotation * Quat::fromAxisAngle(localAxis, angle)).normalized();
     }
-    /// @brief The fixed-point rotation of `angle` radians around `axis` (any length; zero = none).
-    static FixedQuat turn(f32 angle, const glm::vec3& axis) { return turn(static_cast<f64>(angle), glm::dvec3(axis)); }
-    /// @brief Same, from doubles (an angle worked out exactly, e.g. a speed times a Duration).
-    static FixedQuat turn(f64 angle, const glm::dvec3& axis) {
-        const f64 len = glm::length(axis);
-        if (!(len > 0.0)) return {};
-        const f64 wrapped = std::remainder(angle, 2.0 * glm::pi<f64>()); // [−π, π]: fits Q3.28
-        return FixedQuat::fromAxisAngle(UnitVec(axis / len), toFixed<Angle>(wrapped));
-    }
+    /// @brief Turns towards `target` by at most `maxStep`.
+    void rotateTowards(const Quat& target, Angle maxStep) { rotation = nova::rotateTowards(rotation, target, maxStep); }
 
     /// @brief Interpolates two transforms: exact position (shortest way, wrap seams included),
     ///        rotation by slerp, scale linearly. `t` in [0, 1].
-    static TransformComponent lerp(const TransformComponent& a, const TransformComponent& b, f32 t) {
+    static TransformComponent lerp(const TransformComponent& a, const TransformComponent& b, Unit t) {
         TransformComponent out;
         out.position = nova::lerp(a.position, b.position, t);
-        out.rotation = slerp(a.orientation(), b.orientation(), t);
-        out.scale = glm::mix(a.scale.toDouble(), b.scale.toDouble(), static_cast<f64>(t));
+        out.rotation = slerp(a.rotation, b.rotation, t);
+        out.scale = a.scale + (b.scale - a.scale).scaled(t);
         return out;
     }
 
@@ -121,8 +115,13 @@ struct TransformComponent {
 
     /// @brief Rotates so forward (−Z) points at `target`, using yaw and pitch only (no roll).
     void lookAt(const GlobalPosition& target) {
-        const glm::vec3 dir = glm::normalize(glm::vec3((target - position).toMeters()));
-        setEuler({std::asin(glm::clamp(dir.y, -1.0f, 1.0f)), std::atan2(-dir.x, -dir.z), 0.0f}, EulerOrder::YXZ);
+        const glm::dvec3 d = (target - position).toMeters();
+        const f64 len = glm::length(d);
+        if (!(len > 0.0)) return;
+        const glm::dvec3 dir = d / len;
+        setEuler({Angle::fromRadians(std::asin(glm::clamp(dir.y, -1.0, 1.0))), Angle::fromRadians(std::atan2(-dir.x, -dir.z)),
+                  Angle()},
+                 EulerOrder::YXZ);
     }
 };
 
@@ -151,10 +150,10 @@ struct ParentComponent {
     u64 linkedTo = 0;             ///< The parent the offset was taken from (another one: taken again).
     bool synced = false;          ///< `local` and the poses below are valid.
     GlobalPosition placedPosition; ///< Where the scene last put the entity: moved since if it differs.
-    FixedQuat placedRotation;
+    Quat placedRotation;
     ScalarVec placedScale{1, 1, 1};
     GlobalPosition parentPosition; ///< The parent's pose the offset is for: followed when it differs.
-    FixedQuat parentRotation;
+    Quat parentRotation;
     ScalarVec parentScale{1, 1, 1};
 };
 
@@ -174,36 +173,36 @@ enum class CameraProjection : u8 {
 
 struct CameraComponent {
     CameraProjection projection = CameraProjection::Perspective; ///< Perspective or orthographic.
-    f32 fovY = glm::radians(60.0f); ///< Perspective: vertical field of view in radians.
-    f32 orthoSize = 10.0f;          ///< Orthographic: height of the view (m); the width follows the aspect.
-    f32 nearClip = 0.05f;           ///< Near plane distance.
-    f32 farClip = 500.0f;           ///< Far plane distance.
-    bool primary = true;            ///< The first primary camera renders the scene (see Scene::primaryCamera).
+    Angle fovY = Angle::fromDegrees(60);  ///< Perspective: vertical field of view.
+    Length orthoSize = Length(10.0);      ///< Orthographic: height of the view (m); the width follows the aspect.
+    Distance nearClip = Distance(0.05);   ///< Near plane distance (m).
+    Distance farClip = Distance(500.0);   ///< Far plane distance (m).
+    bool primary = true;                  ///< The first primary camera renders the scene (see Scene::primaryCamera).
 };
 
 /// @brief Directional light ("sun"); the light travels along the entity's forward (−Z) axis.
 /// @note Only the first one in the scene is used.
 struct DirectionalLightComponent {
-    glm::vec3 color{1.0f, 0.96f, 0.9f}; ///< Linear RGB color.
-    f32 intensity = 3.0f;               ///< Radiance multiplier.
+    glm::vec3 color{1.0f, 0.96f, 0.9f}; ///< Linear RGB color (render data: float).
+    Scalar intensity = Scalar(3.0);     ///< Radiance multiplier.
 };
 
 /// @brief Point light at the entity's position.
 /// @note At most 16 point lights are rendered per frame.
 struct PointLightComponent {
-    glm::vec3 color{1.0f}; ///< Linear RGB color.
-    f32 intensity = 10.0f; ///< Radiance multiplier.
-    f32 radius = 8.0f;     ///< Distance at which the light fades to zero.
+    glm::vec3 color{1.0f};           ///< Linear RGB color (render data: float).
+    Scalar intensity = Scalar(10.0); ///< Radiance multiplier.
+    Length radius = Length(8.0);     ///< Distance at which the light fades to zero (m).
     bool castShadows = true; ///< Things block it (ray traced, or cube shadow maps without ray tracing).
 };
 
 /// @brief Built-in behaviour: spins the entity around `axis` while the scene updates.
 ///
 /// Fixed point like the rest of what moves the simulation (it turns kinematic bodies): each
-/// update turns it by `speed` times the exact frame duration.
+/// update turns it by `speed` times the exact frame duration (angleTurned(): exact, wraps around).
 struct RotatorComponent {
-    ScalarVec axis{0, 1, 0}; ///< Rotation axis (world space, any length; normalized internally).
-    Scalar speed = 1;        ///< Angular speed in radians per second.
+    ScalarVec axis{0, 1, 0};                       ///< Rotation axis (world space, any length; normalized internally).
+    AngleSpeed speed = AngleSpeed::fromRadiansPerSecond(1.0); ///< Angular speed (edited in degrees per second).
 };
 
 /// @brief Marks an entity created from a prefab or model asset (see AssetDatabase::instantiate).
