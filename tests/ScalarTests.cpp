@@ -248,6 +248,16 @@ void dimensions() {
     CHECK(std::abs(toDouble(Friction(0.5)) - 0.5) < 1e-9 && std::abs(toDouble(Restitution(0.1)) - 0.1) < 1e-9);
 }
 
+// Unit literals: the nearest value of each dimension.
+void unitLiterals() {
+    CHECK(2.5_m == Length(2.5) && 50_cm == Length(0.5) && 3_mm == Length(0.003) && 2_km == Distance(2000));
+    CHECK(36_kmh == Speed(10) && 9.81_mps2 == Acceleration(9.81) && 70_kg == Mass(70) && 100_N == Force(100));
+    CHECK(90_deg == Angle::quarter() && 0.5_turn == Angle::half() && 360_deg == Angle());
+    CHECK(120_degps == AngleSpeed::fromDegreesPerSecond(120) && 60_rpm == AngleSpeed::fromTurnsPerSecond(1));
+    CHECK(std::abs((3.14159265358979_rad - Angle::half()).signedRaw()) <= 2);
+    static_assert(std::is_same_v<decltype(1_m), Length> && std::is_same_v<decltype(1.0_deg), Angle>);
+}
+
 // Binary angles: a turn is 2^32, they wrap around by themselves; comparisons are signed.
 void angles() {
     CHECK(Angle::fromDegrees(90) == Angle::quarter() && Angle::fromDegrees(180) == Angle::half());
@@ -330,6 +340,7 @@ int main() {
         {"every size: 8, 16, 32 and 64 bits", sizes},
         {"dimensions: own types, formats from the rule and the range", dimensions},
         {"binary angles: wraps, signed comparisons, exact integration", angles},
+        {"unit literals: 2.5_m, 90_deg, 9.81_mps2...", unitLiterals},
     };
     for (auto& [name, fn] : tests) {
         const int before = g_failures;

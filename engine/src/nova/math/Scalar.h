@@ -558,6 +558,40 @@ inline AngleSpeed toFixed<AngleSpeed>(f64 radiansPerSecond) { return AngleSpeed:
 template <>
 constexpr AngleSpeed zero<AngleSpeed>() { return AngleSpeed(); }
 
+/// @brief Unit literals for the dimensions: `2.5_m`, `90_deg`, `9.81_mps2`, `120_degps`...
+///
+/// An inline namespace: `using namespace nova;` brings them, or `using namespace nova::literals;`
+/// alone. Each one is the nearest value of its dimension (rounded like any number that enters).
+/// @code
+/// using namespace nova::literals;
+/// rb.mass = 2_kg;
+/// joint.angleMax = 80_deg;
+/// rotator.speed = 0.5_turnps;
+/// @endcode
+inline namespace literals {
+#define NOVA_FIXED_LITERAL(suffix, Type, expr)                                                                        \
+    inline Type operator""suffix(long double v) { const f64 x = static_cast<f64>(v); return expr; }                   \
+    inline Type operator""suffix(unsigned long long v) { const f64 x = static_cast<f64>(v); return expr; }
+NOVA_FIXED_LITERAL(_m, Length, Length(x))                         ///< Meters.
+NOVA_FIXED_LITERAL(_cm, Length, Length(x * 0.01))                 ///< Centimeters.
+NOVA_FIXED_LITERAL(_mm, Length, Length(x * 0.001))                ///< Millimeters.
+NOVA_FIXED_LITERAL(_km, Distance, Distance(x * 1000.0))           ///< Kilometers (a Distance: up to 16 km).
+NOVA_FIXED_LITERAL(_mps, Speed, Speed(x))                         ///< Meters per second.
+NOVA_FIXED_LITERAL(_kmh, Speed, Speed(x / 3.6))                   ///< Kilometers per hour.
+NOVA_FIXED_LITERAL(_mps2, Acceleration, Acceleration(x))          ///< Meters per second squared.
+NOVA_FIXED_LITERAL(_kg, Mass, Mass(x))                            ///< Kilograms.
+NOVA_FIXED_LITERAL(_N, Force, Force(x))                           ///< Newtons (also N·s, N·m).
+NOVA_FIXED_LITERAL(_Hz, Frequency, Frequency(x))                  ///< Hertz.
+NOVA_FIXED_LITERAL(_deg, Angle, Angle::fromDegrees(x))            ///< Degrees.
+NOVA_FIXED_LITERAL(_rad, Angle, Angle::fromRadians(x))            ///< Radians.
+NOVA_FIXED_LITERAL(_turn, Angle, Angle::fromTurns(x))             ///< Turns.
+NOVA_FIXED_LITERAL(_degps, AngleSpeed, AngleSpeed::fromDegreesPerSecond(x)) ///< Degrees per second.
+NOVA_FIXED_LITERAL(_radps, AngleSpeed, AngleSpeed::fromRadiansPerSecond(x)) ///< Radians per second.
+NOVA_FIXED_LITERAL(_turnps, AngleSpeed, AngleSpeed::fromTurnsPerSecond(x))  ///< Turns per second.
+NOVA_FIXED_LITERAL(_rpm, AngleSpeed, AngleSpeed::fromTurnsPerSecond(x / 60.0)) ///< Turns per minute.
+#undef NOVA_FIXED_LITERAL
+} // namespace literals
+
 /// @brief The turn made at angular speed `s` in `flicks` (1/705 600 000 s, see Time.h): exact up to
 ///        one rounding (to the nearest step, ties away from zero), whole turns drop out.
 constexpr Angle angleTurned(AngleSpeed s, i64 flicks) {

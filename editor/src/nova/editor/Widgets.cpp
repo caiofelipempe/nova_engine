@@ -8,6 +8,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <imgui.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <unordered_map>
@@ -45,19 +46,50 @@ bool vecField(const reflect::FieldInfo& f, float* v, int n) {
     return n == 2 ? ImGui::DragFloat2(f.label.c_str(), v, speed, lo, hi) : ImGui::DragFloat4(f.label.c_str(), v, speed, lo, hi);
 }
 
-// Fixed point: shown and dragged as floats, written back only when edited (unchanged components
-// keep their exact bits).
+// Fixed point: shown and dragged as doubles (a float has 24 bits, fewer than most formats), with
+// as many decimals as the format has (at most 6), written back only when edited (unchanged
+// components keep their exact bits).
+const char* fixedFormat(const reflect::FieldInfo& f) {
+    static const char* const formats[] = {"%.0f", "%.1f", "%.2f", "%.3f", "%.4f", "%.5f", "%.6f"};
+    // The step in the shown unit: 2^-fracBits (degrees: a turn of 2^32 steps is 360°).
+    f64 step = std::ldexp(1.0, -static_cast<int>(f.fracBits));
+    if (f.kind == reflect::FieldKind::Angle || f.kind == reflect::FieldKind::AngleSpeed) step *= 360.0;
+    const int decimals = static_cast<int>(std::ceil(-std::log10(step)));
+    return formats[decimals < 0 ? 0 : decimals > 6 ? 6 : decimals];
+}
+
+// An angle shown in [0°, 360°) when its range is not negative (a hinge's upper limit of 180°
+// reads 180, not −180), in [−180°, 180°) otherwise.
+f64 shownFixedValue(const reflect::FieldInfo& f, const void* p, int i = 0) {
+    f64 v = reflect::fixedValue(f, p, i);
+    if (f.kind == reflect::FieldKind::Angle && f.attrs.min >= 0.0f && v < 0.0) v += 360.0;
+    return v;
+}
+
+bool doubleField(const reflect::FieldInfo& f, f64& value) {
+    const auto& a = f.attrs;
+    const char* format = fixedFormat(f);
+    if (bounded(a)) {
+        const f64 lo = a.min, hi = a.max;
+        return ImGui::SliderScalar(f.label.c_str(), ImGuiDataType_Double, &value, &lo, &hi, format);
+    }
+    return ImGui::DragScalar(f.label.c_str(), ImGuiDataType_Double, &value, dragSpeed(a, 0.05f), nullptr, nullptr, format);
+}
+
 bool fixedField(const reflect::FieldInfo& f, void* p) {
-    float v = static_cast<float>(reflect::fixedValue(f, p));
-    if (!floatField(f, v)) return false;
+    f64 v = shownFixedValue(f, p);
+    if (!doubleField(f, v)) return false;
     reflect::setFixedValue(f, p, v);
     return true;
 }
 
 bool fixedVecField(const reflect::FieldInfo& f, void* p) {
-    float v[3], before[3];
-    for (int i = 0; i < 3; ++i) before[i] = v[i] = static_cast<float>(reflect::fixedValue(f, p, i));
-    if (!vecField(f, v, 3)) return false;
+    f64 v[3], before[3];
+    for (int i = 0; i < 3; ++i) before[i] = v[i] = shownFixedValue(f, p, i);
+    const auto& a = f.attrs;
+    const bool changed = ImGui::DragScalarN(f.label.c_str(), ImGuiDataType_Double, v, 3, dragSpeed(a, 0.05f), nullptr,
+                                            nullptr, fixedFormat(f));
+    if (!changed) return false;
     for (int i = 0; i < 3; ++i)
         if (v[i] != before[i]) reflect::setFixedValue(f, p, v[i], i);
     return true;

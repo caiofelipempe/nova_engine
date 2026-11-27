@@ -645,3 +645,12 @@ Scripts falam com a física só em ponto fixo: `addForce`/`addImpulse` em `Force
 (são quantizados na entrada). O contrato `physics::PhysicsWorld` segue em `float`: é a fronteira com o
 motor. O hash de estado inclui também a velocidade angular de cada corpo. O áudio guarda `minDistance`
 e `maxDistance` em `Distance`; volume e pitch são `float` (dados de áudio).
+
+### Inspector e literais de unidade
+O inspector edita campos em ponto fixo em `double` (um `float` tem 24 bits, menos que a maioria dos
+formatos), com tantas casas quanto o formato tem (até 6). Um ângulo de faixa não negativa (o limite
+superior da hinge, o campo de visão) é mostrado em [0°, 360°): 180° aparece como 180, não −180.
+
+Cada dimensão tem literais (`nova::literals`, que vem junto com `using namespace nova`): `2.5_m`,
+`50_cm`, `3_mm`, `2_km` (um `Distance`), `10_mps`, `36_kmh`, `9.81_mps2`, `70_kg`, `100_N`, `5_Hz`,
+`90_deg`, `1.57_rad`, `0.25_turn`, `120_degps`, `3_radps`, `0.5_turnps`, `60_rpm`.
