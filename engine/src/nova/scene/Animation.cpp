@@ -352,13 +352,14 @@ void Scene::updateAnimations(Duration frame) {
             return poses.emplace_back(target, localTransform(Entity{target, this})).second;
         };
         for (const auto& [target, m] : mixes) {
+            // The clips' values are float (glTF keys), mixed in doubles: quantized into the pose here.
             LocalTransform& local = poseOf(target);
-            if (m.positionWeight > 0.0) local.position = m.position / m.positionWeight;
+            if (m.positionWeight > 0.0) local.position = GlobalLengthVec(m.position / m.positionWeight);
             if (m.rotationWeight > 0.0 && glm::length(m.rotation) > 1e-12) {
                 const glm::dvec4 q = glm::normalize(m.rotation);
-                local.rotation = glm::dquat(q.w, q.x, q.y, q.z);
+                local.rotation = Quat(glm::dquat(q.w, q.x, q.y, q.z));
             }
-            if (m.scaleWeight > 0.0) local.scale = m.scale / m.scaleWeight;
+            if (m.scaleWeight > 0.0) local.scale = ScalarVec(m.scale / m.scaleWeight);
         }
         // ... then the overriding layers, in order, each over what is there by its weight.
         for (const AnimationLayer& layer : anim.layers) {
@@ -373,11 +374,13 @@ void Scene::updateAnimations(Duration frame) {
                 const glm::dvec4 v(ch.sample(static_cast<f32>(layer.time)));
                 LocalTransform& local = poseOf(target);
                 switch (ch.path) {
-                    case AnimationPath::Translation: local.position = glm::mix(local.position, glm::dvec3(v), w); break;
-                    case AnimationPath::Rotation:
-                        local.rotation = glm::slerp(local.rotation, glm::dquat(v.w, v.x, v.y, v.z), w);
+                    case AnimationPath::Translation:
+                        local.position = GlobalLengthVec(glm::mix(local.position.toDouble(), glm::dvec3(v), w));
                         break;
-                    case AnimationPath::Scale: local.scale = glm::mix(local.scale, glm::dvec3(v), w); break;
+                    case AnimationPath::Rotation:
+                        local.rotation = slerp(local.rotation, Quat(glm::dquat(v.w, v.x, v.y, v.z)), toFixed<Unit>(w));
+                        break;
+                    case AnimationPath::Scale: local.scale = ScalarVec(glm::mix(local.scale.toDouble(), glm::dvec3(v), w)); break;
                 }
             }
         }

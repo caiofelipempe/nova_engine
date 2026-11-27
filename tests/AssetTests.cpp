@@ -681,7 +681,7 @@ void boneMasks() {
     hips.setParent(root);
     Entity arm = scene.createEntity("Arm");
     arm.setParent(hips);
-    auto localX = [&](Entity e) { return scene.localTransform(e).position.x; };
+    auto localX = [&](Entity e) { return toDouble(scene.localTransform(e).position.x); };
     auto walk = clip2("walk", 10.0f, 1.0f), wave = clip2("wave", -10.0f, 5.0f);
     scene.playAnimation(root, walk);
 
@@ -722,8 +722,8 @@ void boneMasks() {
     turn.mask = {"Hips/Arm"};
     scene.blendAnimation(root, clip2("aside", 90.0f, 90.0f, true), turn);
     scene.update(Duration::fromSeconds(0.1));
-    CHECK(std::abs(glm::degrees(glm::angle(glm::quat(scene.localTransform(arm).rotation))) - 45.0f) < 0.01f);
-    CHECK(std::abs(glm::degrees(glm::angle(glm::quat(scene.localTransform(hips).rotation)))) < 0.01f);
+    CHECK(std::abs(glm::degrees(glm::angle(scene.localTransform(arm).rotation.toGlm())) - 45.0f) < 0.01f);
+    CHECK(std::abs(glm::degrees(glm::angle(scene.localTransform(hips).rotation.toGlm()))) < 0.01f);
 }
 
 struct EventLog : Script {

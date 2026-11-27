@@ -458,8 +458,8 @@ void hierarchy() {
 
     // Offsets: read and set in the parent's frame (before its scale).
     const LocalTransform local = scene.localTransform(wheel);
-    CHECK(glm::length(local.position - glm::dvec3(2, 0, 1)) < 1e-6 && glm::length(local.scale - glm::dvec3(1.0)) < 1e-6);
-    scene.setLocalTransform(wheel, {glm::dvec3(0, 1, 0), glm::dquat(1, 0, 0, 0), glm::dvec3(1.0)});
+    CHECK(glm::length(local.position.toDouble() - glm::dvec3(2, 0, 1)) < 1e-5 && local.scale == ScalarVec(1.0, 1.0, 1.0));
+    scene.setLocalTransform(wheel, {GlobalLengthVec(0.0, 1.0, 0.0), Quat::identity(), ScalarVec(1.0, 1.0, 1.0)});
     CHECK(near(wheel.transform().position, {20, 2, 0}, 1e-3));
 
     // Moved on its own (a script, the gizmo): it keeps the new pose, and its offset from there.
@@ -496,7 +496,7 @@ void hierarchy() {
         Entity c = small.createEntity("C");
         c.transform().position = {-9, 0, 0}; // 2 m past the seam from P
         c.setParent(p);
-        CHECK(glm::length(small.localTransform(c).position - glm::dvec3(2, 0, 0)) < 1e-6);
+        CHECK(small.localTransform(c).position == GlobalLengthVec(2.0, 0.0, 0.0)); // exact: whole steps
         p.transform().position = {8, 0, 0};
         small.updateTransforms();
         CHECK(c.transform().position == GlobalPosition(10, 0, 0)); // ≡ −10
@@ -553,6 +553,60 @@ void hierarchy() {
     CHECK(near(b.transform().position, {6, 5, 5}));
 }
 
+// Offsets from parents in fixed point: exact, any size, stable.
+void hierarchyFixedPoint() {
+    Scene scene{"fixed"};
+    Entity parent = scene.createEntity("P");
+    parent.transform().position = {100, 0, 0};
+    parent.transform().setEulerDegrees({10, 35, -20});
+    parent.transform().scale = {2, 0.5, 3};
+    Entity child = scene.createEntity("C");
+    child.transform().position = {103.25, 1.5, -2};
+    child.transform().setEulerDegrees({0, 90, 0});
+    const TransformComponent placed = child.transform();
+    child.setParent(parent);
+    // Taking the offset and placing the child there again moves it by a few steps at most (each
+    // turn and division by a scale rounds once).
+    scene.setLocalTransform(child, scene.localTransform(child));
+    const GlobalOffset drift = child.transform().position - placed.position;
+    CHECK(std::abs(drift.x) <= 3 && std::abs(drift.y) <= 3 && std::abs(drift.z) <= 3);
+    // Placed from the same offset, it lands on the same bits: the parent going away and back
+    // brings it back exactly.
+    const TransformComponent before = child.transform();
+    const TransformComponent home = parent.transform();
+    for (int i = 0; i < 100; ++i) {
+        parent.transform().position = {100.0 + i * 3.7, i * 0.1, -i * 2.0};
+        parent.transform().rotate(Angle::fromDegrees(7), UnitVec(0.0, 1.0, 0.0));
+        scene.updateTransforms();
+    }
+    parent.transform() = home;
+    scene.updateTransforms();
+    CHECK(child.transform().position == before.position && child.transform().rotation == before.rotation &&
+          child.transform().scale == before.scale);
+    CHECK(std::abs(std::abs(toDouble(dot(child.transform().rotation, placed.rotation))) - 1.0) < 1e-8);
+
+    // A tiny parent scale: the offset (10 m / 0.001 = 10 km) still fits, and comes back exactly.
+    Entity small = scene.createEntity("Small");
+    small.transform().scale = {0.001, 0.001, 0.001};
+    Entity far = scene.createEntity("Far");
+    far.transform().position = {10, 0, 0};
+    far.setParent(small);
+    const f64 unscaled = 10.0 / toDouble(Scalar(0.001)); // the scale as Q15.16 holds it (0.001007)
+    CHECK(std::abs(toDouble(scene.localTransform(far).position.x) - unscaled) < 1e-4);
+    small.transform().scale = {1, 1, 1};
+    scene.updateTransforms();
+    CHECK(near(far.transform().position, {unscaled, 0, 0}, 1e-4));
+    // A zero scale: the child sits on the parent, and returns when the scale does.
+    small.transform().scale = {0.001, 0.001, 0.001};
+    scene.updateTransforms();
+    small.transform().scale = {0, 0, 0};
+    scene.updateTransforms();
+    CHECK(near(far.transform().position, {0, 0, 0}, 1e-3));
+    small.transform().scale = {0.001, 0.001, 0.001};
+    scene.updateTransforms();
+    CHECK(near(far.transform().position, {10, 0, 0}, 1e-3));
+}
+
 void fullMaterials() {
     // The full material is saved with the scene: maps' strengths, alpha mode and cutoff, both sides.
     Scene scene;
@@ -602,6 +656,7 @@ int main() {
         {"uuids", uuids},
         {"full materials are saved (maps, alpha, double sided)", fullMaterials},
         {"hierarchy: follow, offsets, loops, saving, duplicate, prefabs, destroy", hierarchy},
+        {"hierarchy in fixed point: stable offsets, tiny and zero scales", hierarchyFixedPoint},
     };
     for (auto& [name, fn] : tests) {
         int before = g_failures;

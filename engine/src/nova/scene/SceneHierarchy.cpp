@@ -4,36 +4,87 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace nova {
 
 namespace {
 
-// A scale component that can be divided by (a zero scale has no inverse).
-glm::dvec3 invertible(glm::dvec3 s) {
-    for (int i = 0; i < 3; ++i)
-        if (std::abs(s[i]) < 1e-12) s[i] = 1e-12;
-    return s;
+// Offsets are world steps (2⁻¹⁸ m) in 64 bits, scales Q15.16: integer math, one rounding per
+// operation. Only the rotation of an offset longer than 8 km goes through doubles.
+constexpr int kScaleBits = static_cast<int>(fractionBits<Scalar>);
+
+u64 magnitude(i64 v) { return v < 0 ? 0 - static_cast<u64>(v) : static_cast<u64>(v); }
+i64 clampToI64(f64 v) {
+    if (!(v == v)) return 0;
+    if (v >= 9.2e18) return std::numeric_limits<i64>::max();
+    if (v <= -9.2e18) return std::numeric_limits<i64>::min();
+    return std::llround(v);
+}
+
+// `v` turned by `q`: fixed point while every axis stays in the range of Length (under 8 192 m).
+glm::i64vec3 turned(const Quat& q, const glm::i64vec3& v) {
+    const u64 limit = u64(1) << 31;
+    if (magnitude(v.x) < limit && magnitude(v.y) < limit && magnitude(v.z) < limit) {
+        const LengthVec l{fromRaw<Length>(v.x), fromRaw<Length>(v.y), fromRaw<Length>(v.z)};
+        if (l.lengthSquaredRaw() < (u64(1) << 62)) { // shorter than 8 192 m: the turned axes fit too
+            const LengthVec r = q.rotate(l);
+            return {r.x.raw_value(), r.y.raw_value(), r.z.raw_value()};
+        }
+    }
+    const glm::dvec3 r = q.toDouble() * glm::dvec3(v);
+    return {clampToI64(r.x), clampToI64(r.y), clampToI64(r.z)};
+}
+
+// Steps times a scale (rounded; exact integer math below 2³² steps per axis).
+i64 scaledSteps(i64 steps, Scalar s) {
+    const i64 f = s.raw_value();
+    if (magnitude(steps) < (u64(1) << 32)) return detail::roundShift<kScaleBits>(steps * f);
+    return clampToI64(static_cast<f64>(steps) * toDouble(s));
+}
+// Steps divided by a scale (rounded). A zero scale has no inverse: the offset is kept as it is
+// (the child sits on the parent while the scale is zero, and where it was when it grows again).
+i64 unscaledSteps(i64 steps, Scalar s) {
+    const i64 f = s.raw_value();
+    if (f == 0) return steps;
+    if (magnitude(steps) < (u64(1) << 46)) return detail::roundDiv(steps * (i64(1) << kScaleBits), f);
+    return clampToI64(static_cast<f64>(steps) / toDouble(s));
+}
+// A scale divided by another (rounded, saturating; a zero divisor keeps `a`).
+Scalar scaleRatio(Scalar a, Scalar b) {
+    if (b.raw_value() == 0) return a;
+    const i64 q = detail::roundDiv(static_cast<i64>(a.raw_value()) * (i64(1) << kScaleBits), b.raw_value());
+    return fromRaw<Scalar>(std::clamp<i64>(q, std::numeric_limits<i32>::min(), std::numeric_limits<i32>::max()));
+}
+// The product of two scales (rounded, saturating).
+Scalar scaleProduct(Scalar a, Scalar b) {
+    const i64 p = detail::roundShift<kScaleBits>(static_cast<i64>(a.raw_value()) * b.raw_value());
+    return fromRaw<Scalar>(std::clamp<i64>(p, std::numeric_limits<i32>::min(), std::numeric_limits<i32>::max()));
 }
 
 // The pose `t` as an offset from the parent pose `p`.
 LocalTransform offsetFrom(const TransformComponent& p, const TransformComponent& t) {
-    const glm::dquat turnBack = glm::conjugate(p.rotation.toDouble());
-    const glm::dvec3 scale = invertible(p.scale.toDouble());
+    const Quat turnBack = p.rotation.conjugate();
+    const glm::i64vec3 back = turned(turnBack, (t.position - p.position).raw()); // the shortest way, across seams too
     LocalTransform l;
-    l.position = (turnBack * (t.position - p.position).toMeters()) / scale; // the shortest way, across seams too
-    l.rotation = glm::normalize(turnBack * t.rotation.toDouble());
-    l.scale = t.scale.toDouble() / scale;
+    for (int i = 0; i < 3; ++i) {
+        l.position[i] = fromRaw<GlobalLength>(unscaledSteps(back[i], p.scale[i]));
+        l.scale[i] = scaleRatio(t.scale[i], p.scale[i]);
+    }
+    l.rotation = (turnBack * t.rotation).normalized();
     return l;
 }
 
 // Places `t` at the offset `l` from the parent pose `p`.
 void placeAt(const TransformComponent& p, const LocalTransform& l, TransformComponent& t) {
-    const glm::dquat turn = p.rotation.toDouble();
-    const glm::dvec3 scale = p.scale.toDouble();
-    t.position = p.position + GlobalOffset::fromMeters(turn * (scale * l.position));
-    t.rotation = Quat(turn * l.rotation);
-    t.scale = ScalarVec(scale * l.scale);
+    glm::i64vec3 scaled;
+    for (int i = 0; i < 3; ++i) {
+        scaled[i] = scaledSteps(l.position[i].raw_value(), p.scale[i]);
+        t.scale[i] = scaleProduct(p.scale[i], l.scale[i]);
+    }
+    const glm::i64vec3 offset = turned(p.rotation, scaled);
+    t.position = p.position + GlobalOffset(offset.x, offset.y, offset.z); // moving loops around the world
+    t.rotation = (p.rotation * l.rotation).normalized();
 }
 
 // Remembers where the child was put and for which parent pose: what changes next is a move.
@@ -164,9 +215,9 @@ LocalTransform Scene::localTransform(Entity entity) {
         if (!movedSincePlaced(pc, t)) return pc.local;
         return offsetFrom(parent.transform(), t);
     }
-    l.position = t.position.toMeters();
-    l.rotation = t.rotation.toDouble();
-    l.scale = t.scale.toDouble();
+    l.position = t.position.coords();
+    l.rotation = t.rotation;
+    l.scale = t.scale;
     return l;
 }
 
@@ -180,9 +231,9 @@ void Scene::setLocalTransform(Entity entity, const LocalTransform& local) {
         remember(pc, t, parent.transform());
         return;
     }
-    t.position = GlobalPosition(local.position);
-    t.rotation = Quat(local.rotation);
-    t.scale = ScalarVec(local.scale);
+    t.position = GlobalPosition::fromCoords(local.position);
+    t.rotation = local.rotation.normalized();
+    t.scale = local.scale;
 }
 
 // Drawn between physics steps: a child follows where its parent is drawn.

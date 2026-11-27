@@ -603,5 +603,7 @@ O `math/Fixed.h` e o `math/Rotation.h` saíram; no lugar:
 
 Câmera (`fovY` em `Angle`, distâncias em `Length`/`Distance`), luzes (`Scalar`, `Length`), `RotatorComponent`
 (`AngleSpeed`), limites e motor da hinge (`angleMin`/`angleMax`, `motorSpeed`/`motorAngle`) e o
-`maxSlope` do personagem passaram a ponto fixo. As cenas estão na versão 2 (ângulos em graus, velocidades
+`maxSlope` do personagem passaram a ponto fixo, assim como o `LocalTransform` das hierarquias (posição em
+`GlobalLengthVec` Q45.18, que cabe qualquer offset, rotação `Quat`, escala `ScalarVec`; só o giro de
+offsets acima de 8 km passa por `double`). As cenas estão na versão 2 (ângulos em graus, velocidades
 angulares em graus/s); as de versão 1 são migradas na leitura. A animação continua em `double`.

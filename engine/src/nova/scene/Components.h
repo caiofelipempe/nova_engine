@@ -126,11 +126,14 @@ struct TransformComponent {
 };
 
 /// @brief A pose relative to a parent: position (in the parent's frame, before its scale is
-///        applied: it is scaled with the parent), rotation and scale. Doubles: offsets are small.
+///        applied: it is scaled with the parent), rotation and scale. Fixed point like the poses it
+///        comes from: the position in 64-bit world steps (Q45.18, any offset, also one divided by
+///        a tiny parent scale; for a root, its position in the world), the rotation and scale in
+///        the transform's formats.
 struct LocalTransform {
-    glm::dvec3 position{0.0};
-    glm::dquat rotation{1.0, 0.0, 0.0, 0.0};
-    glm::dvec3 scale{1.0};
+    GlobalLengthVec position;
+    Quat rotation;
+    ScalarVec scale{1.0, 1.0, 1.0};
 };
 
 /// @brief Makes the entity a child of another: it keeps its offset from the parent (position,
